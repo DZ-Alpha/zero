@@ -5,7 +5,11 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  IMAGE_NAME: harbor.hizero.local/zerocheck/ci-sandbox
+
 jobs:
+  # 내부망 접근이 필요 없는 단계 - GitHub 클라우드 러너에서 실행
   build-test:
     runs-on: ubuntu-latest
     steps:
@@ -19,29 +23,44 @@ jobs:
       - name: Run tests
         run: pytest ci_sandbox/tests
 
-  # placeholder for future SonarQube quality gate (see 인수인계 문서 4-4)
+  # 아래부터는 내부 SonarQube/Harbor에 접근해야 하므로 self-hosted(harbor VM) 러너에서 실행
   code-scanning:
     needs: build-test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - name: Code scanning (SonarQube integration pending)
-        run: echo 'TODO - integrate SonarQube quality gate here'
+      - uses: actions/checkout@v4
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
 
-  # placeholder for future Trivy scan (see 인수인계 문서 4-5)
   image-scanning:
     needs: code-scanning
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - name: Image scanning (Trivy integration pending)
-        run: echo 'TODO - integrate Trivy image scan here'
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
 
-  # placeholder for future Harbor push
   image-push:
     needs: image-scanning
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - name: Image push (Harbor push pending)
-        run: echo 'TODO - push image to Harbor here'
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+      - name: Push image
+        run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
   notify-on-failure:
     needs: [build-test, code-scanning, image-scanning, image-push]
