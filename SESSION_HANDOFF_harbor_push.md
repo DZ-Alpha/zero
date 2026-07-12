@@ -63,14 +63,14 @@
    없음. 실측 결과 Harbor 전체 스택이 1GB 미만 사용 중이라 SonarQube 추가해도 문제 없음 확인.
 7. **Harbor 내장 Trivy(`--with-trivy`)와 CI의 pre-push Trivy는 별개** — 둘 다 사용(이중 방어선).
 
-## 4. 현재 라이브 이슈 — 진행 중인 트러블슈팅 (미해결, 여기서부터 이어가야 함)
+## 4. 현재 라이브 이슈 — 해결 완료 (2026-07-12)
 
 ### 타임라인
 1. bruce 계정 비밀번호를 잊어버림 (기존 알려진 임시값 `test1234`도 안 먹힘)
 2. **Proxmox 콘솔 → GRUB 복구모드(`init=/bin/bash`)로 비밀번호 재설정** — 이 과정에서 VM 재부팅 발생
 3. 재부팅 후 **Harbor 핵심 컨테이너 전체(nginx, harbor-core, registry, registryctl, redis,
    harbor-db, jobservice, harbor-portal)가 자동으로 안 돌아옴** (`Exited (128)`, `harbor-log`만 생존)
-   → **재부팅 시 자동 기동이 안 되는 근본 문제 발견, 아직 안 고침**
+   → **재부팅 시 자동 기동이 안 되는 근본 문제 발견, 아직 안 고침** (섹션 5-5 참고)
 4. 복구 시도: `~/harbor`에서 `docker compose up -d` → `permission denied
    (/home/bruce/harbor/common/config/db/env)` 에러 (Harbor 설치 스크립트가 원래 root로
    실행되어 파일이 root 전용 권한이었음)
@@ -80,34 +80,75 @@
 6. **올바른 복구**: `docker compose down` → `sudo ./prepare` (Harbor 공식 설정 재생성 스크립트,
    모든 `common/config/*` 파일을 올바른 내부 권한으로 재생성) → `sudo docker compose up -d`
    → **전체 컨테이너 healthy로 복구 완료**, 외부에서 443 포트 응답 확인함(`Test-NetConnection` 성공)
-7. **현재 막힌 지점**: **Harbor admin 로그인 계정/비밀번호를 모름.**
-   - `admin`/`admin` 시도 → 실패 (이건 SonarQube 계정이었음, 착오)
-   - `admin`/`Harbor12345` 시도 (인수인계 문서의 최초 기본값) → 실패
-   - 지금 `harbor.yml`의 `harbor_admin_password` 필드 값을 확인하려는 중
-     (`grep harbor_admin_password ~/harbor/harbor.yml`) — **단, 이 값은 harbor-db가 최초
-     초기화될 때만 반영되므로(43시간 전), 그 이후 UI로 비밀번호가 바뀌었으면 안 맞을 수 있음**
+7. **admin 로그인 계정/비밀번호 문제**: `admin`/`admin`(SonarQube 계정과 착오), `admin`/`Harbor12345`
+   (harbor.yml 초기값, DB 초기화 이후 43시간 지나 반영 안 됨) 둘 다 실패
+8. **해결**: Harbor 공식 소스(`src/common/utils/encrypt.go`, v2.15.1) 확인 결과 admin 비밀번호는
+   `PBKDF2-HMAC-SHA256, iterations=4096, dklen=16`으로 해시되어 `harbor_user.password`(32자 hex)에
+   저장됨, salt는 `harbor_user.salt`. harbor-db 컨테이너에 `docker exec`로 직접 접속해 새 salt를
+   생성하고 이 알고리즘으로 재계산한 해시값을 `UPDATE harbor_user SET salt=..., password=...
+   WHERE username='admin'`으로 반영 → 임시값으로 로그인 성공(API `/api/v2.0/users/current` 200
+   확인) → 즉시 `PUT /api/v2.0/users/1/password`로 비밀번호 변경 완료
+   - (주의: pgcrypto 확장이 DB에 없어서 처음엔 반복횟수를 10000으로 잘못 가정해 실패했음.
+     반드시 위 소스 링크 기준 4096회로 계산할 것 — 같은 문제 반복되면 재확인 필요)
 
-### 다음 세션에서 바로 이어갈 것
-1. `grep harbor_admin_password ~/harbor/harbor.yml` 결과 확인, 그 값으로 로그인 재시도
-2. 그래도 안 되면: Harbor 공식 문서의 "reset admin password" 절차 확인 필요
-   (DB 직접 접근으로 admin 비밀번호 해시를 리셋하는 공식 방법이 있는지 검색 필요 — 아직 안 찾아봄)
-3. 로그인 성공하면 **즉시 비밀번호 변경** (계속 미뤄진 보안 항목)
+### 부가 진행 사항
+- harbor VM에 **Tailscale 설치 완료**, Tailscale IP로 접근 가능해짐 (기존 LAN IP `192.168.0.53`도 여전히 유효)
+- 로컬(노트북) SSH 키(`~/.ssh/id_ed25519`, ed25519, 비밀번호 없음)를 harbor VM의
+  `~/.ssh/authorized_keys`에 등록 완료 → 이후 세션은 비밀번호 없이 SSH 접속 가능
+- **모든 실제 비밀번호/접속 주소는 `harbor.credentials.local.md`(gitignore됨, 커밋 금지)에 있음**
+  — bruce SSH/sudo 비밀번호(섹션 5-8 "영구 비밀번호로 재변경" 항목 아직 미완료, 임시값 그대로),
+  Harbor admin, SonarQube admin, Proxmox 웹 UI 주소 전부 그 파일 참고
+- **보안 사고 대응**: 이전 SonarQube admin 비밀번호(`Zeropass123!`)가 이미 GitHub에 push된 커밋
+  `91d23c5`에 평문으로 들어가 있던 게 발견됨 → 즉시 새 비밀번호로 재변경해 무효화 완료
+  (git 히스토리 자체는 재작성하지 않기로 결정 — 팀원 pull 상태 충돌 우려 때문, 값만 무효화하면
+  충분하다고 판단). **앞으로 이 문서에 실제 비밀번호를 절대 직접 적지 말 것**, 반드시
+  `harbor.credentials.local.md`에만 기록.
 
 ## 5. 로그인 성공 이후 남은 작업 (순서대로)
 
-1. Harbor: `zerocheck` 프로젝트 생성 (Private)
-2. Harbor: Robot Account 생성 — `zerocheck` 프로젝트 한정, **Push+Pull 권한만** (최소 권한).
-   생성 시 표시되는 계정명/시크릿을 안전하게 보관 (`HARBOR_ROBOT_USER`/`HARBOR_ROBOT_TOKEN`으로 사용)
-3. SonarQube(`http://192.168.0.53:9000`, 이미 healthy 상태로 떠있음): admin/admin 로그인 →
-   비밀번호 변경 완료됨(`Zeropass123!`로 이미 변경함) → 토큰 발급도 이미 완료함(사용자가 보관 중,
-   대화에 노출 안 시킴) → `SONAR_HOST_URL`로 쓸 주소 확인
-4. GitHub 저장소(`love-1006/zero`) Settings에 등록:
-   - Variables: `SONAR_HOST_URL` = `http://192.168.0.53:9000`
-   - Secrets: `SONAR_TOKEN`, `HARBOR_ROBOT_USER`, `HARBOR_ROBOT_TOKEN`
-5. **Harbor 재부팅 자동 기동 문제 근본 수정** — 아직 원인/해결 안 함. docker-compose의 restart
-   정책 확인, 필요시 systemd 서비스 등록 등 검토 필요.
-6. **bruce가 sudo 없이 안전하게 관리할 수 있는 방법** — `chown -R`은 실패한 접근이었음.
-   docker 그룹 활용이나 범위 제한된 sudoers 규칙 등 컨테이너 내부 권한을 안 건드리는 대안 필요.
+1. ~~Harbor: `zerocheck` 프로젝트 생성 (Private)~~ **완료(2026-07-12)** — 단, 프로젝트명은
+   `zerocheck`이 아니라 **`dangdang`**으로 생성함 (사용자가 이름 변경 지시). 이후 모든 단계에서
+   `zerocheck` 대신 `dangdang` 사용할 것.
+2. ~~Harbor: Robot Account 생성~~ **완료(2026-07-12)** — `dangdang` 프로젝트 한정, Push+Pull만,
+   만료 없음. 계정명 `robot$dangdang+ci-push-pull`. 실제 시크릿은 `harbor.credentials.local.md`의
+   `HARBOR_ROBOT_USER`/`HARBOR_ROBOT_TOKEN` 참고.
+3. ~~SonarQube 비밀번호 변경 및 토큰 확인~~ **완료** — admin 비밀번호 변경 완료(값은
+   `harbor.credentials.local.md` 참고), 토큰 발급도 완료(사용자가 보관 중, 대화에 노출 안 시킴)
+4. ~~GitHub 저장소(`love-1006/zero`) Settings에 등록~~ **완료(2026-07-12)** — 로컬에 `gh` CLI
+   설치+인증(`celtics-korean` 계정, WRITE 권한) 후 등록:
+   - Variables: `SONAR_HOST_URL` = `http://192.168.0.53:9000` ✓
+   - Secrets: `SONAR_TOKEN` ✓ (사용자가 로컬 PowerShell에서 직접 `gh secret set`으로 등록),
+     `HARBOR_ROBOT_USER` ✓, `HARBOR_ROBOT_TOKEN` ✓
+   - **참고**: `love-1006/zero`는 `PUBLIC` 저장소임이 이번에 확인됨 (팀원 한정이 아니라 인터넷
+     공개). 앞으로 이 저장소에 커밋하는 모든 내용에 각별히 주의할 것.
+5. ~~Harbor 재부팅 자동 기동 문제 근본 수정~~ **완료(2026-07-12), 실제 VM 재부팅으로 검증함**
+   - **근본 원인**(공식 이슈 트래커로 확인): harbor-core 등 8개 컨테이너는 syslog 로그 드라이버로
+     `harbor-log`(127.0.0.1:1514)에 의존하는데, `docker` 데몬이 재시작/재부팅되면 모든 컨테이너가
+     동시에 뜨려고 시도해서 `harbor-log`가 준비되기 전에 로그 드라이버 연결(`dial tcp
+     127.0.0.1:1514: connect: connection refused`)에 실패 → 컨테이너 시작 자체가 실패함.
+     `restart: always`는 "시작된 뒤 죽은 경우"만 재시도하고 "애초에 시작을 못 한 경우"는
+     재시도하지 않음(`RestartCount=0`으로 확인). `depends_on`은 `docker compose up`을 직접 실행할
+     때만 순서를 보장하고, 데몬 자체의 재시작 시엔 적용 안 됨. 근거:
+     [moby/moby#31971](https://github.com/moby/moby/issues/31971),
+     [moby/moby#21966](https://github.com/moby/moby/issues/21966),
+     [docker/compose#12589](https://github.com/docker/compose/issues/12589) — 셋 다 Docker/Compose
+     프로젝트 자체 공식 이슈 트래커.
+   - **해결**: `/etc/systemd/system/harbor.service` 등록 (`Type=oneshot`, `RemainAfterExit=yes`,
+     `ExecStart=/usr/bin/docker compose up -d`, `After=docker.service`, `WantedBy=multi-user.target`,
+     `systemctl enable`) — 부팅 시 명시적으로 `docker compose up -d`를 실행해 의존성 순서를
+     지키게 함. 개별 컨테이너의 `restart: always`는 그대로 둠(평상시 크래시 복구용, 상충 안 함).
+   - **알아둘 점**: 유닛에 `PartOf=docker.service`도 넣었으나, **`systemctl restart docker`처럼
+     수동으로 docker 데몬만 재시작하는 경우엔 이 전파가 실측상 작동하지 않았음**(harbor.service가
+     `inactive`로 남음). 검증된 것은 **VM 전체 재부팅** 경로(`WantedBy=multi-user.target`)뿐임.
+     따라서 앞으로 `docker` 데몬만 따로 재시작할 일이 있으면 반드시 그 직후
+     `sudo systemctl restart harbor`도 수동으로 실행할 것.
+6. ~~bruce가 sudo 없이 안전하게 관리할 수 있는 방법~~ **결론: 안 함(2026-07-12), 의도적 보류**
+   — `docker` 그룹 추가를 검토했으나 Docker 공식 문서("The docker group grants root-level
+   privileges to the user")와 CIS Docker Benchmark(업계 표준 보안 벤치마크, "docker 그룹 멤버는
+   사실상 root 권한을 얻는다" / "신뢰할 수 있는 사용자만 docker 그룹에 넣어라")가 동일하게
+   최소 권한 원칙 위반으로 명시함. 완전한 해결책(Docker rootless mode)은 이미 떠있는 프로덕션급
+   스택 재설치가 필요해 이 시점엔 과함. **원래 취지가 순수 편의였고 실무 표준에 안 맞는다는 근거를
+   확인한 뒤, 사용자가 이 항목을 넘기기로 결정** — sudo(비밀번호 입력)는 그대로 유지.
 7. self-hosted GitHub Actions runner를 harbor VM에 설치 (GitHub 저장소 Settings → Actions →
    Runners → New self-hosted runner에서 나오는 실행 시점 등록 토큰 사용, **systemd 서비스로
    설치해서 재부팅 시 자동 기동되게 할 것**)

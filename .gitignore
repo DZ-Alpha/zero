@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# 로컬 전용 자격증명 (절대 커밋 금지)
+*.credentials.local.md
