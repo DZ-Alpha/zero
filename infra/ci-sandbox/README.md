@@ -14,5 +14,19 @@ IMAGE_TAG=<git-sha> docker compose up -d
 기동 후 `http://harbor.hizero.local:8080/health`로 확인.
 
 CI 파이프라인의 `deploy` job([build-test.yml](../../.github/workflows/build-test.yml))이
-`image-push` 성공 후 harbor VM(self-hosted runner)에서 이 이미지를 pull한다.
-`docker compose up` 연동과 배포 후 헬스체크는 이후 단계에서 이 워크플로에 추가한다.
+`image-push` 성공 후 harbor VM(self-hosted runner)에서 이미지를 pull하고, `docker compose up`으로
+배포한 뒤 `/health`를 헬스체크한다. 헬스체크 실패 시 직전 정상 태그(`~/ci-sandbox-state/last-good-tag`)로
+자동 롤백한다.
+
+## 수동 롤백
+
+자동 롤백과는 별개로, 사람이 SSH로 직접 특정 태그로 되돌리고 싶을 때는
+[scripts/rollback.sh](../../scripts/rollback.sh)를 사용한다.
+
+```bash
+# 인자 없이: 마지막 정상 태그로 롤백
+scripts/rollback.sh
+
+# 특정 태그로 롤백
+scripts/rollback.sh <git-sha>
+```
