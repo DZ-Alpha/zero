@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 env:
-  IMAGE_NAME: harbor.hizero.local/zerocheck/ci-sandbox
+  IMAGE_NAME: harbor.hizero.local/dangdang/ci-sandbox
 
 jobs:
   # 내부망 접근이 필요 없는 단계 - GitHub 클라우드 러너에서 실행
