@@ -184,8 +184,46 @@
 
 ### 남은 것 (CI/CD 범위 내)
 
-- `notify-on-failure` job의 Slack 알림 연동 — 진행 중(2026-07-13), `SLACK_WEBHOOK_URL` 시크릿 등록 대기
+- ~~`notify-on-failure` job의 Slack 알림 연동~~ **완료(2026-07-13)** — `SLACK_WEBHOOK_URL` 등록,
+  실제 테스트 실패를 유발해 Slack 채널에 알림 도착까지 확인함(테스트 브랜치는 검증 후 삭제)
 - PR 리뷰 없이 직접 병합하는 관행이 계속되고 있음(사실상 리뷰어 부재) — 문제로 판단되면 재검토 필요
+
+## 8. 모니터링 인프라 구축 + OpenTelemetry 계측 (2026-07-13, 완료)
+
+### 모니터링 스택
+- 별도 VM(모니터링 전용, harbor/CI 인프라와 장애 영향 분리)에 Prometheus/Loki/Tempo/
+  OpenTelemetry Collector/Grafana를 Docker Compose로 배포 (`infra/monitoring/`)
+- 구조: 앱 → OTel Collector(단일 수집 지점) → Tempo(트레이스)/Loki(로그)/Prometheus(메트릭,
+  Collector의 `:8889` exporter를 스크랩) → Grafana(통합 조회)
+- **실측으로 발견·수정한 것**: OTel Collector Contrib의 `loki` exporter가 deprecated되어 제거된
+  상태(2024-07-09부로, GitHub Issue #33916) → 공식 마이그레이션 가이드대로 `otlphttp` exporter +
+  Loki의 네이티브 OTLP 엔드포인트(`http://loki:3100/otlp`)로 교체
+- Grafana에서 Prometheus/Loki/Tempo 3개 데이터소스 헬스체크 전부 통과 확인
+
+### VM 템플릿 트러블슈팅 (harbor.credentials.local.md에 상세 기록)
+- 기존 `harbor-template`(101)의 로그인 정보 유실 발견 → 공식 문서 기반 라이브 ISO 복구 절차로
+  Harbor 재부팅 버그 때와 동일한 접근으로 해결
+- 새 템플릿(`harbor-template-v2`) 제작 중 SSH 호스트키/`machine-id` 관련 결함을 4번의 시행착오
+  끝에 근본 해결 — 핵심 교훈: **템플릿이 될 디스크는 절대 그 자체로 부팅해서 검증하면 안 됨**
+  (검증은 항상 템플릿에서 새로 클론한 별도 VM으로). 최종본은 VMID 108, 신규 클론으로 실제 첫
+  부팅 검증까지 완료
+
+### `ci_sandbox` OpenTelemetry 계측
+- FastAPI 자동 계측(트레이스), `/health` 요청 카운터(메트릭), 로그-트레이스 상관관계 연동
+- OTLP gRPC로 모니터링 VM의 OTel Collector에 전송(`ci_sandbox/app/telemetry.py`)
+- **실측으로 발견·수정한 것**: `LoggingInstrumentor()`는 로그 포맷에 trace context를 주입할 뿐
+  실제 로그를 export하지 않음(별개 기능) → `LoggerProvider`+`LoggingHandler`를 추가로 연결해야
+  실제로 로그가 나감
+- **결과**: 실제 배포 후 `/health` 호출 → Prometheus에 `health_check_requests_total` 메트릭 확인,
+  Loki에 trace_id 포함된 로그 확인, 그 trace_id로 Tempo에서 실제 트레이스 조회까지 전부 성공
+  (메트릭·로그·트레이스 3개 신호 및 로그-트레이스 상관관계까지 전 구간 실측 검증)
+
+### 기타 정비
+- GitHub Actions workflow-level concurrency 추가(동일 브랜치 연속 push 시 harbor VM에서
+  deploy job이 겹쳐 도는 것 방지) — 실제로 push+PR 이벤트가 겹쳤을 때 큐잉되는 것 확인
+- Harbor 이미지 보존 정책 등록(`dangdang` 프로젝트, 최근 push 10개만 유지, 매일 자정 스케줄)
+- Harbor TLS 인증서 만료일 확인(2036-07-06까지 유효, 문제없음)
+- bruce 계정 비밀번호 — 팀 규칙(`zeropass#`) 자체가 이미 충족되는 상태라 별도 변경 불필요로 종결
 
 ## 7. CI 파이프라인 실제 실행 검증 (2026-07-12, 완료)
 
