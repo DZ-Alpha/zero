@@ -163,13 +163,26 @@
 8. VM 쪽 별도 보안 항목(Claude Code 범위 밖, 여전히 미완료): bruce 계정 영구 비밀번호로 재변경
    (이번에 임시로 리셋한 값 말고 강한 값으로)
 
-## 6. 아직 하나도 안 건드린 것
+## 6. Lane 2 (CD) — **완료(2026-07-13), 실제 배포+롤백 실패 시나리오까지 실측 검증함**
 
-- Lane 2 (CD): `deploy trigger → docker pull → Docker Compose → SUCCESS/rollback`
-  (`Jhoon/ci-cd/docker-deploy-pipeline` 브랜치 — **2026-07-12에 main으로 rebase는 완료함**, 실제
-  CD 로직은 아직 착수 전)
-- Rollback 커스텀 스크립트 (`Jhoon/ci-cd/rollback-config`)
-- `.env` 템플릿 + pydantic Settings 표준 코드 (`Jhoon/secops/pydantic-settings`, `env-gitignore-template`)
+- ~~Lane 2 (CD): `deploy trigger → docker pull → Docker Compose → SUCCESS/rollback`~~ **완료**
+  - PR #3(`Jhoon/ci-cd/docker-deploy-pipeline`)으로 main 병합
+  - `deploy` job: `image-push` 성공 후 harbor VM에서 이미지 pull → `infra/ci-sandbox/docker-compose.yml`로
+    배포 → `/health` 헬스체크(재시도 포함) → 실패 시 `~/ci-sandbox-state/last-good-tag`에 기록된
+    직전 정상 태그로 자동 재배포
+  - **검증**: 정상 배포 1회 성공 확인 + `/health`를 의도적으로 500 반환하도록 깨뜨린 별도 커밋으로
+    실제 배포 실패를 재현해 자동 롤백이 실제로 동작하는 것까지 확인(헬스체크 실패 → 롤백 스텝 실행
+    → 이전 정상 버전으로 복구 → `/health` 200 재확인). 테스트용 커밋/브랜치는 검증 후 삭제.
+- ~~Rollback 커스텀 스크립트~~ **완료** — `scripts/rollback.sh` (수동 SSH 롤백용, 자동 롤백과 별개
+  경로. 인자 없으면 `last-good-tag` 사용, 인자로 특정 태그 지정 가능)
+- ~~`.env` 템플릿 + pydantic Settings 표준 코드~~ **완료** — PR #4(`Jhoon/secops/pydantic-settings`)로
+  main 병합. `ci_sandbox/app/config.py`(pydantic-settings), `ci_sandbox/.env.example`, `.env`는
+  `.gitignore` 처리
+
+### 남은 것 (CI/CD 범위 내)
+
+- `notify-on-failure` job의 Slack 알림 연동 — 진행 중(2026-07-13), `SLACK_WEBHOOK_URL` 시크릿 등록 대기
+- PR 리뷰 없이 직접 병합하는 관행이 계속되고 있음(사실상 리뷰어 부재) — 문제로 판단되면 재검토 필요
 
 ## 7. CI 파이프라인 실제 실행 검증 (2026-07-12, 완료)
 

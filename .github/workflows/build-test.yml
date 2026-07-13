@@ -5,6 +5,13 @@ on:
   pull_request:
     branches: [main]
 
+# 같은 브랜치에서 연달아 push되면 deploy job이 harbor VM에 동시에 두 번 돌 수 있어서
+# (docker compose up이 겹치는 배포 사고로 이어질 수 있음), 순차 실행을 강제한다.
+# 진행 중인 배포를 취소하면 오히려 중간 상태로 남을 수 있어 cancel-in-progress는 false로 둔다.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   IMAGE_NAME: harbor.hizero.local/dangdang/ci-sandbox
 
@@ -115,5 +122,10 @@ jobs:
     if: failure()
     runs-on: ubuntu-latest
     steps:
-      - name: Notify dev (Slack integration pending)
-        run: echo 'TODO - send Slack notification about pipeline failure'
+      - name: Notify Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -sf -X POST -H 'Content-type: application/json' \
+            --data "{\"text\": \":x: *Build & Test* failed on \`${{ github.ref_name }}\` (${{ github.sha }})\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|워크플로 보기>\"}" \
+            "$SLACK_WEBHOOK_URL"
