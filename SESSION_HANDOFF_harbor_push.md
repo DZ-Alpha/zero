@@ -192,12 +192,16 @@
 
 ### 모니터링 스택
 - 별도 VM(모니터링 전용, harbor/CI 인프라와 장애 영향 분리)에 Prometheus/Loki/Tempo/
-  OpenTelemetry Collector/Grafana를 Docker Compose로 배포 (`infra/monitoring/`)
-- 구조: 앱 → OTel Collector(단일 수집 지점) → Tempo(트레이스)/Loki(로그)/Prometheus(메트릭,
-  Collector의 `:8889` exporter를 스크랩) → Grafana(통합 조회)
-- **실측으로 발견·수정한 것**: OTel Collector Contrib의 `loki` exporter가 deprecated되어 제거된
-  상태(2024-07-09부로, GitHub Issue #33916) → 공식 마이그레이션 가이드대로 `otlphttp` exporter +
-  Loki의 네이티브 OTLP 엔드포인트(`http://loki:3100/otlp`)로 교체
+  Grafana Alloy/Grafana를 Docker Compose로 배포 (`infra/monitoring/`)
+- 구조: 앱 → Alloy(단일 수집 지점, OTLP 수신) → Tempo(트레이스)/Loki(로그)/Prometheus(메트릭,
+  remote_write로 push) → Grafana(통합 조회)
+- **설계도 대조 후 교체(2026-07-13)**: 최초엔 범용 OTel Collector Contrib으로 구축했으나, 설계도
+  (`설계도_Alpha_july_13th.drawio`, `docker` 탭)가 Prometheus+**Alloy** 조합을 명시하고 있어서
+  Grafana Alloy로 교체함. Alloy는 OTel Collector의 Grafana 배포판이라 OTLP 수신 호환 —
+  `ci_sandbox` 계측 코드는 무변경, config만 교체(River 문법)
+- (교체 전 실측으로 발견·수정했던 것, 참고용) OTel Collector Contrib의 `loki` exporter가
+  deprecated되어 제거된 상태였음(2024-07-09부로, GitHub Issue #33916) — 지금은 Alloy로 교체되며
+  이 이슈 자체가 해소됨(Alloy는 `otelcol.exporter.loki` 네이티브 컴포넌트 보유)
 - Grafana에서 Prometheus/Loki/Tempo 3개 데이터소스 헬스체크 전부 통과 확인
 
 ### VM 템플릿 트러블슈팅 (harbor.credentials.local.md에 상세 기록)
@@ -210,7 +214,7 @@
 
 ### `ci_sandbox` OpenTelemetry 계측
 - FastAPI 자동 계측(트레이스), `/health` 요청 카운터(메트릭), 로그-트레이스 상관관계 연동
-- OTLP gRPC로 모니터링 VM의 OTel Collector에 전송(`ci_sandbox/app/telemetry.py`)
+- OTLP gRPC로 모니터링 VM의 Alloy에 전송(`ci_sandbox/app/telemetry.py`, 엔드포인트는 동일하게 유지)
 - **실측으로 발견·수정한 것**: `LoggingInstrumentor()`는 로그 포맷에 trace context를 주입할 뿐
   실제 로그를 export하지 않음(별개 기능) → `LoggerProvider`+`LoggingHandler`를 추가로 연결해야
   실제로 로그가 나감
