@@ -259,3 +259,33 @@ API로 확인함(`artifact_count: 1`).
 ### 참고 — 이번에 push는 main에 직접(‘ci: trigger…’ 류 빈 커밋 몇 개) 했음
 브랜치 전략상 원래는 PR 경유가 원칙인데, 파이프라인 트리거용 빈 커밋들은 편의상 main에 바로
 push했음. 다음 세션에서 이 패턴을 그대로 가져가도 될지, PR로 되돌릴지는 사용자 판단 필요.
+
+## 9. 인프라 레벨 모니터링 + Grafana Alerting (2026-07-13, 완료)
+
+### 인프라 메트릭 수집
+- harbor VM, DB VM, monitoring VM 3곳에 `prometheus-node-exporter`(Ubuntu 공식 패키지) 설치,
+  Prometheus 스크랩 타겟으로 등록 — 5개 타겟(자기 자신 포함) 전부 `up` 확인
+- **실측으로 발견한 것**: DB VM은 `ufw` 방화벽이 기본 인바운드 차단 상태라 9100 포트가 막혀있었음
+  → monitoring VM IP(`192.168.0.51`)에서만 9100을 허용하는 최소 권한 규칙으로 해결
+- **계정 관리**: harbor VM, monitoring VM에 `zero` 계정을 `bruce`와 별개로 신규 추가(rename 아님,
+  self-hosted runner/Harbor 자동기동 서비스가 `bruce`에 의존해서 rename은 리스크로 판단, 대신
+  병행 계정으로 무위험 확보). DB VM은 원래부터 `zero` 계정 사용 중이었음
+- DB VM의 Tailscale이 다른 팀원 계정으로 등록되어 있는 것을 발견 — 재설정 대신 팀원에게 해당
+  기기를 우리 tailnet에 "Share" 요청하는 방식으로 보류(팀원 협의 필요, 미완료)
+
+### Grafana 대시보드
+- `ZeroCheck Infra & App Overview` 대시보드 생성(Grafana API), 패널 4개: VM별 CPU/메모리/디스크
+  사용률 + `ci_sandbox` `/health` 요청률
+- 4개 패널 전부 실제 데이터로 렌더링되는 것 확인
+
+### Grafana Alerting
+- **설계 판단**: Prometheus Alertmanager를 별도로 추가하는 대신 Grafana 자체 Alerting 채택
+  (컨테이너 추가 부담 없음 + Loki 로그 기반 알림도 가능 + 이 프로젝트 규모에서 Alertmanager의
+  그룹핑/중복제거 강점이 실익으로 안 이어짐이 근거. 다만 "Grafana 다운 시 알림도 같이 죽는"
+  단일장애점은 감수하기로 함)
+- Slack Contact Point 생성(기존 CI/CD 알림과 같은 Webhook 재사용), 기본 알림 정책 연결
+- 알림 규칙 4개 등록: High CPU(>85%, 5m), High Memory(>90%, 5m), High Disk(>85%, 5m),
+  Instance Down(1m)
+- **실측 검증**: monitoring VM의 node_exporter를 실제로 중지시켜 `Instance Down` 규칙이 정확히
+  그 인스턴스만 `firing`으로 전환되는 것, Slack에 알림이 실제로 도착하는 것, 서비스 복구 후
+  다시 `inactive`(정상)로 돌아오는 것까지 전 과정 확인 후 정상화
