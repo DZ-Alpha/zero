@@ -4,3 +4,6 @@ __pycache__/
 
 # 로컬 전용 자격증명 (절대 커밋 금지)
 *.credentials.local.md
+
+# 환경별 설정 (템플릿은 .env.example로 커밋, 실제 값은 커밋 금지)
+.env
