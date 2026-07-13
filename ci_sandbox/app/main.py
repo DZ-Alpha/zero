@@ -14,4 +14,4 @@ logger = logging.getLogger(__name__)
 def health():
     health_check_counter.add(1)
     logger.info("health check requested")
-    return {"status": "ok", "environment": settings.environment, "demo": "second-try"}
+    return {"status": "ok", "environment": settings.environment}
