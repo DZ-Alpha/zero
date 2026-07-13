@@ -3,16 +3,17 @@
 Harbor/CI 인프라와 장애 영향을 분리하기 위해 모니터링은 별도 Proxmox VM(VMID 103,
 `192.168.0.51` / Tailscale `100.110.81.51`)에서 운영한다.
 
-구성: **OTel Collector가 단일 수집 지점**으로 앱에서 오는 로그/메트릭/트레이스를 OTLP로 받아
-각각 Loki(로그)/Prometheus(메트릭, `prometheus` exporter가 노출한 `/metrics`를 Prometheus가
-스크랩)/Tempo(트레이스)로 나눠 보내고, Grafana가 세 데이터소스를 조회한다.
+구성: **Grafana Alloy가 단일 수집 지점**으로 앱에서 오는 로그/메트릭/트레이스를 OTLP로 받아
+각각 Loki(로그)/Prometheus(메트릭, remote_write로 push)/Tempo(트레이스)로 나눠 보내고,
+Grafana가 세 데이터소스를 조회한다. (설계도 `docker` 탭 기준, Alloy는 OpenTelemetry Collector의
+Grafana Labs 배포판이라 OTLP를 그대로 받을 수 있음 — 앱 쪽 계측 코드 변경 불필요)
 
 ```
-앱 --OTLP(4317/4318)--> otel-collector --+--> tempo   (트레이스)
-                                          +--> loki    (로그)
-                                          +--> :8889 --(스크랩)--> prometheus (메트릭)
-                                                                        |
-                                                                     grafana (조회)
+앱 --OTLP(4317/4318)--> alloy --+--> tempo                        (트레이스)
+                                 +--> loki                         (로그)
+                                 +--> prometheus (remote_write push) (메트릭)
+                                                    |
+                                                 grafana (조회)
 ```
 
 ## 실행
