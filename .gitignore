@@ -7,3 +7,6 @@ __pycache__/
 
 # 환경별 설정 (템플릿은 .env.example로 커밋, 실제 값은 커밋 금지)
 .env
+
+# macOS Finder
+.DS_Store
