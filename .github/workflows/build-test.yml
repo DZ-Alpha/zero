@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build image
-        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+        run: docker build --pull -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:

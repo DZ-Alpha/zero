@@ -5,7 +5,13 @@
 # vendor "fix_deferred" (Debian has chosen not to patch yet), so no
 # upstream fix exists to pull in via apt upgrade.
 # Re-review this file whenever the Dockerfile base image changes.
+#
+# Re-reviewed 2026-07-15 after pinning python:3.12-slim to a digest (PR #16):
+# two new perl-base CVEs appeared under the same already-accepted rationale
+# above (perl is not invoked by ci_sandbox at runtime).
 
+CVE-2026-13221
+CVE-2026-57432
 CVE-2025-69720
 CVE-2026-41992
 CVE-2026-42496
