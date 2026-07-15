@@ -5,3 +5,15 @@ services:
     ports:
       - "8080:8000"
     restart: unless-stopped
+    # 런타임 보안 (OWASP Docker Security Cheat Sheet RULE #3/#4/#7/#8)
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+    mem_limit: 256m
+    cpus: 0.5
