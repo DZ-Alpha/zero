@@ -18,7 +18,7 @@ USER appuser
 
 EXPOSE 8000
 
-# 컨테이너가 살아있는 동안 Docker 데몬이 상시 헬스 체크 (CIS Docker Benchmark 4.6/5.26).
+# 컨테이너가 살아있는 동안 Docker 데몬이 상시 헬스 체크 (CIS Docker Benchmark v1.8.0, 4.6/5.27).
 # curl을 추가 설치하지 않고 표준 라이브러리만으로 확인 (불필요한 패키지 설치 지양, CIS 4.3).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)" || exit 1
