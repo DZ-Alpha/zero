@@ -17,4 +17,4 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
     mem_limit: 256m
     cpus: 0.5
-    pids_limit: 100  # fork bomb 방지 (CIS Docker Benchmark 5.28)
+    pids_limit: 100  # fork bomb 방지 (CIS Docker Benchmark v1.8.0, 5.29)
