@@ -30,6 +30,32 @@ jobs:
       - name: Run tests
         run: pytest ci_sandbox/tests
 
+  # backend/*-service는 아직 자체 테스트가 없어서(재헌님 인계 메모 확인, 2026-07-16 기준)
+  # pytest를 강제하지 않는다 - 지금 강제하면 테스트 부재로 전부 빨간불이 되어 정작 봐야 할
+  # 진짜 실패 신호가 묻힌다. 대신 의존성 설치 + import 스모크 체크로 "최소한 뜨는 코드인가"만
+  # 지금 단계에서 검증하고, 테스트가 생기면 이 스텝에 pytest를 추가하면 된다.
+  backend-build-test:
+    # main엔 아직 backend/ 디렉터리가 없다(PR #19 미병합) - 디렉터리 자체가 없는 브랜치에서
+    # 매트릭스를 그대로 돌리면 전부 "파일 없음"으로 실패하니, backend/ 아래 파일이 하나라도
+    # 있을 때만 실행되게 가드를 건다. PR #19가 병합되면 자동으로 정상 실행된다.
+    if: hashFiles('backend/**') != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [admin-service, community-service, diet-service, ingredients-service, login-service, main-service, product-service]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r backend/${{ matrix.service }}/requirements.txt
+      - name: Import smoke check
+        working-directory: backend/${{ matrix.service }}
+        run: python -c "import app.main"
+
   # 아래부터는 내부 SonarQube/Harbor에 접근해야 하므로 self-hosted(harbor VM) 러너에서 실행
   code-scanning:
     needs: build-test
@@ -53,6 +79,29 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  # backend/*-service 이미지 빌드+취약점 스캔만 수행한다. Harbor push/배포는 아직 대상이
+  # 아니다 - 서비스별 Harbor 프로젝트/배포 대상(VM)이 팀 논의로 정해지지 않은 상태에서
+  # 임의로 만들면 되돌리기 번거로운 인프라 결정을 CI 파이프라인이 먼저 확정해버리는 셈이라,
+  # 지금은 "병합 전에 취약점만 걸러낸다"까지만 하고 push/deploy는 별도 작업으로 남긴다.
+  backend-image-scanning:
+    needs: build-test
+    if: hashFiles('backend/**') != ''
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [admin-service, community-service, diet-service, ingredients-service, login-service, main-service, product-service]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --pull -t backend-${{ matrix.service }}:${{ github.sha }} backend/${{ matrix.service }}
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: backend-${{ matrix.service }}:${{ github.sha }}
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
 
@@ -122,7 +171,7 @@ jobs:
         run: echo "${{ github.sha }}" > ~/ci-sandbox-state/last-good-tag
 
   notify-on-failure:
-    needs: [build-test, code-scanning, image-scanning, image-push, deploy]
+    needs: [build-test, backend-build-test, code-scanning, image-scanning, backend-image-scanning, image-push, deploy]
     if: failure()
     runs-on: ubuntu-latest
     steps:
@@ -130,8 +179,10 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           BUILD_TEST_RESULT: ${{ needs.build-test.result }}
+          BACKEND_BUILD_TEST_RESULT: ${{ needs.backend-build-test.result }}
           CODE_SCANNING_RESULT: ${{ needs.code-scanning.result }}
           IMAGE_SCANNING_RESULT: ${{ needs.image-scanning.result }}
+          BACKEND_IMAGE_SCANNING_RESULT: ${{ needs.backend-image-scanning.result }}
           IMAGE_PUSH_RESULT: ${{ needs.image-push.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
         run: |
@@ -148,10 +199,12 @@ jobs:
             fi
           }
           [ "$BUILD_TEST_RESULT" = "failure" ] && add_failed "build-test"
+          [ "$BACKEND_BUILD_TEST_RESULT" = "failure" ] && add_failed "backend-build-test"
           [ "$CODE_SCANNING_RESULT" = "failure" ] && add_failed "code-scanning"
           if [ "$IMAGE_SCANNING_RESULT" = "failure" ]; then
             add_failed "image-scanning"
           fi
+          [ "$BACKEND_IMAGE_SCANNING_RESULT" = "failure" ] && add_failed "backend-image-scanning"
           [ "$IMAGE_PUSH_RESULT" = "failure" ] && add_failed "image-push"
           [ "$DEPLOY_RESULT" = "failure" ] && add_failed "deploy"
           TEXT=":x: *${FAILED_JOBS^}* failed on \`$BRANCH\` ($SHA)"
