@@ -20,15 +20,39 @@ scrape_configs:
 
   # Blackbox 모니터링 - 내부 지표(node_exporter)가 아니라 외부 관점에서 실제 접속 가능
   # 여부를 확인. HTTP 상태코드/응답시간/TLS 인증서 만료를 체크한다.
+  # 대상은 학원 LAN(192.168.0.x)이 아니라 Tailscale IP로 지정한다 - LAN IP는 학원 네트워크
+  # 안에서만 유효해서, 어디서든 동일하게 재현 가능한 Tailscale 주소를 쓰는 게 더 견고하다.
+  #
+  # 여기 job은 "우리 서비스 사용자가 실제로 겪는" 외부 가용성만 담는다(Grafana/ci_sandbox).
+  # SonarQube는 사용자가 접속하는 대상이 아니라 CI 파이프라인이 의존하는 내부 도구라
+  # 성격이 달라서 blackbox-http-ci-dependency job으로 분리했다(아래).
   - job_name: blackbox-http
     metrics_path: /probe
     params:
       module: [http_2xx]
     static_configs:
       - targets:
-          - http://192.168.0.53:9000 # SonarQube
-          - http://192.168.0.51:3000/login # Grafana
-          - http://192.168.0.53:8080/health # ci_sandbox 앱
+          - http://100.110.81.51:3000/login # Grafana (monitoring VM, Tailscale)
+          - http://100.96.79.73:8080/health # ci_sandbox 앱 (harbor VM, Tailscale)
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # SonarQube는 사용자 대면 서비스가 아니라 code-scanning 단계가 의존하는 CI 인프라라,
+  # "서비스 다운" 급 Critical이 아니라 "CI 파이프라인이 곧 막힐 수 있다" 정도로 성격이 다르다.
+  # 별도 job으로 분리해 라벨(job=blackbox-http-ci-dependency)로 구분하고, 알림 규칙에서도
+  # 사용자 대면 Black-box(Instance Down급)와 다르게 다룰 수 있게 한다.
+  - job_name: blackbox-http-ci-dependency
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://100.96.79.73:9000 # SonarQube (harbor VM, Tailscale) - CI 의존성 헬스체크
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -40,10 +64,13 @@ scrape_configs:
   - job_name: blackbox-http-insecure
     metrics_path: /probe
     params:
-      module: [http_2xx_insecure]
+      module: [harbor_health_check]
     static_configs:
       - targets:
-          - https://192.168.0.53 # Harbor UI (자체 서명 인증서)
+          # Harbor 공식 헬스체크 API - core/registry/portal/db/redis 등 내부 컴포넌트를
+          # 개별 체크해준다. 루트 경로보다 CI가 실제 쓰는 Registry까지 포함해 더 정확하다.
+          # harbor_health_check 모듈이 상태코드뿐 아니라 응답 바디의 status 필드까지 검증한다.
+          - https://100.96.79.73/api/v2.0/health # Harbor (harbor VM, Tailscale, 자체 서명 인증서)
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
