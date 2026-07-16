@@ -1,0 +1,9 @@
+# 프론트-백엔드 상호 승인 구조
+# 백엔드 코드는 프론트 담당자가, 프론트 코드는 백엔드 담당자가 리뷰/승인한다.
+#
+# 참고: 이 파일만으로는 리뷰가 "강제"되지 않는다. Settings > Branches > Branch protection
+# rule에서 "Require a pull request before merging" + "Require review from Code Owners"를
+# 켜야 실제로 병합 전 승인이 필수가 된다(admin 권한 필요, GitHub 공식 문서 기준).
+
+/backend/  @love-1006
+/frontend/ @areatmadm
