@@ -404,6 +404,14 @@ jobs:
           load: true
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
+      # image-scanning/backend-image-scanning과 같은 이유(setup-trivy 기본 설치 경로가
+      # $HOME/.local/bin/trivy-bin 고정이라 harbor-runner/harbor-runner-2가 동시에
+      # 돌면 "Text file busy"로 충돌 - 실제로 2번 재현/확인함) - 러너별 경로에 직접 설치.
+      - name: Install Trivy (per-runner path)
+        # v0.2.6
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
+        with:
+          path: /home/bruce/.trivy-bin/${{ runner.name }}
       - name: Trivy vulnerability scan
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -412,6 +420,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
+          skip-setup-trivy: true
       - name: Log in to Harbor
         # v3
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -427,6 +436,76 @@ jobs:
           docker tag "frontend:$SHA" "$IMAGE:stable"
           docker push "$IMAGE:$SHA"
           docker push "$IMAGE:stable"
+
+  # frontend/compose.production.example.yaml(성애님 작성) 기준으로 배포한다. 이 파일은
+  # dangdang-edge를 external 네트워크로 기대한다 - frontend와 b-gateway가 같은 네트워크에
+  # 있어야 frontend 컨테이너 안에서 http://b-gateway:8080이 열리기 때문(문서 기준).
+  # b-gateway 자체는 이 저장소에 없고 현재 --network host로 별도 실행 중이라는 것까지만
+  # 확인됨 - 실제 이미지/배포 설정은 팀 확인 후 별도 반영 예정이라, 지금은 frontend
+  # 컨테이너와 네트워크까지만 완성해둔다. FRONTEND_IMAGE/PUBLIC_APP_URL은 Secrets에서 온다.
+  frontend-deploy:
+    needs: frontend-image-scanning
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Log in to Harbor
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+      - name: Ensure dangdang-edge network exists
+        run: |
+          docker network inspect dangdang-edge >/dev/null 2>&1 \
+            || docker network create dangdang-edge
+      - name: Record previous stable digest
+        run: |
+          mkdir -p ~/frontend-state
+          docker inspect --format '{{.Id}}' \
+            harbor.hizero.local/dangdang/frontend:stable 2>/dev/null \
+            > ~/frontend-state/prev-digest || true
+      - name: Deploy via Docker Compose
+        working-directory: frontend
+        env:
+          FRONTEND_IMAGE: harbor.hizero.local/dangdang/frontend:stable
+          PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+          BACKEND_GATEWAY_URL: ${{ secrets.BACKEND_GATEWAY_URL }}
+        run: |
+          docker compose -f compose.production.example.yaml pull
+          docker compose -f compose.production.example.yaml up -d
+      - name: Health check
+        run: |
+          FMT='{{.State.Health.Status}}'
+          NAME=dangdang-frontend
+          for i in $(seq 1 10); do
+            STATUS=$(docker inspect --format "$FMT" "$NAME" 2>/dev/null || true)
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Health check attempt $i: $STATUS, retrying in 3s..."
+            sleep 3
+          done
+          echo "Health check failed after retries"
+          exit 1
+      - name: Rollback on failed health check
+        if: failure()
+        working-directory: frontend
+        env:
+          PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+          BACKEND_GATEWAY_URL: ${{ secrets.BACKEND_GATEWAY_URL }}
+        run: |
+          PREV=$(cat ~/frontend-state/prev-digest 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            docker tag "$PREV" harbor.hizero.local/dangdang/frontend:stable
+            FRONTEND_IMAGE=harbor.hizero.local/dangdang/frontend:stable \
+              docker compose -f compose.production.example.yaml up -d
+          else
+            echo "No previous good tag recorded - nothing to roll back to"
+          fi
 
   # PR을 여는 것만으로 실제 서버에 배포되면 안 되므로, main에 push(=병합)된 경우에만 배포한다.
   # github.event (객체)가 아니라 github.event_name (문자열)으로 비교해야 한다 - 공식 문서/이슈에서
@@ -493,6 +572,7 @@ jobs:
       - frontend-image-scanning
       - deploy
       - backend-deploy
+      - frontend-deploy
     if: failure()
     runs-on: ubuntu-latest
     steps:
@@ -508,6 +588,7 @@ jobs:
           FRONTEND_SCAN_RESULT: ${{ needs.frontend-image-scanning.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
           BACKEND_DEPLOY_RESULT: ${{ needs.backend-deploy.result }}
+          FRONTEND_DEPLOY_RESULT: ${{ needs.frontend-deploy.result }}
         run: |
           REPO_URL="${{ github.server_url }}/${{ github.repository }}"
           RUN_URL="$REPO_URL/actions/runs/${{ github.run_id }}"
@@ -541,6 +622,9 @@ jobs:
           [ "$DEPLOY_RESULT" = "failure" ] && add_failed "deploy"
           if [ "$BACKEND_DEPLOY_RESULT" = "failure" ]; then
             add_failed "backend-deploy"
+          fi
+          if [ "$FRONTEND_DEPLOY_RESULT" = "failure" ]; then
+            add_failed "frontend-deploy"
           fi
           TEXT=":x: *${FAILED_JOBS^}* failed on \`$BRANCH\` ($SHA)"
           TEXT="$TEXT\n<$RUN_URL|결과 보기>"
