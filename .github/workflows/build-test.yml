@@ -5,15 +5,31 @@ on:
   pull_request:
     branches: [main]
 
-# 같은 브랜치에서 연달아 push되면 deploy job이 harbor VM에 동시에 두 번 돌 수 있어서
-# (docker compose up이 겹치는 배포 사고로 이어질 수 있음), 순차 실행을 강제한다.
-# 진행 중인 배포를 취소하면 오히려 중간 상태로 남을 수 있어 cancel-in-progress는 false로 둔다.
+# 같은 브랜치에 연달아 push되면 deploy job이 harbor VM에 동시에 두 번 돌 수 있어서
+# (docker compose up이 겹치는 배포 사고로 이어질 수 있음), main push에서는 순차 실행을
+# 강제하고 진행 중인 배포를 취소하지 않는다(cancel-in-progress: false).
+# 반면 PR에 커밋을 연달아 push하는 경우는 배포가 아니라서 취소해도 안전한데, 기존엔
+# false를 전체에 고정해둬서 옛 커밋의 실행이 self-hosted 러너 1대를 계속 붙잡고 있었다
+# (공식 문서: cancel-in-progress는 github.ref/event_name 기준 조건식으로 다르게 줄 수 있음 -
+# yamllint disable-line rule:line-length
+# https://docs.github.com/actions/using-workflows/control-the-concurrency-of-workflows-and-jobs).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE_NAME: harbor.hizero.local/dangdang/ci-sandbox
+
+# GITHUB_TOKEN 기본 권한을 워크플로 파일에 명시적으로 최소화한다. 저장소 설정(현재 read)에만
+# 의존하면, 나중에 누군가 저장소 기본값을 write로 바꿀 때 이 워크플로도 같이 영향을 받는다 -
+# 공식 하드닝 가이드 권고. pull-requests: read는 dorny/paths-filter가 PR의 변경 파일
+# 목록을 GitHub API로 조회할 때 필요(처음엔 안 넣었다가 "Resource not accessible by
+# integration" 에러로 실제 PR 실행에서 확인 후 추가함):
+# yamllint disable-line rule:line-length
+# https://docs.github.com/actions/security-guides/security-hardening-for-github-actions
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   # backend/ 디렉터리 존재 여부를 먼저 체크아웃해서 확인한다. job 레벨 if:는 체크아웃 전
@@ -26,7 +42,8 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
       services: ${{ steps.filter.outputs.changes }}
     steps:
-      - uses: actions/checkout@v4
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - id: check
         run: |
           if [ -d backend ] && [ -n "$(find backend -type f | head -1)" ]; then
@@ -39,7 +56,8 @@ jobs:
       # 8개 전부 다시 빌드+Trivy 스캔을 돌려서, self-hosted 러너 1대에 큐가 쌓여 실제로
       # 51분까지 걸린 적이 있었음(2026-07-16 직접 확인) - dorny/paths-filter(변경 경로 기반
       # 매트릭스 생성의 공식 예시 패턴)로 필요한 것만 돌리게 줄인다.
-      - uses: dorny/paths-filter@v4
+      # v4
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706
         id: filter
         if: steps.check.outputs.exists == 'true'
         with:
@@ -57,9 +75,11 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Set up Python
-        uses: actions/setup-python@v5
+        # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
           cache: 'pip'
@@ -87,9 +107,11 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.detect-backend.outputs.services) }}
     steps:
-      - uses: actions/checkout@v4
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Set up Python
-        uses: actions/setup-python@v5
+        # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
           cache: 'pip'
@@ -105,9 +127,11 @@ jobs:
     needs: build-test
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: SonarQube scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        # v6
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602  # yamllint disable-line rule:line-length
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -115,14 +139,23 @@ jobs:
   # code-scanning(SonarQube, 소스 대상)과 image-scanning(Trivy, 빌드된 이미지 대상)은 서로
   # 결과를 안 쓰는데 지금까지 순차 실행이었다 - build-test 성공 후 병렬로 돌려도 되는 걸
   # 학습자료 8장에 이미 적어뒀으면서 실제로 반영은 안 하고 있었다. 이번에 반영.
+  #
+  # push까지 이 job 안에서 한다: self-hosted 러너는 한 번에 job 하나만 실행하고, needs로
+  # 연결된 job이라도 같은 라벨의 다른 러너에 배정될 수 있다는 보장 부재가 공식적으로 확인됨
+  # (러너가 1대일 때는 우연히 항상 같은 머신이라 문제가 드러나지 않았음). 그래서 원래
+  # 별도 job이던 image-push를 여기로 합쳐, 빌드해서 로컬 docker에 올려둔 이미지를 같은
+  # 러너 안에서 바로 push하도록 만든다 - 러너를 2대로 늘려도 안전하게.
   image-scanning:
     needs: build-test
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v4
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
       - name: Build image
-        uses: docker/build-push-action@v7
+        # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           pull: true
@@ -130,12 +163,30 @@ jobs:
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # 기본 캐시 경로($GITHUB_WORKSPACE/.cache/trivy)는 actions/checkout이 매번
+      # clean해서 매 job마다 취약점 DB를 새로 받고 있었다(실측: 5개 서비스 부하
+      # 테스트에서 job당 2~3분 중 상당 부분이 이 다운로드였음). RUNNER_TEMP로
+      # 옮기면 해결될 줄 알았으나, 실제로 재실행해서 로그를 보니("Need to update DB")
+      # RUNNER_TEMP도 job이 끝나면 비워지는 걸 실측으로 확인함 - _work 트리 자체를
+      # 벗어난 경로가 필요하다. harbor-runner/harbor-runner-2가 같은 VM(bruce 계정)을
+      # 공유하므로 runner.name으로 러너별 경로를 분리해 동시 쓰기 충돌도 피한다.
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
+          cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
+      - name: Log in to Harbor
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+      - name: Push image
+        run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
   # backend/*-service 이미지 빌드+취약점 스캔만 수행한다. Harbor push/배포는 아직 대상이
   # 아니다 - 서비스별 Harbor 프로젝트/배포 대상(VM)이 팀 논의로 정해지지 않은 상태에서
@@ -152,10 +203,13 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.detect-backend.outputs.services) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v4
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
       - name: Build image
-        uses: docker/build-push-action@v7
+        # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: backend/${{ matrix.service }}
           pull: true
@@ -164,36 +218,27 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: backend-${{ matrix.service }}:${{ github.sha }}
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
-
-  image-push:
-    needs: image-scanning
-    runs-on: self-hosted
-    steps:
-      - name: Log in to Harbor
-        uses: docker/login-action@v3
-        with:
-          registry: harbor.hizero.local
-          username: ${{ secrets.HARBOR_ROBOT_USER }}
-          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
-      - name: Push image
-        run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
 
   # PR을 여는 것만으로 실제 서버에 배포되면 안 되므로, main에 push(=병합)된 경우에만 배포한다.
   # github.event (객체)가 아니라 github.event_name (문자열)으로 비교해야 한다 - 공식 문서/이슈에서
   # 확인된 흔한 실수 포인트(actions/runner#950).
   deploy:
-    needs: image-push
+    needs: image-scanning
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Log in to Harbor
-        uses: docker/login-action@v3
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: harbor.hizero.local
           username: ${{ secrets.HARBOR_ROBOT_USER }}
@@ -242,7 +287,6 @@ jobs:
       - code-scanning
       - image-scanning
       - backend-image-scanning
-      - image-push
       - deploy
     if: failure()
     runs-on: ubuntu-latest
@@ -255,7 +299,6 @@ jobs:
           CODE_SCANNING_RESULT: ${{ needs.code-scanning.result }}
           IMAGE_SCANNING_RESULT: ${{ needs.image-scanning.result }}
           BACKEND_SCAN_RESULT: ${{ needs.backend-image-scanning.result }}
-          IMAGE_PUSH_RESULT: ${{ needs.image-push.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
         run: |
           REPO_URL="${{ github.server_url }}/${{ github.repository }}"
@@ -281,7 +324,6 @@ jobs:
           if [ "$BACKEND_SCAN_RESULT" = "failure" ]; then
             add_failed "backend-image-scanning"
           fi
-          [ "$IMAGE_PUSH_RESULT" = "failure" ] && add_failed "image-push"
           [ "$DEPLOY_RESULT" = "failure" ] && add_failed "deploy"
           TEXT=":x: *${FAILED_JOBS^}* failed on \`$BRANCH\` ($SHA)"
           TEXT="$TEXT\n<$RUN_URL|결과 보기>"
