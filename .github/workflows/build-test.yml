@@ -283,11 +283,11 @@ jobs:
       - name: Push image
         run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-  # backend/*-service 이미지를 빌드+스캔하고, 통과한 것만 Harbor에 push한다(2026-07-17
-  # 추가 - 그 전까지는 스캔만 하고 push가 없어서 배포 대상이 될 수 없었다). 태그는 두 개:
-  # :<sha>(추적용, 불변)와 :stable(배포용, 이동 태그) - 커밋마다 바뀐 서비스만 다시
-  # 빌드되므로(paths-filter 매트릭스), 안 바뀐 서비스의 :stable은 이전 그대로 유지되고
-  # 바뀐 서비스만 :stable이 갱신되는 방식으로 8개 서비스의 "부분 배포"를 자연스럽게 처리한다.
+  # backend/*-service 이미지를 빌드+스캔하고, 통과한 것만 Harbor에 push한다. 태그는
+  # 두 개: :<sha>(추적/롤백용, 불변)와 :latest(배포용, 이동 태그 - 재헌님 production
+  # compose의 기본 태그 컨벤션과 맞춤). 커밋마다 바뀐 서비스만 다시 빌드되므로
+  # (paths-filter 매트릭스), 안 바뀐 서비스의 :latest는 이전 그대로 유지되고 바뀐
+  # 서비스만 :latest가 갱신되는 방식으로 8개 서비스의 "부분 배포"를 자연스럽게 처리한다.
   backend-image-scanning:
     needs: [detect-backend, build-test]
     if: >-
@@ -358,14 +358,13 @@ jobs:
   # self-hosted 러너(harbor VM)에서 실행되지만 harbor VM 자신의 Docker가 아니라
   # SSH로 production VM에 접속해 그쪽의 기존 docker-compose.yaml을 그대로 pull/up
   # 한다 - 이미지/네트워크/헬스체크 스크립트를 이 저장소에 새로 만들지 않고 이미
-  # 검증된 재헌님의 구성을 그대로 재사용한다. workflow_dispatch로만 실행되므로
-  # (on: 블록 참고) 병합만으로는 절대 트리거되지 않는다 - 사람이 Actions 탭에서
-  # 직접 실행 버튼을 누르는 것 자체가 승인 절차다.
-  # 배포 승인(workflow_dispatch 전용) 게이트를 없애고 main push 시 자동 배포로
-  # 바꾼다(2026-07-18, 지훈 지시 - "그 대신 CI를 신중하게"). 그래서 code-scanning
-  # (SonarQube Quality Gate 하드게이트 포함)까지 needs에 넣어, 정적분석이 실패하면
-  # 배포 자체가 안 되게 한다. workflow_dispatch는 이전 태그로 수동 재배포/롤백용으로
-  # 계속 남겨둔다.
+  # 검증된 재헌님의 구성을 그대로 재사용한다.
+  #
+  # main push 시 자동 배포(2026-07-18, 지훈 지시 - "그 대신 CI를 신중하게"로
+  # 맞바꿈). 원래는 workflow_dispatch(수동 실행=승인)로만 배포했었는데, 그 승인
+  # 게이트를 없애는 대신 code-scanning(SonarQube Quality Gate 하드게이트 포함)까지
+  # needs에 넣어 정적분석이 실패하면 배포 자체가 안 되게 했다. workflow_dispatch는
+  # 이전 태그로 수동 재배포/롤백용으로 계속 남겨둔다.
   backend-deploy-production:
     needs: [backend-image-scanning, code-scanning]
     # always()가 없으면 needs 잡이 skip될 때(예: 이번 커밋에 backend 변경 없음) 이
@@ -456,9 +455,8 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           $SSH "echo $TAG > ~/backend/.last-deployed-tag"
 
-  # frontend/ 이미지 빌드+스캔+push. 백엔드와 동일한 :sha/:stable 이중 태그 전략을 쓴다.
-  # 배포(frontend-deploy)는 b-gateway 실제 배포 위치/네트워크 구성이 팀 확인 중이라
-  # 아직 추가하지 않았다 - 이 job까지는 대상 VM과 무관하게 지금 완성할 수 있다.
+  # frontend/ 이미지 빌드+스캔+push. 백엔드와 동일한 :sha/:latest 이중 태그 전략을 쓴다.
+  # 배포는 아래 frontend-deploy-production job 참고.
   frontend-image-scanning:
     needs: [detect-frontend, build-test]
     if: needs.detect-frontend.outputs.changed == 'true'
@@ -519,8 +517,7 @@ jobs:
   # frontend도 backend-deploy-production과 같은 이유로 production VM(192.168.0.13)에
   # SSH로 배포한다 - frontend가 dangdang-edge에서 b-gateway:8080에 닿으려면 같은
   # Docker 호스트/네트워크에 있어야 하는데, harbor VM은 그 네트워크가 아니다.
-  # workflow_dispatch로만 실행(자동 배포 아님, 사람이 승인=실행).
-  # backend-deploy-production과 같은 이유/패턴(always() 필요성 포함).
+  # 트리거/always() 필요성은 backend-deploy-production과 동일(위 주석 참고).
   frontend-deploy-production:
     needs: [frontend-image-scanning, code-scanning]
     if: |
@@ -770,7 +767,7 @@ jobs:
             add_failed "backend-deploy-production"
           fi
           if [ "$FRONTEND_DEPLOY_RESULT" = "failure" ]; then
-            add_failed "frontend-deploy"
+            add_failed "frontend-deploy-production"
           fi
           TEXT=":x: *${FAILED_JOBS^}* failed on \`$BRANCH\` ($SHA)"
           TEXT="$TEXT\n<$RUN_URL|결과 보기>"
