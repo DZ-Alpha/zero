@@ -236,11 +236,11 @@ jobs:
       - name: Tag and push (sha + stable)
         run: |
           IMAGE="harbor.hizero.local/dangdang/backend-${{ matrix.service }}"
-          # yamllint disable-line rule:line-length
-          docker tag backend-${{ matrix.service }}:${{ github.sha }} "$IMAGE:${{ github.sha }}"
-          # yamllint disable-line rule:line-length
-          docker tag backend-${{ matrix.service }}:${{ github.sha }} "$IMAGE:stable"
-          docker push "$IMAGE:${{ github.sha }}"
+          SHA="${{ github.sha }}"
+          LOCAL="backend-${{ matrix.service }}:$SHA"
+          docker tag "$LOCAL" "$IMAGE:$SHA"
+          docker tag "$LOCAL" "$IMAGE:stable"
+          docker push "$IMAGE:$SHA"
           docker push "$IMAGE:stable"
 
   # main 병합 시에만 배포한다(PR은 배포하지 않음). backend-image-scanning이 이번 커밋에서
