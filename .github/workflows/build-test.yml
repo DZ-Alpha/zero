@@ -171,9 +171,20 @@ jobs:
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # frontend/ 존재 여부에 따라 sonar.sources를 동적으로 넓힌다 - sonar-project.properties에
+      # frontend를 그냥 추가하면, 아직 frontend/가 없는 브랜치(main에 sungA/front/main이
+      # 병합되기 전)에서 sonar-scanner가 "폴더가 없다"며 바로 실패한다(실제로 확인함).
+      - name: Determine sonar sources
+        id: sonar-sources
+        run: |
+          SOURCES="ci_sandbox"
+          [ -d frontend ] && SOURCES="$SOURCES,frontend"
+          echo "sources=$SOURCES" >> "$GITHUB_OUTPUT"
       - name: SonarQube scan
         # v6
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602  # yamllint disable-line rule:line-length
+        with:
+          args: -Dsonar.sources=${{ steps.sonar-sources.outputs.sources }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
