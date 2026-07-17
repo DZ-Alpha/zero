@@ -170,6 +170,21 @@ jobs:
       # RUNNER_TEMP도 job이 끝나면 비워지는 걸 실측으로 확인함 - _work 트리 자체를
       # 벗어난 경로가 필요하다. harbor-runner/harbor-runner-2가 같은 VM(bruce 계정)을
       # 공유하므로 runner.name으로 러너별 경로를 분리해 동시 쓰기 충돌도 피한다.
+      #
+      # trivy-action은 매번 aquasecurity/setup-trivy를 호출해 바이너리를 설치하는데,
+      # 이 액션의 기본 설치 경로가 $HOME/.local/bin/trivy-bin으로 고정돼 있어(경로를
+      # 바꿀 입력을 trivy-action이 열어주지 않음) 두 러너가 같은 bruce 계정을 공유하는
+      # 이 환경에서는 두 잡이 동시에 같은 바이너리 파일을 설치하다 "Text file busy"로
+      # 충돌한다(실제로 2번 재현/재실행으로 확인함). 공식 우회: setup-trivy를 직접
+      # 호출해 러너별 경로에 설치하고, trivy-action에는 skip-setup-trivy로 재설치를
+      # 건너뛰게 한다(https://github.com/aquasecurity/trivy-action#custom-setup - 및
+      # yamllint disable-line rule:line-length
+      # aquasecurity/setup-trivy action.yaml의 skip-setup-trivy 입력 설명 참고).
+      - name: Install Trivy (per-runner path)
+        # v0.2.6
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
+        with:
+          path: /home/bruce/.trivy-bin/${{ runner.name }}
       - name: Trivy vulnerability scan
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -178,6 +193,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
+          skip-setup-trivy: true
       - name: Log in to Harbor
         # v3
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -218,6 +234,15 @@ jobs:
           load: true
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      # image-scanning job의 같은 이름 스텝 참고 - setup-trivy 기본 설치 경로가
+      # $HOME/.local/bin/trivy-bin로 고정돼 있어 harbor-runner/harbor-runner-2가
+      # 동시에 스캔을 돌리면 "Text file busy"로 충돌한다(실제로 재현함). 러너별
+      # 경로에 직접 설치하고 trivy-action의 재설치는 건너뛴다.
+      - name: Install Trivy (per-runner path)
+        # v0.2.6
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
+        with:
+          path: /home/bruce/.trivy-bin/${{ runner.name }}
       - name: Trivy vulnerability scan
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -226,6 +251,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
+          skip-setup-trivy: true
       - name: Log in to Harbor
         # v3
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
