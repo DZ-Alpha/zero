@@ -188,10 +188,11 @@ jobs:
       - name: Push image
         run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-  # backend/*-service 이미지 빌드+취약점 스캔만 수행한다. Harbor push/배포는 아직 대상이
-  # 아니다 - 서비스별 Harbor 프로젝트/배포 대상(VM)이 팀 논의로 정해지지 않은 상태에서
-  # 임의로 만들면 되돌리기 번거로운 인프라 결정을 CI 파이프라인이 먼저 확정해버리는 셈이라,
-  # 지금은 "병합 전에 취약점만 걸러낸다"까지만 하고 push/deploy는 별도 작업으로 남긴다.
+  # backend/*-service 이미지를 빌드+스캔하고, 통과한 것만 Harbor에 push한다(2026-07-17
+  # 추가 - 그 전까지는 스캔만 하고 push가 없어서 배포 대상이 될 수 없었다). 태그는 두 개:
+  # :<sha>(추적용, 불변)와 :stable(배포용, 이동 태그) - 커밋마다 바뀐 서비스만 다시
+  # 빌드되므로(paths-filter 매트릭스), 안 바뀐 서비스의 :stable은 이전 그대로 유지되고
+  # 바뀐 서비스만 :stable이 갱신되는 방식으로 8개 서비스의 "부분 배포"를 자연스럽게 처리한다.
   backend-image-scanning:
     needs: [detect-backend, build-test]
     if: >-
@@ -225,6 +226,107 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
+      - name: Log in to Harbor
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+      - name: Tag and push (sha + stable)
+        run: |
+          IMAGE="harbor.hizero.local/dangdang/backend-${{ matrix.service }}"
+          # yamllint disable-line rule:line-length
+          docker tag backend-${{ matrix.service }}:${{ github.sha }} "$IMAGE:${{ github.sha }}"
+          # yamllint disable-line rule:line-length
+          docker tag backend-${{ matrix.service }}:${{ github.sha }} "$IMAGE:stable"
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:stable"
+
+  # main 병합 시에만 배포한다(PR은 배포하지 않음). backend-image-scanning이 이번 커밋에서
+  # 바뀐 서비스가 없어 스킵되면(needs 기본 동작) 이 job도 자동으로 스킵된다 - 바뀐 게
+  # 없으면 재배포할 것도 없으므로 의도된 동작이다. 8개 서비스를 한 스택으로 묶어
+  # docker compose로 한 번에 pull/up하고, 실패 시 이전 :stable 이미지 digest로 되돌린다.
+  backend-deploy:
+    needs: backend-image-scanning
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    env:
+      SERVICES: >-
+        admin-service community-service diet-service ingredients-service
+        login-service main-service product-service recipe-service
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Log in to Harbor
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+      - name: Write runtime .env
+        working-directory: infra/backend
+        run: |
+          cat > .env <<EOF
+          POSTGRES_HOST=${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT=${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_HOST=${{ secrets.REDIS_HOST }}
+          REDIS_PORT=${{ secrets.REDIS_PORT }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          EOF
+      - name: Record previous stable digests
+        working-directory: infra/backend
+        run: |
+          mkdir -p ~/backend-state
+          for s in $SERVICES; do
+            IMAGE="harbor.hizero.local/dangdang/backend-$s:stable"
+            docker inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null \
+              > ~/backend-state/"$s".prev-digest || true
+          done
+      - name: Deploy via Docker Compose
+        working-directory: infra/backend
+        run: |
+          docker compose pull
+          docker compose up -d
+      - name: Health check
+        run: |
+          declare -A PORTS=(
+            [admin-service]=8001 [community-service]=8002 [diet-service]=8003
+            [ingredients-service]=8004 [login-service]=8005 [main-service]=8006
+            [product-service]=8007 [recipe-service]=8008
+          )
+          for s in $SERVICES; do
+            PORT="${PORTS[$s]}"
+            OK=""
+            for i in $(seq 1 10); do
+              if curl -fs "http://localhost:$PORT/health" >/dev/null; then
+                OK=1
+                break
+              fi
+              sleep 3
+            done
+            if [ -z "$OK" ]; then
+              echo "Health check failed for $s (port $PORT)"
+              exit 1
+            fi
+          done
+          echo "All backend services healthy"
+      - name: Rollback failed services on failed health check
+        if: failure()
+        working-directory: infra/backend
+        run: |
+          for s in $SERVICES; do
+            PREV=$(cat ~/backend-state/"$s".prev-digest 2>/dev/null || true)
+            if [ -n "$PREV" ]; then
+              IMAGE="harbor.hizero.local/dangdang/backend-$s"
+              docker tag "$PREV" "$IMAGE:stable"
+            fi
+          done
+          docker compose up -d
 
   # PR을 여는 것만으로 실제 서버에 배포되면 안 되므로, main에 push(=병합)된 경우에만 배포한다.
   # github.event (객체)가 아니라 github.event_name (문자열)으로 비교해야 한다 - 공식 문서/이슈에서
@@ -288,6 +390,7 @@ jobs:
       - image-scanning
       - backend-image-scanning
       - deploy
+      - backend-deploy
     if: failure()
     runs-on: ubuntu-latest
     steps:
@@ -300,6 +403,7 @@ jobs:
           IMAGE_SCANNING_RESULT: ${{ needs.image-scanning.result }}
           BACKEND_SCAN_RESULT: ${{ needs.backend-image-scanning.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
+          BACKEND_DEPLOY_RESULT: ${{ needs.backend-deploy.result }}
         run: |
           REPO_URL="${{ github.server_url }}/${{ github.repository }}"
           RUN_URL="$REPO_URL/actions/runs/${{ github.run_id }}"
@@ -325,6 +429,9 @@ jobs:
             add_failed "backend-image-scanning"
           fi
           [ "$DEPLOY_RESULT" = "failure" ] && add_failed "deploy"
+          if [ "$BACKEND_DEPLOY_RESULT" = "failure" ]; then
+            add_failed "backend-deploy"
+          fi
           TEXT=":x: *${FAILED_JOBS^}* failed on \`$BRANCH\` ($SHA)"
           TEXT="$TEXT\n<$RUN_URL|결과 보기>"
           curl -sf -X POST \
