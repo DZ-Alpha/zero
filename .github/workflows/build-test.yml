@@ -163,12 +163,13 @@ jobs:
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # self-hosted 러너는 GitHub 호스팅형과 달리 RUNNER_TEMP가 job 사이에 자동으로
-      # 안 비워진다(공식 확인) - 반면 기본 캐시 경로($GITHUB_WORKSPACE/.cache/trivy)는
-      # actions/checkout이 매번 clean해서 매 job마다 취약점 DB를 새로 받고 있었다
-      # (실측: 5개 서비스 부하 테스트에서 job당 2~3분 중 상당 부분이 이 다운로드였음).
-      # RUNNER_TEMP는 러너 인스턴스별로 독립된 경로라 harbor-runner/harbor-runner-2가
-      # 같은 VM에 있어도 캐시를 동시에 써서 충돌할 위험이 없다.
+      # 기본 캐시 경로($GITHUB_WORKSPACE/.cache/trivy)는 actions/checkout이 매번
+      # clean해서 매 job마다 취약점 DB를 새로 받고 있었다(실측: 5개 서비스 부하
+      # 테스트에서 job당 2~3분 중 상당 부분이 이 다운로드였음). RUNNER_TEMP로
+      # 옮기면 해결될 줄 알았으나, 실제로 재실행해서 로그를 보니("Need to update DB")
+      # RUNNER_TEMP도 job이 끝나면 비워지는 걸 실측으로 확인함 - _work 트리 자체를
+      # 벗어난 경로가 필요하다. harbor-runner/harbor-runner-2가 같은 VM(bruce 계정)을
+      # 공유하므로 runner.name으로 러너별 경로를 분리해 동시 쓰기 충돌도 피한다.
       - name: Trivy vulnerability scan
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -176,7 +177,7 @@ jobs:
           image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
-          cache-dir: ${{ runner.temp }}/trivy-cache
+          cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
       - name: Log in to Harbor
         # v3
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -223,7 +224,7 @@ jobs:
           image-ref: backend-${{ matrix.service }}:${{ github.sha }}
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
-          cache-dir: ${{ runner.temp }}/trivy-cache
+          cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
 
   # PR을 여는 것만으로 실제 서버에 배포되면 안 되므로, main에 push(=병합)된 경우에만 배포한다.
   # github.event (객체)가 아니라 github.event_name (문자열)으로 비교해야 한다 - 공식 문서/이슈에서
