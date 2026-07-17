@@ -85,6 +85,14 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./config/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      # 대시보드/알람 규칙/알림 라우팅을 코드로 관리(2026-07-17) - contact point(Slack webhook
+      # 등 시크릿 포함)는 제외했다: Grafana 파일 프로비저닝의 환경변수 치환이 contact point에서는
+      # 안정적으로 안 된다는 공식 이슈가 있어(grafana/grafana#56437, #54984), 시크릿을 평문으로
+      # 커밋하는 것보다 지금처럼 UI/API로 관리하고 harbor.credentials.local.md에 복구 절차를
+      # 남겨두는 쪽이 더 안전하다고 판단함.
+      - ./config/grafana-dashboards-provisioning.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
+      - ./dashboards/zerocheck-overview.json:/etc/grafana/provisioning/dashboards/zerocheck/zerocheck-overview.json:ro
+      - ./config/grafana-alerting:/etc/grafana/provisioning/alerting:ro
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       # 알림에 포함되는 쿼리/Silence 링크가 노트북에서도 열리도록 Tailscale IP 기준으로 설정

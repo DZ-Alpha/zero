@@ -1,1 +1,588 @@
-{"meta":{"type":"db","canSave":true,"canEdit":true,"canAdmin":true,"canStar":true,"canDelete":true,"slug":"zerocheck-infra-and-app-overview","url":"/d/zerocheck-overview/zerocheck-infra-and-app-overview","expires":"0001-01-01T00:00:00Z","created":"2026-07-13T07:38:36Z","updated":"2026-07-15T02:07:41Z","updatedBy":"admin","createdBy":"admin","version":7,"hasAcl":false,"isFolder":false,"apiVersion":"v0alpha1","folderId":0,"folderUid":"","folderTitle":"General","folderUrl":"","provisioned":false,"provisionedExternalId":"","annotationsPermissions":{"dashboard":{"canAdd":true,"canEdit":true,"canDelete":true},"organization":{"canAdd":true,"canEdit":true,"canDelete":true}}},"dashboard":{"id":1,"panels":[{"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":0},"id":100,"panels":[],"title":"📊 개요","type":"row"},{"gridPos":{"h":3,"w":24,"x":0,"y":1},"id":101,"options":{"content":"**ZeroCheck 인프라 \u0026 앱 모니터링 개요** — VM 3대(harbor/db/monitoring)의 White-box 지표(node_exporter)와 Harbor의 Black-box 외부 가용성 체크, ci_sandbox 앱의 RED(Rate/Errors/Duration) 지표를 함께 봅니다. 임계치: CPU 85%(경고, 10분 지속) · Memory 90%(경고) · Disk 85%(경고)/95%(위험) · 앱 5xx 에러율 5%(위험). 색상 기준: 초록=정상, 주황=경고, 빨강=즉시 조치 필요.","mode":"markdown"},"title":"","type":"text"},{"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":4},"id":102,"panels":[],"title":"🚦 가용성 현황","type":"row"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"description":"node_exporter 기준 White-box 가용성. up=1이면 Prometheus가 해당 VM의 node_exporter 스크랩에 성공한 것(서버가 살아있음).","fieldConfig":{"defaults":{"mappings":[{"options":{"0":{"color":"red","text":"DOWN"},"1":{"color":"green","text":"UP"}},"type":"value"}]},"overrides":[]},"gridPos":{"h":4,"w":12,"x":0,"y":5},"id":103,"options":{"colorMode":"background","graphMode":"none","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":true},"textMode":"value_and_name"},"targets":[{"expr":"up{job=~\"harbor-vm|db-vm|monitoring-vm\"}","instant":true,"legendFormat":"{{job}}","refId":"A"}],"title":"인프라 VM 가용성","type":"stat"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"description":"Black-box 체크 - 실제 HTTP 요청으로 확인한 외부 접속 가능 여부. Harbor(공식 헬스체크 API), SonarQube, Grafana, ci_sandbox 대상.","fieldConfig":{"defaults":{"mappings":[{"options":{"0":{"color":"red","text":"DOWN"},"1":{"color":"green","text":"UP"}},"type":"value"}]},"overrides":[]},"gridPos":{"h":4,"w":12,"x":12,"y":5},"id":104,"options":{"colorMode":"background","graphMode":"none","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":true},"textMode":"value_and_name"},"targets":[{"expr":"probe_success","instant":true,"legendFormat":"{{instance}}","refId":"A"}],"title":"외부 서비스 가용성 (Blackbox)","type":"stat"},{"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":9},"id":105,"panels":[],"title":"🖥️ 인프라 리소스 (VM)","type":"row"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"description":"경고 임계치 85%(10분 지속). harbor VM은 CI 빌드 중 정상적으로 스파이크할 수 있어 지속시간을 5분→10분으로 조정함.","fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":85}]},"unit":"percent"},"overrides":[]},"gridPos":{"h":6,"w":8,"x":0,"y":10},"id":5,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":true},"textMode":"value_and_name"},"targets":[{"expr":"label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")","instant":true,"legendFormat":"{{vm}}","refId":"A"}],"title":"CPU Usage (%) - VM별 현재값","type":"stat"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"description":"경고 임계치 90%(5분 지속).","fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":90}]},"unit":"percent"},"overrides":[]},"gridPos":{"h":6,"w":8,"x":8,"y":10},"id":6,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":true},"textMode":"value_and_name"},"targets":[{"expr":"label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")","instant":true,"legendFormat":"{{vm}}","refId":"A"}],"title":"Memory Usage (%) - VM별 현재값","type":"stat"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"description":"경고 85% / 위험 95%(임박 시 2분 지속으로 빠르게 알림).","fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":85},{"color":"red","value":95}]},"unit":"percent"},"overrides":[]},"gridPos":{"h":6,"w":8,"x":16,"y":10},"id":7,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":true},"textMode":"value_and_name"},"targets":[{"expr":"label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")","instant":true,"legendFormat":"{{vm}}","refId":"A"}],"title":"Disk Usage (%) - VM별 현재값","type":"stat"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"gridPos":{"h":8,"w":12,"x":0,"y":16},"id":1,"targets":[{"expr":"label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")","legendFormat":"{{vm}}","refId":"A"}],"title":"CPU Usage (%) by VM","type":"timeseries"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"gridPos":{"h":8,"w":12,"x":12,"y":16},"id":2,"targets":[{"expr":"label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")","legendFormat":"{{vm}}","refId":"A"}],"title":"Memory Usage (%) by VM","type":"timeseries"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"gridPos":{"h":8,"w":12,"x":0,"y":24},"id":3,"targets":[{"expr":"label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")","legendFormat":"{{vm}}","refId":"A"}],"title":"Root Disk Usage (%) by VM","type":"timeseries"},{"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":32},"id":106,"panels":[],"title":"📈 애플리케이션 - ci_sandbox (RED Method)","type":"row"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"description":"RED Method: Rate - 초당 요청 수.","gridPos":{"h":8,"w":12,"x":0,"y":33},"id":4,"targets":[{"expr":"rate(health_check_requests_total[5m])","legendFormat":"requests/sec","refId":"A"}],"title":"Rate - /health Request Rate","type":"timeseries"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"description":"RED Method: Duration - 요청의 95번째 백분위 응답시간. OTel FastAPIInstrumentor 계측 히스토그램 기반.","fieldConfig":{"defaults":{"unit":"ms"},"overrides":[]},"gridPos":{"h":8,"w":12,"x":12,"y":33},"id":109,"targets":[{"expr":"histogram_quantile(0.95, sum by (le) (rate(http_server_duration_milliseconds_bucket{job=\"ci-sandbox\"}[5m])))","legendFormat":"p95 latency","refId":"A"}],"title":"Duration - p95 Latency","type":"timeseries"},{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"description":"RED Method: Errors - 5xx 응답 비율. 5분간 5% 초과 시 Critical 알림(High App Error Rate 규칙).","fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"red","value":5}]},"unit":"percent"},"overrides":[]},"gridPos":{"h":6,"w":24,"x":0,"y":41},"id":8,"options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"value_and_name"},"targets":[{"expr":"(sum(rate(http_server_duration_milliseconds_count{job=\"ci-sandbox\", http_status_code=~\"5..\"}[5m])) OR on() vector(0)) / sum(rate(http_server_duration_milliseconds_count{job=\"ci-sandbox\"}[5m])) * 100","instant":true,"legendFormat":"5xx error rate","refId":"A"}],"title":"Errors - ci_sandbox App 5xx Error Rate (%)","type":"stat"}],"refresh":"30s","schemaVersion":39,"templating":{"list":[{"current":{"text":"All","value":"$__all"},"includeAll":true,"label":"VM","multi":true,"name":"vm","options":[],"query":"monitoring-vm : 192.168.0.51:9100,harbor-vm : 192.168.0.53:9100,db-vm : 192.168.0.54:9100","type":"custom"}]},"time":{"from":"now-1h","to":"now"},"timezone":"browser","title":"ZeroCheck Infra \u0026 App Overview","uid":"zerocheck-overview","version":7}}
+{
+    "panels":  [
+                   {
+                       "collapsed":  false,
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  0
+                                   },
+                       "id":  100,
+                       "panels":  [
+
+                                  ],
+                       "title":  "ð ê°ì",
+                       "type":  "row"
+                   },
+                   {
+                       "gridPos":  {
+                                       "h":  3,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  1
+                                   },
+                       "id":  101,
+                       "options":  {
+                                       "content":  "**ZeroCheck ì¸íë¼ \u0026 ì± ëª¨ëí°ë§ ê°ì** â VM 3ë(harbor/db/monitoring)ì White-box ì§í(node_exporter)ì Harborì Black-box ì¸ë¶ ê°ì©ì± ì²´í¬, ci_sandbox ì±ì RED(Rate/Errors/Duration) ì§íë¥¼ í¨ê» ë´\u0085ëë¤. ìê³ì¹: CPU 85%(ê²½ê³ , 10ë¶ ì§ì) Â· Memory 90%(ê²½ê³ ) Â· Disk 85%(ê²½ê³ )/95%(ìí) Â· ì± 5xx ìë¬ì¨ 5%(ìí). ìì ê¸°ì¤: ì´ë¡=ì ì, ì£¼í©=ê²½ê³ , ë¹¨ê°=ì¦ì ì¡°ì¹ íì.",
+                                       "mode":  "markdown"
+                                   },
+                       "title":  "",
+                       "type":  "text"
+                   },
+                   {
+                       "collapsed":  false,
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  4
+                                   },
+                       "id":  102,
+                       "panels":  [
+
+                                  ],
+                       "title":  "ð¦ ê°ì©ì± íí©",
+                       "type":  "row"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "description":  "node_exporter ê¸°ì¤ White-box ê°ì©ì±. up=1ì´ë©´ Prometheusê° í´ë¹ VMì node_exporter ì¤í¬ë©ì ì±ê³µí ê²(ìë²ê° ì´ììì).",
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "mappings":  [
+                                                                             {
+                                                                                 "options":  {
+                                                                                                 "0":  {
+                                                                                                           "color":  "red",
+                                                                                                           "text":  "DOWN"
+                                                                                                       },
+                                                                                                 "1":  {
+                                                                                                           "color":  "green",
+                                                                                                           "text":  "UP"
+                                                                                                       }
+                                                                                             },
+                                                                                 "type":  "value"
+                                                                             }
+                                                                         ]
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  5
+                                   },
+                       "id":  103,
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "none",
+                                       "justifyMode":  "auto",
+                                       "orientation":  "auto",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ],
+                                                             "fields":  "",
+                                                             "values":  true
+                                                         },
+                                       "textMode":  "value_and_name"
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "up{job=~\"harbor-vm|db-vm|monitoring-vm\"}",
+                                           "instant":  true,
+                                           "legendFormat":  "{{job}}",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "ì¸íë¼ VM ê°ì©ì±",
+                       "type":  "stat"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "description":  "Black-box ì²´í¬ - ì¤ì  HTTP ìì²­ì¼ë¡ íì¸í ì¸ë¶ ì ì ê°ë¥ ì¬ë¶. Harbor(ê³µì í¬ì¤ì²´í¬ API), SonarQube, Grafana, ci_sandbox ëì.",
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "mappings":  [
+                                                                             {
+                                                                                 "options":  {
+                                                                                                 "0":  {
+                                                                                                           "color":  "red",
+                                                                                                           "text":  "DOWN"
+                                                                                                       },
+                                                                                                 "1":  {
+                                                                                                           "color":  "green",
+                                                                                                           "text":  "UP"
+                                                                                                       }
+                                                                                             },
+                                                                                 "type":  "value"
+                                                                             }
+                                                                         ]
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  4,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  5
+                                   },
+                       "id":  104,
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "none",
+                                       "justifyMode":  "auto",
+                                       "orientation":  "auto",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ],
+                                                             "fields":  "",
+                                                             "values":  true
+                                                         },
+                                       "textMode":  "value_and_name"
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "probe_success",
+                                           "instant":  true,
+                                           "legendFormat":  "{{instance}}",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "ì¸ë¶ ìë¹ì¤ ê°ì©ì± (Blackbox)",
+                       "type":  "stat"
+                   },
+                   {
+                       "collapsed":  false,
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  9
+                                   },
+                       "id":  105,
+                       "panels":  [
+
+                                  ],
+                       "title":  "ð¥ï¸ ì¸íë¼ ë¦¬ìì¤ (VM)",
+                       "type":  "row"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "description":  "ê²½ê³  ìê³ì¹ 85%(10ë¶ ì§ì). harbor VMì CI ë¹ë ì¤ ì ìì ì¼ë¡ ì¤íì´í¬í  ì ìì´ ì§ììê°ì 5ë¶â10ë¶ì¼ë¡ ì¡°ì í¨.",
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "orange",
+                                                                                                 "value":  85
+                                                                                             }
+                                                                                         ]
+                                                                           },
+                                                            "unit":  "percent"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  8,
+                                       "x":  0,
+                                       "y":  10
+                                   },
+                       "id":  5,
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area",
+                                       "justifyMode":  "auto",
+                                       "orientation":  "auto",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ],
+                                                             "fields":  "",
+                                                             "values":  true
+                                                         },
+                                       "textMode":  "value_and_name"
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+                                           "instant":  true,
+                                           "legendFormat":  "{{vm}}",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "CPU Usage (%) - VMë³ íì¬ê°",
+                       "type":  "stat"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "description":  "ê²½ê³  ìê³ì¹ 90%(5ë¶ ì§ì).",
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "orange",
+                                                                                                 "value":  90
+                                                                                             }
+                                                                                         ]
+                                                                           },
+                                                            "unit":  "percent"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  8,
+                                       "x":  8,
+                                       "y":  10
+                                   },
+                       "id":  6,
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area",
+                                       "justifyMode":  "auto",
+                                       "orientation":  "auto",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ],
+                                                             "fields":  "",
+                                                             "values":  true
+                                                         },
+                                       "textMode":  "value_and_name"
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+                                           "instant":  true,
+                                           "legendFormat":  "{{vm}}",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Memory Usage (%) - VMë³ íì¬ê°",
+                       "type":  "stat"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "description":  "ê²½ê³  85% / ìí 95%(ìë° ì 2ë¶ ì§ìì¼ë¡ ë¹ ë¥´ê² ìë¦¼).",
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "orange",
+                                                                                                 "value":  85
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  95
+                                                                                             }
+                                                                                         ]
+                                                                           },
+                                                            "unit":  "percent"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  8,
+                                       "x":  16,
+                                       "y":  10
+                                   },
+                       "id":  7,
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area",
+                                       "justifyMode":  "auto",
+                                       "orientation":  "auto",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ],
+                                                             "fields":  "",
+                                                             "values":  true
+                                                         },
+                                       "textMode":  "value_and_name"
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+                                           "instant":  true,
+                                           "legendFormat":  "{{vm}}",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Disk Usage (%) - VMë³ íì¬ê°",
+                       "type":  "stat"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  16
+                                   },
+                       "id":  1,
+                       "targets":  [
+                                       {
+                                           "expr":  "label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+                                           "legendFormat":  "{{vm}}",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "CPU Usage (%) by VM",
+                       "type":  "timeseries"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  16
+                                   },
+                       "id":  2,
+                       "targets":  [
+                                       {
+                                           "expr":  "label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+                                           "legendFormat":  "{{vm}}",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Memory Usage (%) by VM",
+                       "type":  "timeseries"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  24
+                                   },
+                       "id":  3,
+                       "targets":  [
+                                       {
+                                           "expr":  "label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+                                           "legendFormat":  "{{vm}}",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Root Disk Usage (%) by VM",
+                       "type":  "timeseries"
+                   },
+                   {
+                       "collapsed":  false,
+                       "gridPos":  {
+                                       "h":  1,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  32
+                                   },
+                       "id":  106,
+                       "panels":  [
+
+                                  ],
+                       "title":  "ð ì íë¦¬ì¼ì´ì\u0085 - ci_sandbox (RED Method)",
+                       "type":  "row"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "description":  "RED Method: Rate - ì´ë¹ ìì²­ ì.",
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  0,
+                                       "y":  33
+                                   },
+                       "id":  4,
+                       "targets":  [
+                                       {
+                                           "expr":  "rate(health_check_requests_total[5m])",
+                                           "legendFormat":  "requests/sec",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Rate - /health Request Rate",
+                       "type":  "timeseries"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "description":  "RED Method: Duration - ìì²­ì 95ë²ì§¸ ë°±ë¶ì ìëµìê°. OTel FastAPIInstrumentor ê³ì¸¡ íì¤í ê·¸ë¨ ê¸°ë°.",
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ms"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  8,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  33
+                                   },
+                       "id":  109,
+                       "targets":  [
+                                       {
+                                           "expr":  "histogram_quantile(0.95, sum by (le) (rate(http_server_duration_milliseconds_bucket{job=\"ci-sandbox\"}[5m])))",
+                                           "legendFormat":  "p95 latency",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Duration - p95 Latency",
+                       "type":  "timeseries"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "PBFA97CFB590B2093"
+                                      },
+                       "description":  "RED Method: Errors - 5xx ìëµ ë¹ì¨. 5ë¶ê° 5% ì´ê³¼ ì Critical ìë¦¼(High App Error Rate ê·ì¹).",
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  null
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  5
+                                                                                             }
+                                                                                         ]
+                                                                           },
+                                                            "unit":  "percent"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  6,
+                                       "w":  24,
+                                       "x":  0,
+                                       "y":  41
+                                   },
+                       "id":  8,
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area",
+                                       "justifyMode":  "auto",
+                                       "orientation":  "auto",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ],
+                                                             "fields":  "",
+                                                             "values":  false
+                                                         },
+                                       "textMode":  "value_and_name"
+                                   },
+                       "targets":  [
+                                       {
+                                           "expr":  "(sum(rate(http_server_duration_milliseconds_count{job=\"ci-sandbox\", http_status_code=~\"5..\"}[5m])) OR on() vector(0)) / sum(rate(http_server_duration_milliseconds_count{job=\"ci-sandbox\"}[5m])) * 100",
+                                           "instant":  true,
+                                           "legendFormat":  "5xx error rate",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Errors - ci_sandbox App 5xx Error Rate (%)",
+                       "type":  "stat"
+                   }
+               ],
+    "refresh":  "30s",
+    "schemaVersion":  39,
+    "templating":  {
+                       "list":  [
+                                    {
+                                        "current":  {
+                                                        "text":  "All",
+                                                        "value":  "$__all"
+                                                    },
+                                        "includeAll":  true,
+                                        "label":  "VM",
+                                        "multi":  true,
+                                        "name":  "vm",
+                                        "options":  [
+
+                                                    ],
+                                        "query":  "monitoring-vm : 192.168.0.51:9100,harbor-vm : 192.168.0.53:9100,db-vm : 192.168.0.54:9100",
+                                        "type":  "custom"
+                                    }
+                                ]
+                   },
+    "time":  {
+                 "from":  "now-1h",
+                 "to":  "now"
+             },
+    "timezone":  "browser",
+    "title":  "ZeroCheck Infra \u0026 App Overview",
+    "uid":  "zerocheck-overview",
+    "version":  7
+}
