@@ -1,0 +1,162 @@
+# 백엔드 8개 서비스 배포 스택. harbor VM(self-hosted 러너와 동일 호스트)에서
+# ci_sandbox와 같은 패턴(빌드→스캔→push→pull→compose up→헬스체크→롤백)으로 운영한다.
+#
+# 이미지 태그 전략: backend-image-scanning에서 커밋마다 :<sha>로 빌드하지만, 한 커밋에서
+# 바뀐 서비스만 다시 빌드되므로(paths-filter 매트릭스) 8개 서비스가 매번 같은 sha로
+# 맞춰지지 않는다. 그래서 배포는 고정 sha가 아니라 이동 태그 :stable을 추적한다 -
+# 스캔을 통과한 이미지만 :stable로 재태깅/push되고, 이 컴포즈 파일은 항상 :stable을 pull한다.
+# 이번에 안 바뀐 서비스는 이전 :stable 그대로, 바뀐 서비스만 새 :stable로 갱신된다.
+#
+# 실제 DB(POSTGRES_*)/Redis/JWT 등 민감값은 .env(harbor VM에만 존재, git 커밋 금지)로
+# 주입한다 - CI deploy job이 GitHub Secrets로부터 이 .env를 매번 재생성한다.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &default-hardening
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /tmp
+  mem_limit: 256m
+  cpus: 0.5
+  pids_limit: 100
+  restart: unless-stopped
+  logging: *default-logging
+
+services:
+  admin-service:
+    image: harbor.hizero.local/dangdang/backend-admin-service:${BACKEND_IMAGE_TAG:-stable}
+    container_name: backend-admin-service
+    ports:
+      - "8001:8000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    <<: *default-hardening
+
+  community-service:
+    image: harbor.hizero.local/dangdang/backend-community-service:${BACKEND_IMAGE_TAG:-stable}
+    container_name: backend-community-service
+    ports:
+      - "8002:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-test_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+    <<: *default-hardening
+
+  diet-service:
+    image: harbor.hizero.local/dangdang/backend-diet-service:${BACKEND_IMAGE_TAG:-stable}
+    container_name: backend-diet-service
+    ports:
+      - "8003:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-test_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+    <<: *default-hardening
+
+  ingredients-service:
+    image: harbor.hizero.local/dangdang/backend-ingredients-service:${BACKEND_IMAGE_TAG:-stable}
+    container_name: backend-ingredients-service
+    ports:
+      - "8004:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-test_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+    <<: *default-hardening
+
+  login-service:
+    image: harbor.hizero.local/dangdang/backend-login-service:${BACKEND_IMAGE_TAG:-stable}
+    container_name: backend-login-service
+    ports:
+      - "8005:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-test_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+      NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
+      NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
+      NAVER_REDIRECT_URI: ${NAVER_REDIRECT_URI:-}
+      KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-}
+      KAKAO_REDIRECT_URI: ${KAKAO_REDIRECT_URI:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
+      APPLE_REDIRECT_URI: ${APPLE_REDIRECT_URI:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      ADMIN_SIGNUP_SECRET: ${ADMIN_SIGNUP_SECRET:-}
+    <<: *default-hardening
+
+  main-service:
+    image: harbor.hizero.local/dangdang/backend-main-service:${BACKEND_IMAGE_TAG:-stable}
+    container_name: backend-main-service
+    ports:
+      - "8006:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-test_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+    <<: *default-hardening
+
+  product-service:
+    image: harbor.hizero.local/dangdang/backend-product-service:${BACKEND_IMAGE_TAG:-stable}
+    container_name: backend-product-service
+    ports:
+      - "8007:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-test_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+    <<: *default-hardening
+
+  recipe-service:
+    image: harbor.hizero.local/dangdang/backend-recipe-service:${BACKEND_IMAGE_TAG:-stable}
+    container_name: backend-recipe-service
+    ports:
+      - "8008:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-test_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+    <<: *default-hardening
