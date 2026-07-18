@@ -175,7 +175,11 @@ jobs:
           SOURCES=""
           if [ -d frontend ]; then SOURCES="frontend"; fi
           if [ -d backend ]; then
-            if [ -n "$SOURCES" ]; then SOURCES="$SOURCES,backend"; else SOURCES="backend"; fi
+            if [ -n "$SOURCES" ]; then
+              SOURCES="$SOURCES,backend"
+            else
+              SOURCES="backend"
+            fi
           fi
           echo "sources=$SOURCES" >> "$GITHUB_OUTPUT"
       - name: SonarQube scan
