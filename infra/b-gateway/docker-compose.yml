@@ -34,6 +34,25 @@ services:
     networks:
       - backend_default
       - dangdang-edge
+    # 2026-07-19, well-architected 체크리스트 재점검 중 발견 - 헬스체크/리소스
+    # 제한/로그 로테이션이 전혀 없었다. 셋 다 기존 라우팅 동작에 영향 없는
+    # 무중단 추가라 바로 적용. non-root 전환은 별도로 신중히 검증 후 진행할 것
+    # (openresty 공식 이미지가 기본 root로 떠서, worker 프로세스 user 지정+
+    # 필요한 디렉터리 쓰기 권한까지 같이 손봐야 해서 지금 라이브 게이트웨이에
+    # 바로 실험하기엔 리스크가 큼).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/b/search?page=1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   backend_default:
