@@ -1,0 +1,36 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dangdang-frontend:${TAG:-latest}
+    container_name: dangdang-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3001}:3000"
+    environment:
+      BACKEND_GATEWAY_URL: ${BACKEND_GATEWAY_URL:-http://host.docker.internal:8080}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3001}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - frontend-uploads:/app/public/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - dangdang-edge
+
+volumes:
+  frontend-uploads:
+
+networks:
+  dangdang-edge:
+    name: dangdang-edge

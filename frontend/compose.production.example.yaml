@@ -1,0 +1,39 @@
+services:
+  frontend:
+    image: ${FRONTEND_IMAGE:?Set FRONTEND_IMAGE to the Harbor image and immutable tag}
+    container_name: dangdang-frontend
+    restart: unless-stopped
+    environment:
+      BACKEND_GATEWAY_URL: ${BACKEND_GATEWAY_URL:-http://b-gateway:8080}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL to the public HTTPS origin}
+    expose:
+      - "3000"
+    volumes:
+      - frontend-uploads:/app/public/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 150
+    networks:
+      - dangdang-edge
+
+volumes:
+  frontend-uploads:
+
+networks:
+  dangdang-edge:
+    external: true
+    name: ${APP_NETWORK:-dangdang-edge}
