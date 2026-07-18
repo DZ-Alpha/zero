@@ -6,6 +6,7 @@ from sqlalchemy import select, or_, func, exists, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
+from app.models.product_favorite import ProductFavorite
 from app.models.product_tag import ProductTag
 from app.models.tag import Tag
 
@@ -228,6 +229,33 @@ async def update_nutrition(
     await db.refresh(product)
     logger.info("nutrition updated product_id=%s", product_id)
     return product
+
+
+async def toggle_favorite(db: AsyncSession, product_id: uuid.UUID, user_id: int) -> bool:
+    """PR-0307: 찜 등록/해제 토글. 반환값은 토글 후 상태(True=찜됨)."""
+    await get_product(db, product_id)  # 없는 상품이면 404
+
+    existing = await db.get(ProductFavorite, {"product_id": product_id, "user_id": user_id})
+    if existing is not None:
+        await db.delete(existing)
+        await db.commit()
+        return False
+
+    db.add(ProductFavorite(product_id=product_id, user_id=user_id))
+    await db.commit()
+    return True
+
+
+async def list_favorites(db: AsyncSession, user_id: int) -> list[Product]:
+    """PR-0308: 찜한 상품 목록."""
+    stmt = (
+        select(Product)
+        .join(ProductFavorite, ProductFavorite.product_id == Product.product_id)
+        .where(ProductFavorite.user_id == user_id)
+        .order_by(ProductFavorite.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def update_allergen_tags(

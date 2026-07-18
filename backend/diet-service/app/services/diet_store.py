@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.meal_item import MealItem
 from app.models.meal_log import MealLog
 from app.models.product_ref import ProductRef
+from app.models.recipe_ref import RecipeRef
 from app.models.user_health_profile_ref import UserHealthProfileRef
 
 
@@ -16,6 +17,10 @@ class MealLogNotFoundError(Exception):
 
 
 class ProductNotFoundError(Exception):
+    pass
+
+
+class RecipeNotFoundError(Exception):
     pass
 
 
@@ -94,6 +99,125 @@ async def list_meal_logs_by_month(
         .order_by(MealLog.eaten_at)
     )
     return list(result.scalars().all())
+
+
+async def delete_meal_log(db: AsyncSession, log: MealLog) -> None:
+    for item in await get_meal_items(db, log.meal_log_id):
+        await db.delete(item)
+    await db.delete(log)
+    await db.commit()
+
+
+# ── 식단 기록 CRUD (RC-0113~0117) ────────────────────────────────────────────
+# "기록" = meal_log 1개 + meal_item 1개(1:1) — RC-0101/0103의 사진 업로드→AI분석
+# 흐름(meal_log 1개에 items N개)과 달리, 사용자가 레시피/상품/사진 기록을 직접
+# 값(serving/sugar/calories)까지 채워서 수동으로 남기는 기록이다.
+
+async def get_records_for_range(
+    db: AsyncSession, user_id: int, start: datetime, end: datetime
+) -> list[tuple[MealLog, MealItem]]:
+    result = await db.execute(
+        select(MealLog, MealItem)
+        .join(MealItem, MealItem.meal_log_id == MealLog.meal_log_id)
+        .where(MealLog.user_id == user_id, MealLog.eaten_at >= start, MealLog.eaten_at <= end)
+        .order_by(MealLog.eaten_at)
+    )
+    return list(result.all())
+
+
+async def create_manual_record(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    eaten_at: datetime,
+    meal_type: str,
+    input_type: str,
+    item_name: str,
+    serving: Decimal,
+    sugar: Decimal,
+    calories: Decimal,
+    product_id: uuid.UUID | None = None,
+    external_recipe_id: str | None = None,
+) -> MealLog:
+    log = MealLog(
+        meal_log_id=uuid.uuid4(),
+        user_id=user_id,
+        input_type=input_type,
+        meal_type=meal_type,
+        image_object_key=None,
+        analysis_status="COMPLETED",
+        eaten_at=eaten_at,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(log)
+    # meal_items.meal_log_id는 모델에 ForeignKey()가 없어(meal_item.py 주석 참고)
+    # SQLAlchemy가 두 insert의 순서를 FK로 추론하지 못한다 — flush로 log부터
+    # 먼저 실제 insert해 meal_log_id가 참조 가능하게 만든 뒤 item을 추가한다.
+    await db.flush()
+
+    item = MealItem(
+        meal_item_id=uuid.uuid4(),
+        meal_log_id=log.meal_log_id,
+        product_id=product_id,
+        external_recipe_id=external_recipe_id,
+        item_name=item_name,
+        serving_value=serving,
+        # RC-0113 입력에는 단위가 없다 — 실제 컬럼은 NOT NULL이라 고정 단위로 저장.
+        serving_unit="인분",
+        calories=calories,
+        sugars=sugar,
+        # RC-0113 입력에 탄수화물이 없다 — 실제 컬럼은 NOT NULL이라 0으로 저장
+        # (있는 것처럼 추정하지 않는다).
+        carbohydrate=Decimal("0"),
+    )
+    db.add(item)
+
+    await db.commit()
+    await db.refresh(log)
+    return log
+
+
+async def update_record(
+    db: AsyncSession,
+    record_id: uuid.UUID,
+    user_id: int,
+    *,
+    meal_type: str | None = None,
+    serving: Decimal | None = None,
+    sugar: Decimal | None = None,
+    calories: Decimal | None = None,
+) -> MealLog:
+    log = await get_meal_log_for_user(db, record_id, user_id)
+    items = await get_meal_items(db, record_id)
+    if not items:
+        raise MealLogNotFoundError(f"식단 기록 항목을 찾을 수 없습니다: {record_id}")
+    item = items[0]
+
+    if meal_type is not None:
+        log.meal_type = meal_type
+    if serving is not None:
+        item.serving_value = serving
+    if sugar is not None:
+        item.sugars = sugar
+    if calories is not None:
+        item.calories = calories
+
+    await db.commit()
+    await db.refresh(log)
+    return log
+
+
+async def delete_record(db: AsyncSession, record_id: uuid.UUID, user_id: int) -> None:
+    log = await get_meal_log_for_user(db, record_id, user_id)
+    await delete_meal_log(db, log)
+
+
+async def get_recipe_ref(db: AsyncSession, recipe_id: int) -> RecipeRef:
+    result = await db.execute(select(RecipeRef).where(RecipeRef.id == recipe_id))
+    recipe = result.scalar_one_or_none()
+    if recipe is None:
+        raise RecipeNotFoundError(f"레시피를 찾을 수 없습니다: {recipe_id}")
+    return recipe
 
 
 # ── MealItem ─────────────────────────────────────────────────────────────────

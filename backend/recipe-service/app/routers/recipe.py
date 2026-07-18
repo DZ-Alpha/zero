@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_current_user_bearer
 from app.core.database import get_db
 from app.models.recipe import Recipe
 from app.models.recipe_base_comparison import RecipeBaseComparison
@@ -10,8 +12,10 @@ from app.services.recipe_store import (
     get_base_comparisons,
     get_ingredients,
     get_recipe,
+    list_favorites,
     list_recipes,
     recipe_exists,
+    toggle_favorite,
 )
 
 router = APIRouter(prefix="/recipes")
@@ -57,6 +61,39 @@ def _ingredient_item(ingredient: RecipeIngredient, comparison: RecipeBaseCompari
 async def get_recipe_list(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
     recipes = await list_recipes(db)
     return {"recipes": [_list_item(recipe) for recipe in recipes]}
+
+
+class FavoriteToggleBody(BaseModel):
+    id: int
+
+
+# /favorite* 라우트는 반드시 /{recipe_id}보다 먼저 등록해야 한다 — 안 그러면
+# "/recipes/favorite"가 recipe_id="favorite"로 매칭 시도돼 422가 난다.
+@router.post("/favorite")
+async def toggle_recipe_favorite(
+    body: FavoriteToggleBody,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(get_current_user_bearer),
+) -> dict[str, object]:
+    """RC-0111: 레시피 찜 등록/해제 토글."""
+    user_id: int = payload["user_id"]
+    try:
+        liked = await toggle_favorite(db, body.id, user_id)
+    except RecipeNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    return {"status": "SUCCESS", "liked": liked}
+
+
+@router.get("/favorite/list")
+async def get_recipe_favorite_list(
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(get_current_user_bearer),
+) -> dict[str, object]:
+    """RC-0112: 찜한 레시피 목록."""
+    user_id: int = payload["user_id"]
+    recipes = await list_favorites(db, user_id)
+    return {"list-receipe": [{"id": r.id, "name": r.name, "image": r.thumbnail_url} for r in recipes]}
 
 
 @router.get("/{recipe_id}")

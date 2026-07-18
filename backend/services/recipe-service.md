@@ -13,9 +13,8 @@
 ## 다른 서비스와의 연결 방식: 느슨한 참조
 
 - `service.meal_items.external_recipe_id` (Diet Service)
-- `service.user_favorites.external_recipe_id` (즐겨찾기)
 
-둘 다 **DB 레벨 FK가 없는 VARCHAR(100) 문자열**이다. 즉 Recipe Service가 레시피를 삭제해도 다른 서비스 DB에서 자동으로 정리되지 않는다 — 레시피 삭제 시 이벤트를 발행하거나, 참조하는 서비스가 주기적으로 유효성을 검증해야 한다. 반대로 이 설계 덕분에 Recipe Service는 완전히 독립된 DB/스키마를 가져도 다른 서비스에 영향이 없다.
+**DB 레벨 FK가 없는 VARCHAR(100) 문자열**이다. 즉 Recipe Service가 레시피를 삭제해도 다른 서비스 DB에서 자동으로 정리되지 않는다 — 레시피 삭제 시 이벤트를 발행하거나, 참조하는 서비스가 주기적으로 유효성을 검증해야 한다. 반대로 이 설계 덕분에 Recipe Service는 완전히 독립된 DB/스키마를 가져도 다른 서비스에 영향이 없다.
 
 ## 담당 기능 (기능명세서 기준)
 
@@ -25,6 +24,7 @@
 | RC-0108 | 레시피 상세 (재료, 요리법) |
 | RC-0109 | AI 대체 상품 추천 (레시피 재료 → 제로/저당 상품) — **Product Service 검색 API 호출 필요** |
 | RC-0110 | 저당 vs 기본 레시피 당/칼로리 비교 요약 |
+| RC-0111~0112 | 레시피 찜 등록/해제(`POST /recipes/favorite`), 찜 목록(`GET /recipes/favorite/list`) — `recipe.recipe_favorites`(PK `(recipe_id, user_id)`)를 이 서비스 전용 신규 `recipe` 스키마에 둔다. `service`는 데이터팀 소유라 건드리지 않음. `Authorization: Bearer` 헤더 인증(이 서비스가 처음으로 인증을 다루는 기능이라 `app/core/auth.py` 신규 추가) |
 
 ## 참고
 

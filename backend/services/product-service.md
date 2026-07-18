@@ -4,6 +4,7 @@
 
 - `service.products` (17컬럼, PK `product_id` UUID)
 - `service.product_tags` (PK `(product_id, tag_id)`)
+- `product.product_favorites` (PK `(product_id, user_id)`, PR-0307/0308 찜 기능) — `service` 스키마는 데이터팀 소유라 이 서비스 전용 신규 `product` 스키마에 둔다. community-service의 `community.notice_likes`와 같은 패턴.
 
 쓰기는 이 서비스만 한다. 다른 서비스는 이 두 테이블에 직접 INSERT/UPDATE하지 않는다.
 
@@ -28,6 +29,7 @@
 | PR-0101~0105 | 검색, 자동완성, 카테고리/주의성분 필터, 정렬 | `products` + `product_tags` JOIN `tags` |
 | PR-0201~0203 | 상품 상세, 영양성분, 원재료/알레르기 | `products` 컬럼 직접 반환 |
 | PR-0301~0306 | AI 한줄요약/감미료 설명/맞춤 설명/대용량 추천/리뷰 | AI 요약은 런타임 생성(저장 안 함). **PR-0306 상품 리뷰는 이 DB에 테이블이 없다** — 신규 테이블 설계 필요 |
+| PR-0307~0308 | 상품 찜 등록/해제, 찜 목록 | `POST /product/favorite`, `GET /product/favorite/list`. `Authorization: Bearer` 헤더 인증(기존 `usr` 쿼리파라미터 방식과 다름 — `get_current_user_bearer`) |
 | AD-0101~0102 | 관리자 상품 등록/수정 | Admin Service가 이 서비스의 관리자 전용 write API를 호출 |
 | AD-0103 | 영양성분 등록 | `products`의 calories/carbohydrate/sugars/protein/fat/sodium 컬럼 직접 수정 |
 | AD-0104 | 원재료·알레르기 등록 | `products.ingredient_text` 수정 + `product_tags`(ALLERGEN) 갱신. 태그 자체가 아니라 "이 상품에 어떤 태그를 붙일지"만 이 서비스가 결정 |
