@@ -4,7 +4,7 @@ on:
   push:
   pull_request:
     branches: [main]
-  # production VM(재헌님이 이미 구축, 192.168.0.13)에 올리는 실제 배포는 main push 시
+  # production VM(재헌님이 이미 구축, 10.10.10.30)에 올리는 실제 배포는 main push 시
   # 자동 실행된다(2026-07-18, 지훈 지시 - "그 대신 CI를 신중하게"로 맞바꿈. 상세 근거는
   # backend-deploy-production job 주석 참고). workflow_dispatch는 이전 태그로 수동
   # 재배포/롤백용으로 남겨둔 것 - tag 입력이 없으면 production의 기본 태그(latest)를 쓴다.
@@ -255,7 +255,7 @@ jobs:
           registry: harbor.hizero.local
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
-      # 재헌님이 이미 만들어 운영 중인 production VM(192.168.0.13)의
+      # 재헌님이 이미 만들어 운영 중인 production VM(10.10.10.30)의
       # ~/backend/docker-compose.yaml이 기대하는 이미지 경로/태그 컨벤션을 그대로
       # 따른다(harbor VM 자체 대상으로 별도 경로/포트를 새로 만들었다가, 이미 잘
       # 돌아가는 실제 배포와 안 맞는 병렬 파이프라인이 되는 걸 확인하고 되돌림 -
@@ -271,7 +271,7 @@ jobs:
           docker push "$IMAGE:$SHA"
           docker push "$IMAGE:latest"
 
-  # production VM(192.168.0.13, 재헌님이 이미 구축)에 실제로 배포한다. 이 job은
+  # production VM(10.10.10.30, 재헌님이 이미 구축)에 실제로 배포한다. 이 job은
   # self-hosted 러너(harbor VM)에서 실행되지만 harbor VM 자신의 Docker가 아니라
   # SSH로 production VM에 접속해 그쪽의 기존 docker-compose.yaml을 그대로 pull/up
   # 한다 - 이미지/네트워크/헬스체크 스크립트를 이 저장소에 새로 만들지 않고 이미
@@ -303,10 +303,11 @@ jobs:
       SERVICES: >-
         admin-service community-service diet-service ingredients-service
         login-service main-service product-service recipe-service
-      # 2026-07-19 아침, 구 LAN IP(192.168.0.13)가 인프라 공지("당분간 병행 유지")보다
-      # 먼저 죽은 걸 실측(ping "Destination Host Unreachable", SSH "No route to host")으로
-      # 확인 - harbor/monitoring/DB VM은 구/신 IP 둘 다 살아있는데 production VM만 먼저
-      # 끊김. 새 App 계층 IP(10.10.10.30)로 전환.
+      # 2026-07-19 아침, 구 LAN IP(192.168.0.13)가 인프라 공지("당분간 병행
+      # 유지")보다 먼저 죽은 걸 실측(ping "Destination Host Unreachable",
+      # SSH "No route to host")으로 확인 - harbor/monitoring/DB VM은 구/신
+      # IP 둘 다 살아있는데 production VM만 먼저 끊김. 새 App 계층
+      # IP(10.10.10.30)로 전환.
       PROD_HOST: bruce@10.10.10.30
       TAG: ${{ inputs.backend_tag }}
     steps:
@@ -435,7 +436,7 @@ jobs:
           docker push "$IMAGE:$SHA"
           docker push "$IMAGE:latest"
 
-  # frontend도 backend-deploy-production과 같은 이유로 production VM(192.168.0.13)에
+  # frontend도 backend-deploy-production과 같은 이유로 production VM(10.10.10.30)에
   # SSH로 배포한다 - frontend가 dangdang-edge에서 b-gateway:8080에 닿으려면 같은
   # Docker 호스트/네트워크에 있어야 하는데, harbor VM은 그 네트워크가 아니다.
   # 트리거/always() 필요성은 backend-deploy-production과 동일(위 주석 참고).
@@ -453,10 +454,11 @@ jobs:
       )
     runs-on: self-hosted
     env:
-      # 2026-07-19 아침, 구 LAN IP(192.168.0.13)가 인프라 공지("당분간 병행 유지")보다
-      # 먼저 죽은 걸 실측(ping "Destination Host Unreachable", SSH "No route to host")으로
-      # 확인 - harbor/monitoring/DB VM은 구/신 IP 둘 다 살아있는데 production VM만 먼저
-      # 끊김. 새 App 계층 IP(10.10.10.30)로 전환.
+      # 2026-07-19 아침, 구 LAN IP(192.168.0.13)가 인프라 공지("당분간 병행
+      # 유지")보다 먼저 죽은 걸 실측(ping "Destination Host Unreachable",
+      # SSH "No route to host")으로 확인 - harbor/monitoring/DB VM은 구/신
+      # IP 둘 다 살아있는데 production VM만 먼저 끊김. 새 App 계층
+      # IP(10.10.10.30)로 전환.
       PROD_HOST: bruce@10.10.10.30
       FRONTEND_TAG: ${{ inputs.frontend_tag }}
     steps:
