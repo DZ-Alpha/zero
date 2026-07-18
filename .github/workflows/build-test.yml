@@ -196,7 +196,17 @@ jobs:
       # sonar-project.properties에 고정값을 두면, 아직 해당 디렉터리가 없는 브랜치(main에
       # sungA/front/main이 병합되기 전 등)에서 sonar-scanner가 "폴더가 없다"며 바로
       # 실패한다(실제로 확인함).
-      - name: Determine sonar sources
+      #
+      # projectKey도 여기서 브랜치별로 분리한다 - SonarQube Community Edition은 유료
+      # 브랜치 분석 기능이 없어서, sonar.branch.name을 줘도 무시되고 모든 브랜치가
+      # 같은 zerocheck 프로젝트/같은 "new code" 타임라인에 섞여 들어간다. 2026-07-19,
+      # 재헌님 브랜치 동기화 직후 push/PR 두 분석이 2초 간격으로 같은 프로젝트에
+      # 동시에 쓰다가 Quality Gate 결과가 서로 다르게 나오는 걸 실측으로 확인
+      # (Sonar API로 project_analyses 조회, 13:57:40/13:57:42 두 건 확인). main은
+      # 기존 zerocheck 프로젝트(히스토리 보존)를 그대로 쓰고, 다른 브랜치는
+      # zerocheck-branch-<브랜치명>으로 완전히 분리한다 - 새로 생기는 프로젝트가
+      # 전부 ZeroCheck Launch Gate(기본 게이트로 지정 완료)를 물려받는다.
+      - name: Determine sonar sources and project key
         id: sonar-sources
         run: |
           SOURCES=""
@@ -209,11 +219,23 @@ jobs:
             fi
           fi
           echo "sources=$SOURCES" >> "$GITHUB_OUTPUT"
+
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          if [ "$BRANCH" = "main" ]; then
+            PROJECT_KEY="zerocheck"
+          else
+            SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-' | tr -cd 'a-zA-Z0-9._-')
+            PROJECT_KEY="zerocheck-branch-$SAFE_BRANCH"
+          fi
+          echo "project_key=$PROJECT_KEY" >> "$GITHUB_OUTPUT"
       - name: SonarQube scan
         # v6
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602  # yamllint disable-line rule:line-length
         with:
-          args: -Dsonar.sources=${{ steps.sonar-sources.outputs.sources }}
+          args: >-
+            -Dsonar.sources=${{ steps.sonar-sources.outputs.sources }}
+            -Dsonar.projectKey=${{ steps.sonar-sources.outputs.project_key }}
+            -Dsonar.projectName=${{ steps.sonar-sources.outputs.project_key }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
