@@ -408,6 +408,30 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           $SSH "echo $TAG > ~/backend/.last-deployed-tag"
 
+  # backend-build-test/backend-image-scanning은 서비스별 매트릭스라 체크 이름이
+  # "backend-build-test (admin-service)"처럼 매번 달라져서, 브랜치 보호 규칙의
+  # 필수 상태 체크에 고정 이름으로 등록할 수가 없다(2026-07-19, 성애님이 PR #47
+  # 병합이 막혀있다고 알려줘서 발견 - 브랜치 보호가 요구하던 build-test/
+  # image-scanning은 어제 ci_sandbox 정리하면서 삭제한 옛 job 이름이라 영원히
+  # 안 생김). 이 job이 매트릭스 결과를 모아 항상 같은 이름으로 보고해서, 이걸
+  # 필수 체크로 등록하면 된다 - always()라 매트릭스가 통째로 스킵돼도(백엔드
+  # 변경 없는 PR) 정상 통과, 하나라도 failure/cancelled면 실패한다.
+  backend-checks:
+    needs: [backend-build-test, backend-image-scanning]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate backend matrix results
+        run: |
+          BT="${{ needs.backend-build-test.result }}"
+          IS="${{ needs.backend-image-scanning.result }}"
+          echo "backend-build-test=$BT backend-image-scanning=$IS"
+          if [ "$BT" = "failure" ] || [ "$BT" = "cancelled" ] || \
+             [ "$IS" = "failure" ] || [ "$IS" = "cancelled" ]; then
+            echo "backend matrix has a failure/cancellation"
+            exit 1
+          fi
+
   # frontend/ 이미지 빌드+스캔+push. 백엔드와 동일한 :sha/:latest 이중 태그 전략을 쓴다.
   # 배포는 아래 frontend-deploy-production job 참고.
   frontend-image-scanning:
@@ -626,6 +650,7 @@ jobs:
       - frontend-build-test
       - code-scanning
       - backend-image-scanning
+      - backend-checks
       - frontend-image-scanning
       - backend-deploy-production
       - frontend-deploy-production
@@ -641,6 +666,7 @@ jobs:
           FRONTEND_TEST_RESULT: ${{ needs.frontend-build-test.result }}
           CODE_SCANNING_RESULT: ${{ needs.code-scanning.result }}
           BACKEND_SCAN_RESULT: ${{ needs.backend-image-scanning.result }}
+          BACKEND_CHECKS_RESULT: ${{ needs.backend-checks.result }}
           FRONTEND_SCAN_RESULT: ${{ needs.frontend-image-scanning.result }}
           BACKEND_DEPLOY_RESULT: ${{ needs.backend-deploy-production.result }}
           FRONTEND_DEPLOY_RESULT: ${{ needs.frontend-deploy-production.result }}
@@ -672,6 +698,9 @@ jobs:
           [ "$CODE_SCANNING_RESULT" = "failure" ] && add_failed "code-scanning"
           if [ "$BACKEND_SCAN_RESULT" = "failure" ]; then
             add_failed "backend-image-scanning"
+          fi
+          if [ "$BACKEND_CHECKS_RESULT" = "failure" ]; then
+            add_failed "backend-checks"
           fi
           if [ "$FRONTEND_SCAN_RESULT" = "failure" ]; then
             add_failed "frontend-image-scanning"
