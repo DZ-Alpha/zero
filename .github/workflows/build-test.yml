@@ -20,22 +20,20 @@ on:
         description: '프론트 배포 태그 (비우면 현재 커밋 sha)'
         required: false
         default: ''
-      run_prod_env_diag:
-        # 2026-07-19, DB VM IP 마이그레이션(192.168.0.54 -> 10.10.20.10)이 backend
-        # .env에 반영됐는지 확인하기 위한 임시 읽기 전용 진단 - 값 확인 끝나면 이
-        # 입력과 아래 prod-env-diag job을 통째로 제거할 것.
-        description: '(임시) production .env HOST 값 읽기 전용 진단 실행'
+      deploy_target:
+        # 2026-07-19, backend_tag만 넣고 백엔드만 수동 재배포하려 했는데
+        # frontend-deploy-production까지 무조건 같이 돌아서, frontend/가 아직
+        # main에 병합 안 된 상태에서 scp가 "파일 없음"으로 실패하는 걸 실측으로
+        # 확인(실서비스 영향은 없었지만 불필요한 실패/알람). 수동 트리거 시
+        # 어느 쪽을 배포할지 명시하게 해서 관련 없는 쪽까지 끌려나가는 걸 막는다.
+        description: '수동 배포 대상'
         required: false
-        default: 'false'
-      run_prod_env_fix:
-        # 진단으로 확인된 정확한 원인(POSTGRES_HOST/REDIS_HOST가 구주소
-        # 192.168.0.54로 남아있음)을 고치는 일회성 수정 - sed로 그 두 줄만
-        # 정밀 치환하고, 배포는 별도 트리거로 분리한다(같은 실행에서 fix와
-        # deploy를 묶으면 순서 보장이 안 됨). 적용 확인되면 이 입력과 아래
-        # prod-env-fix job도 통째로 제거할 것.
-        description: '(임시) production .env DB/Redis 구주소 -> 신주소 일회성 수정'
-        required: false
-        default: 'false'
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - backend
+          - frontend
 
 # 같은 브랜치에 연달아 push되면 deploy job이 harbor VM에 동시에 두 번 돌 수 있어서
 # (docker compose up이 겹치는 배포 사고로 이어질 수 있음), main push에서는 순차 실행을
@@ -316,13 +314,15 @@ jobs:
     # always()가 없으면 needs 잡이 skip될 때(예: 이번 커밋에 backend 변경 없음) 이
     # job도 평가 없이 그냥 skip돼서, workflow_dispatch로 수동 롤백하려고 해도
     # 안 돌게 된다. always()로 강제 평가한 뒤, push는 두 잡이 실제로 success일
-    # 때만, workflow_dispatch는 무조건(수동 롤백은 재스캔 불필요) 허용한다.
+    # 때만, workflow_dispatch는 deploy_target이 backend/both일 때만 허용한다
+    # (2026-07-19, frontend/가 main에 없는 상태에서 backend만 수동 재배포하려다
+    # frontend-deploy-production까지 같이 돌아 scp 실패하는 걸 실측 - 대상 분리).
     if: |
       always() &&
       (
         (github.event_name == 'workflow_dispatch' &&
-          inputs.run_prod_env_diag != 'true' &&
-          inputs.run_prod_env_fix != 'true') ||
+          (inputs.deploy_target == 'backend' ||
+            inputs.deploy_target == 'both')) ||
         (
           github.event_name == 'push' && github.ref == 'refs/heads/main' &&
           needs.backend-image-scanning.result == 'success' &&
@@ -408,65 +408,29 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           $SSH "echo $TAG > ~/backend/.last-deployed-tag"
 
-  # 임시 읽기 전용 진단 job - 위 on.workflow_dispatch.inputs.run_prod_env_diag 참고.
-  # 값 확인 끝나면 이 job 통째로 삭제할 것.
-  prod-env-diag:
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.run_prod_env_diag == 'true'
-    runs-on: self-hosted
-    env:
-      PROD_HOST: bruce@10.10.10.30
+  # backend-build-test/backend-image-scanning은 서비스별 매트릭스라 체크 이름이
+  # "backend-build-test (admin-service)"처럼 매번 달라져서, 브랜치 보호 규칙의
+  # 필수 상태 체크에 고정 이름으로 등록할 수가 없다(2026-07-19, 성애님이 PR #47
+  # 병합이 막혀있다고 알려줘서 발견 - 브랜치 보호가 요구하던 build-test/
+  # image-scanning은 어제 ci_sandbox 정리하면서 삭제한 옛 job 이름이라 영원히
+  # 안 생김). 이 job이 매트릭스 결과를 모아 항상 같은 이름으로 보고해서, 이걸
+  # 필수 체크로 등록하면 된다 - always()라 매트릭스가 통째로 스킵돼도(백엔드
+  # 변경 없는 PR) 정상 통과, 하나라도 failure/cancelled면 실패한다.
+  backend-checks:
+    needs: [backend-build-test, backend-image-scanning]
+    if: always()
+    runs-on: ubuntu-latest
     steps:
-      - name: Read-only - list backend dir + grep HOST/PORT keys (no secrets)
-        env:
-          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+      - name: Aggregate backend matrix results
         run: |
-          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
-          echo "--- ~/backend 디렉터리 구조 ---"
-          $SSH "ls -la ~/backend"
-          echo "--- docker-compose.yaml의 env_file/environment 참조 방식 ---"
-          $SSH "grep -n 'env_file\|environment:' ~/backend/docker-compose.yaml"
-          echo "--- 각 서비스 .env의 HOST/PORT 키만 (비밀번호/토큰 제외) ---"
-          REMOTE_SCRIPT='
-            for f in $(find ~/backend -maxdepth 2 -iname "*.env*" \
-                -not -name "*.example"); do
-              echo "[$f]"
-              grep -iE "^(POSTGRES_HOST|REDIS_HOST|MONGO|KAFKA).*=" "$f"
-            done
-          '
-          $SSH "$REMOTE_SCRIPT"
-
-  # 임시 일회성 수정 job - 위 on.workflow_dispatch.inputs.run_prod_env_fix 참고.
-  # 진단(prod-env-diag)으로 확인된 POSTGRES_HOST/REDIS_HOST=192.168.0.54 두 줄만
-  # 정밀 치환한다(^...$ 앵커로 그 값 그대로인 줄만 매치, 다른 줄/값은 안 건드림).
-  # 적용 확인되면 이 job과 위 입력 통째로 삭제할 것.
-  prod-env-fix:
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.run_prod_env_fix == 'true'
-    runs-on: self-hosted
-    env:
-      PROD_HOST: bruce@10.10.10.30
-    steps:
-      - name: Backup .env, patch DB/Redis host, verify diff
-        env:
-          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
-        run: |
-          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
-          REMOTE_SCRIPT='
-            set -e
-            cd ~/backend
-            cp .env .env.bak.$(date +%Y%m%d-%H%M%S)
-            OLD="192\.168\.0\.54"
-            NEW="10.10.20.10"
-            sed -i -E "s/^(POSTGRES_HOST|REDIS_HOST)=$OLD\$/\1=$NEW/" .env
-            echo "--- 수정 후 HOST 값 ---"
-            grep -E "^(POSTGRES_HOST|REDIS_HOST)=" .env
-            echo "--- 백업 대비 변경분(diff) ---"
-            diff .env.bak.* .env || true
-          '
-          $SSH "$REMOTE_SCRIPT"
+          BT="${{ needs.backend-build-test.result }}"
+          IS="${{ needs.backend-image-scanning.result }}"
+          echo "backend-build-test=$BT backend-image-scanning=$IS"
+          if [ "$BT" = "failure" ] || [ "$BT" = "cancelled" ] || \
+             [ "$IS" = "failure" ] || [ "$IS" = "cancelled" ]; then
+            echo "backend matrix has a failure/cancellation"
+            exit 1
+          fi
 
   # frontend/ 이미지 빌드+스캔+push. 백엔드와 동일한 :sha/:latest 이중 태그 전략을 쓴다.
   # 배포는 아래 frontend-deploy-production job 참고.
@@ -533,12 +497,15 @@ jobs:
   # 트리거/always() 필요성은 backend-deploy-production과 동일(위 주석 참고).
   frontend-deploy-production:
     needs: [frontend-image-scanning, code-scanning]
+    # workflow_dispatch는 deploy_target이 frontend/both일 때만 허용(backend-
+    # deploy-production 주석의 2026-07-19 근거 참고 - 대상 분리로 불필요한
+    # scp 실패/알람 방지).
     if: |
       always() &&
       (
         (github.event_name == 'workflow_dispatch' &&
-          inputs.run_prod_env_diag != 'true' &&
-          inputs.run_prod_env_fix != 'true') ||
+          (inputs.deploy_target == 'frontend' ||
+            inputs.deploy_target == 'both')) ||
         (
           github.event_name == 'push' && github.ref == 'refs/heads/main' &&
           needs.frontend-image-scanning.result == 'success' &&
@@ -670,12 +637,20 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           $SSH "echo $TAG > ~/frontend/.last-deployed-tag"
 
+  # needs에 없는 job이 실패하면 GitHub 기본 동작상 그 job에 의존하는 하위 job들은
+  # "실패"가 아니라 "스킵"으로 처리된다 - 그러면 이 job의 needs 안에 실제 실패가
+  # 하나도 안 잡혀서 failure()가 false가 되고, notify-on-failure 자체가 조용히
+  # 스킵돼 Slack 알람이 아예 안 울린다(2026-07-19, 전체 job 그래프 재점검 중 발견 -
+  # detect-backend/detect-frontend가 여기 없었다). 둘 다 추가해서 이 사각지대를 없앤다.
   notify-on-failure:
     needs:
+      - detect-backend
+      - detect-frontend
       - backend-build-test
       - frontend-build-test
       - code-scanning
       - backend-image-scanning
+      - backend-checks
       - frontend-image-scanning
       - backend-deploy-production
       - frontend-deploy-production
@@ -685,10 +660,13 @@ jobs:
       - name: Notify Slack
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DETECT_BACKEND_RESULT: ${{ needs.detect-backend.result }}
+          DETECT_FRONTEND_RESULT: ${{ needs.detect-frontend.result }}
           BACKEND_TEST_RESULT: ${{ needs.backend-build-test.result }}
           FRONTEND_TEST_RESULT: ${{ needs.frontend-build-test.result }}
           CODE_SCANNING_RESULT: ${{ needs.code-scanning.result }}
           BACKEND_SCAN_RESULT: ${{ needs.backend-image-scanning.result }}
+          BACKEND_CHECKS_RESULT: ${{ needs.backend-checks.result }}
           FRONTEND_SCAN_RESULT: ${{ needs.frontend-image-scanning.result }}
           BACKEND_DEPLOY_RESULT: ${{ needs.backend-deploy-production.result }}
           FRONTEND_DEPLOY_RESULT: ${{ needs.frontend-deploy-production.result }}
@@ -705,6 +683,12 @@ jobs:
               FAILED_JOBS="$FAILED_JOBS, $1"
             fi
           }
+          if [ "$DETECT_BACKEND_RESULT" = "failure" ]; then
+            add_failed "detect-backend"
+          fi
+          if [ "$DETECT_FRONTEND_RESULT" = "failure" ]; then
+            add_failed "detect-frontend"
+          fi
           if [ "$BACKEND_TEST_RESULT" = "failure" ]; then
             add_failed "backend-build-test"
           fi
@@ -714,6 +698,9 @@ jobs:
           [ "$CODE_SCANNING_RESULT" = "failure" ] && add_failed "code-scanning"
           if [ "$BACKEND_SCAN_RESULT" = "failure" ]; then
             add_failed "backend-image-scanning"
+          fi
+          if [ "$BACKEND_CHECKS_RESULT" = "failure" ]; then
+            add_failed "backend-checks"
           fi
           if [ "$FRONTEND_SCAN_RESULT" = "failure" ]; then
             add_failed "frontend-image-scanning"
