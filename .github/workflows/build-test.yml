@@ -4,10 +4,10 @@ on:
   push:
   pull_request:
     branches: [main]
-  # production VM(재헌님이 이미 구축, 192.168.0.13)에 올리는 실제 배포는 병합 자동
-  # 트리거로 두지 않는다 - "production"이라는 이름 그대로 실제 서비스 대상이고, 마감
-  # 직전 무단 자동배포는 리스크가 커서 사람이 직접 실행(승인)하는 workflow_dispatch로만
-  # 둔다(2026-07-18, 지훈 지시). tag 입력이 없으면 production의 기본 태그(latest)를 쓴다.
+  # production VM(재헌님이 이미 구축, 192.168.0.13)에 올리는 실제 배포는 main push 시
+  # 자동 실행된다(2026-07-18, 지훈 지시 - "그 대신 CI를 신중하게"로 맞바꿈. 상세 근거는
+  # backend-deploy-production job 주석 참고). workflow_dispatch는 이전 태그로 수동
+  # 재배포/롤백용으로 남겨둔 것 - tag 입력이 없으면 production의 기본 태그(latest)를 쓴다.
   workflow_dispatch:
     inputs:
       backend_tag:
