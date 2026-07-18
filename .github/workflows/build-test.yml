@@ -362,8 +362,21 @@ jobs:
       # IP 둘 다 살아있는데 production VM만 먼저 끊김. 새 App 계층
       # IP(10.10.10.30)로 전환.
       PROD_HOST: bruce@10.10.10.30
-      TAG: ${{ inputs.backend_tag }}
+      BACKEND_TAG: ${{ inputs.backend_tag }}
     steps:
+      # 2026-07-19, well-architected 체크리스트의 "latest 배포 금지" 항목 재점검
+      # 중 발견 - push 이벤트에선 inputs.backend_tag가 존재하지 않아 TAG가
+      # 빈 문자열이 되고, 그 상태로 docker compose를 돌리면 production VM의
+      # compose 파일이 기본값(:latest)으로 떨어졌을 것으로 보임(frontend는
+      # 이미 이 fallback을 github.sha로 처리하고 있었는데 backend만 빠져있었다
+      # - 두 job이 같은 패턴이어야 하는데 여기만 어긋나 있었음). workflow_dispatch
+      # 수동 배포는 여전히 backend_tag 기본값 'latest'를 그대로 쓸 수 있게 유지
+      # (수동 롤백/재배포 편의) - 자동배포 경로만 불변 태그로 강제한다.
+      - name: Determine tag
+        run: |
+          TAG="$BACKEND_TAG"
+          if [ -z "$TAG" ]; then TAG="${{ github.sha }}"; fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
       - name: Record previous tag
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
