@@ -23,9 +23,14 @@ scrape_configs:
   # 대상은 학원 LAN(192.168.0.x)이 아니라 Tailscale IP로 지정한다 - LAN IP는 학원 네트워크
   # 안에서만 유효해서, 어디서든 동일하게 재현 가능한 Tailscale 주소를 쓰는 게 더 견고하다.
   #
-  # 여기 job은 "우리 서비스 사용자가 실제로 겪는" 외부 가용성만 담는다(Grafana/ci_sandbox).
+  # 여기 job은 "우리 서비스 사용자가 실제로 겪는" 외부 가용성만 담는다(Grafana).
   # SonarQube는 사용자가 접속하는 대상이 아니라 CI 파이프라인이 의존하는 내부 도구라
   # 성격이 달라서 blackbox-http-ci-dependency job으로 분리했다(아래).
+  #
+  # ci_sandbox 앱(harbor VM :8080) 타겟은 2026-07-18 제거 - build-test.yml에서 ci_sandbox
+  # 빌드/배포 파이프라인(build-test/image-scanning/deploy job) 자체를 없애면서 더 이상
+  # 배포되지 않는 대상이라, 남겨두면 언젠가 컨테이너가 내려간 뒤 영구 Blackbox Probe
+  # Failed 오탐이 발생한다.
   - job_name: blackbox-http
     metrics_path: /probe
     params:
@@ -33,7 +38,6 @@ scrape_configs:
     static_configs:
       - targets:
           - http://100.110.81.51:3000/login # Grafana (monitoring VM, Tailscale)
-          - http://100.96.79.73:8080/health # ci_sandbox 앱 (harbor VM, Tailscale)
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

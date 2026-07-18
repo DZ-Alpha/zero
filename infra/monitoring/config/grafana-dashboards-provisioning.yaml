@@ -1,0 +1,17 @@
+apiVersion: 1
+
+providers:
+  - name: zerocheck-dashboards
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    # false: UI에서 대시보드를 고쳐도 다음 재시작/동기화 때 이 JSON 파일 내용으로 되돌아감.
+    # 오늘 TLS 알람 한글 깨짐 사고가 "UI/DB에서만 바뀐 설정은 흔적 없이 유실된다"는 걸 보여줬기
+    # 때문에, 대시보드도 git이 항상 진실의 원천이 되도록 UI 임시수정이 남지 않게 강제한다.
+    # 대시보드를 실제로 바꾸고 싶으면 이 JSON 파일을 고쳐서 PR로 반영해야 한다.
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/zerocheck
+      foldersFromFilesStructure: false

@@ -85,6 +85,20 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./config/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      # 대시보드는 코드로 관리(2026-07-17) - 실제로 마운트해서 적용, 16패널 그대로 유지되고
+      # provisioned:true로 정상 전환된 것까지 확인함.
+      - ./config/grafana-dashboards-provisioning.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
+      - ./dashboards/zerocheck-overview.json:/etc/grafana/provisioning/dashboards/zerocheck/zerocheck-overview.json:ro
+      # 알람 규칙(config/grafana-alerting/)은 의도적으로 마운트 안 함 - 지금 살아있는 9개
+      # 알람이 API/UI로 만들어져서 provenance가 "api"인데, 파일 프로비저닝을 그대로 마운트하면
+      # Grafana가 "cannot change provenance from 'api' to 'file'"로 거부하며 컨테이너가
+      # 크래시루프에 빠짐(실제로 겪음, 즉시 롤백해서 복구함). 기존 규칙을 지웠다가 파일로
+      # 재생성하면 되지만 그 사이 알람이 잠깐 비는 위험이 있어서, 지금은 강행하지 않기로
+      # 판단함 - config/grafana-alerting/*.json은 "VM을 처음부터 재구축할 때 쓰는 재해복구
+      # 소스"로만 쓰고, 지금 운영 중인 알람은 계속 UI/API로 관리한다. 실시간 전환이 필요해지면
+      # 저트래픽 시간대에 계획적으로: (1) UI에서 9개 규칙 삭제 (2) 이 줄 주석 해제
+      # (3) docker compose up -d grafana 순서로 진행.
+      # - ./config/grafana-alerting:/etc/grafana/provisioning/alerting:ro
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       # 알림에 포함되는 쿼리/Silence 링크가 노트북에서도 열리도록 Tailscale IP 기준으로 설정

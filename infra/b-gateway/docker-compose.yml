@@ -1,0 +1,43 @@
+# b-gateway를 --network host(git에 흔적 없는 수동 docker run)에서 이 파일로
+# 옮긴다. 이전엔 nginx.conf가 백엔드를 127.0.0.1:포트로 참조했는데, 이는 host
+# 네트워크라서 가능했던 것 - backend_default/dangdang-edge 네트워크에 붙이려면
+# host 모드를 뺄 수밖에 없다(Docker는 host 모드 컨테이너를 다른 네트워크에
+# 추가로 연결하는 걸 지원하지 않음 - 별도 네임스페이스가 없어서 구조적으로 불가).
+#
+# 리스크 평가(2026-07-18):
+# - host -> bridge 전환은 컨테이너 재생성이 필요해 짧은 다운타임이 있다(핫스왑 불가).
+# - nginx.conf의 업스트림을 컨테이너 이름으로 바꾸면서, 정적 upstream{} 블록 대신
+#   resolver + 변수 기반 proxy_pass로 바꿨다 - 안 그러면 백엔드 재배포로 컨테이너
+#   IP가 바뀔 때마다 502가 난다(nginx 공식 문서: upstream의 server는 시작/reload
+#   시점에 한 번만 resolve됨). 변수 기반 proxy_pass는 매 요청 resolver로 재조회함
+#   (nginx 공식 문서 확인, NGINX Plus 전용 기능 아님 - 오픈소스에서도 동작).
+# - 적용 전 반드시: production VM(192.168.0.13)의 기존 nginx.conf와
+#   `docker inspect b-gateway` 결과를 백업해둘 것(이미 ~/b-gateway-backup-20260718/에
+#   있음). 문제 생기면 host 모드로 원복 가능해야 한다.
+#
+# 적용 방법 (production VM에서, 사람이 직접 실행 - 최초 전환은 자동화 안 함):
+#   1) 이 디렉터리를 production VM의 ~/b-gateway/ 에 git pull 등으로 반영
+#   2) docker stop b-gateway && docker rm b-gateway  (기존 --network host 컨테이너 제거)
+#   3) docker network create dangdang-edge  (이미 있으면 생략)
+#   4) cd ~/b-gateway && docker compose up -d
+#   5) curl -s http://localhost:8080/b/search?page=1 로 라우팅 확인
+#   6) 문제 있으면: docker compose down 후, 백업해둔 설정으로 기존 방식 원복
+services:
+  b-gateway:
+    image: openresty/openresty:alpine
+    container_name: b-gateway
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - backend_default
+      - dangdang-edge
+
+networks:
+  backend_default:
+    external: true
+  dangdang-edge:
+    external: true
+    name: dangdang-edge
