@@ -33,9 +33,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  IMAGE_NAME: harbor.hizero.local/dangdang/ci-sandbox
-
 # GITHUB_TOKEN 기본 권한을 워크플로 파일에 명시적으로 최소화한다. 저장소 설정(현재 read)에만
 # 의존하면, 나중에 누군가 저장소 기본값을 write로 바꿀 때 이 워크플로도 같이 영향을 받는다 -
 # 공식 하드닝 가이드 권고. pull-requests: read는 dorny/paths-filter가 PR의 변경 파일
@@ -129,24 +126,6 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-  # 내부망 접근이 필요 없는 단계 - GitHub 클라우드 러너에서 실행
-  build-test:
-    runs-on: ubuntu-latest
-    steps:
-      # v4
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - name: Set up Python
-        # v5
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-          cache-dependency-path: ci_sandbox/requirements.txt
-      - name: Install dependencies
-        run: pip install -r ci_sandbox/requirements.txt
-      - name: Run tests
-        run: pytest ci_sandbox/tests
-
   # backend/*-service는 아직 자체 테스트가 없어서(재헌님 인계 메모 확인, 2026-07-16 기준)
   # pytest를 강제하지 않는다 - 지금 강제하면 테스트 부재로 전부 빨간불이 되어 정작 봐야 할
   # 진짜 실패 신호가 묻힌다. 대신 의존성 설치 + import 스모크 체크로 "최소한 뜨는 코드인가"만
@@ -182,20 +161,22 @@ jobs:
 
   # 아래부터는 내부 SonarQube/Harbor에 접근해야 하므로 self-hosted(harbor VM) 러너에서 실행
   code-scanning:
-    needs: build-test
     runs-on: self-hosted
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # frontend/ 존재 여부에 따라 sonar.sources를 동적으로 넓힌다 - sonar-project.properties에
-      # frontend를 그냥 추가하면, 아직 frontend/가 없는 브랜치(main에 sungA/front/main이
-      # 병합되기 전)에서 sonar-scanner가 "폴더가 없다"며 바로 실패한다(실제로 확인함).
+      # frontend/backend 존재 여부에 따라 sonar.sources를 동적으로 구성한다 -
+      # sonar-project.properties에 고정값을 두면, 아직 해당 디렉터리가 없는 브랜치(main에
+      # sungA/front/main이 병합되기 전 등)에서 sonar-scanner가 "폴더가 없다"며 바로
+      # 실패한다(실제로 확인함).
       - name: Determine sonar sources
         id: sonar-sources
         run: |
-          SOURCES="ci_sandbox"
-          [ -d frontend ] && SOURCES="$SOURCES,frontend"
-          [ -d backend ] && SOURCES="$SOURCES,backend"
+          SOURCES=""
+          if [ -d frontend ]; then SOURCES="frontend"; fi
+          if [ -d backend ]; then
+            if [ -n "$SOURCES" ]; then SOURCES="$SOURCES,backend"; else SOURCES="backend"; fi
+          fi
           echo "sources=$SOURCES" >> "$GITHUB_OUTPUT"
       - name: SonarQube scan
         # v6
@@ -215,81 +196,13 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  # code-scanning(SonarQube, 소스 대상)과 image-scanning(Trivy, 빌드된 이미지 대상)은 서로
-  # 결과를 안 쓰는데 지금까지 순차 실행이었다 - build-test 성공 후 병렬로 돌려도 되는 걸
-  # 학습자료 8장에 이미 적어뒀으면서 실제로 반영은 안 하고 있었다. 이번에 반영.
-  #
-  # push까지 이 job 안에서 한다: self-hosted 러너는 한 번에 job 하나만 실행하고, needs로
-  # 연결된 job이라도 같은 라벨의 다른 러너에 배정될 수 있다는 보장 부재가 공식적으로 확인됨
-  # (러너가 1대일 때는 우연히 항상 같은 머신이라 문제가 드러나지 않았음). 그래서 원래
-  # 별도 job이던 image-push를 여기로 합쳐, 빌드해서 로컬 docker에 올려둔 이미지를 같은
-  # 러너 안에서 바로 push하도록 만든다 - 러너를 2대로 늘려도 안전하게.
-  image-scanning:
-    needs: build-test
-    runs-on: self-hosted
-    steps:
-      # v4
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # v4
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
-      - name: Build image
-        # v7
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
-        with:
-          context: .
-          pull: true
-          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      # 기본 캐시 경로($GITHUB_WORKSPACE/.cache/trivy)는 actions/checkout이 매번
-      # clean해서 매 job마다 취약점 DB를 새로 받고 있었다(실측: 5개 서비스 부하
-      # 테스트에서 job당 2~3분 중 상당 부분이 이 다운로드였음). RUNNER_TEMP로
-      # 옮기면 해결될 줄 알았으나, 실제로 재실행해서 로그를 보니("Need to update DB")
-      # RUNNER_TEMP도 job이 끝나면 비워지는 걸 실측으로 확인함 - _work 트리 자체를
-      # 벗어난 경로가 필요하다. harbor-runner/harbor-runner-2가 같은 VM(bruce 계정)을
-      # 공유하므로 runner.name으로 러너별 경로를 분리해 동시 쓰기 충돌도 피한다.
-      #
-      # trivy-action은 매번 aquasecurity/setup-trivy를 호출해 바이너리를 설치하는데,
-      # 이 액션의 기본 설치 경로가 $HOME/.local/bin/trivy-bin으로 고정돼 있어(경로를
-      # 바꿀 입력을 trivy-action이 열어주지 않음) 두 러너가 같은 bruce 계정을 공유하는
-      # 이 환경에서는 두 잡이 동시에 같은 바이너리 파일을 설치하다 "Text file busy"로
-      # 충돌한다(실제로 2번 재현/재실행으로 확인함). 공식 우회: setup-trivy를 직접
-      # 호출해 러너별 경로에 설치하고, trivy-action에는 skip-setup-trivy로 재설치를
-      # 건너뛰게 한다(https://github.com/aquasecurity/trivy-action#custom-setup - 및
-      # yamllint disable-line rule:line-length
-      # aquasecurity/setup-trivy action.yaml의 skip-setup-trivy 입력 설명 참고).
-      - name: Install Trivy (per-runner path)
-        # v0.2.6
-        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
-        with:
-          path: /home/bruce/.trivy-bin/${{ runner.name }}
-      - name: Trivy vulnerability scan
-        # v0.36.0
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          severity: 'CRITICAL,HIGH'
-          exit-code: '1'
-          cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
-          skip-setup-trivy: true
-      - name: Log in to Harbor
-        # v3
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: harbor.hizero.local
-          username: ${{ secrets.HARBOR_ROBOT_USER }}
-          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
-      - name: Push image
-        run: docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
-
   # backend/*-service 이미지를 빌드+스캔하고, 통과한 것만 Harbor에 push한다. 태그는
   # 두 개: :<sha>(추적/롤백용, 불변)와 :latest(배포용, 이동 태그 - 재헌님 production
   # compose의 기본 태그 컨벤션과 맞춤). 커밋마다 바뀐 서비스만 다시 빌드되므로
   # (paths-filter 매트릭스), 안 바뀐 서비스의 :latest는 이전 그대로 유지되고 바뀐
   # 서비스만 :latest가 갱신되는 방식으로 8개 서비스의 "부분 배포"를 자연스럽게 처리한다.
   backend-image-scanning:
-    needs: [detect-backend, build-test]
+    needs: detect-backend
     if: >-
       needs.detect-backend.outputs.exists == 'true' &&
       needs.detect-backend.outputs.services != '[]'
@@ -313,10 +226,10 @@ jobs:
           load: true
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-      # image-scanning job의 같은 이름 스텝 참고 - setup-trivy 기본 설치 경로가
-      # $HOME/.local/bin/trivy-bin로 고정돼 있어 harbor-runner/harbor-runner-2가
-      # 동시에 스캔을 돌리면 "Text file busy"로 충돌한다(실제로 재현함). 러너별
-      # 경로에 직접 설치하고 trivy-action의 재설치는 건너뛴다.
+      # setup-trivy 기본 설치 경로가 $HOME/.local/bin/trivy-bin로 고정돼 있어
+      # harbor-runner/harbor-runner-2가 동시에 스캔을 돌리면 "Text file busy"로
+      # 충돌한다(실제로 재현함). 러너별 경로에 직접 설치하고 trivy-action의 재설치는
+      # 건너뛴다.
       - name: Install Trivy (per-runner path)
         # v0.2.6
         uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
@@ -458,7 +371,7 @@ jobs:
   # frontend/ 이미지 빌드+스캔+push. 백엔드와 동일한 :sha/:latest 이중 태그 전략을 쓴다.
   # 배포는 아래 frontend-deploy-production job 참고.
   frontend-image-scanning:
-    needs: [detect-frontend, build-test]
+    needs: detect-frontend
     if: needs.detect-frontend.outputs.changed == 'true'
     runs-on: self-hosted
     steps:
@@ -477,7 +390,7 @@ jobs:
           load: true
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
-      # image-scanning/backend-image-scanning과 같은 이유(setup-trivy 기본 설치 경로가
+      # backend-image-scanning과 같은 이유(setup-trivy 기본 설치 경로가
       # $HOME/.local/bin/trivy-bin 고정이라 harbor-runner/harbor-runner-2가 동시에
       # 돌면 "Text file busy"로 충돌 - 실제로 2번 재현/확인함) - 러너별 경로에 직접 설치.
       - name: Install Trivy (per-runner path)
@@ -650,70 +563,13 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           $SSH "echo $TAG > ~/frontend/.last-deployed-tag"
 
-  # PR을 여는 것만으로 실제 서버에 배포되면 안 되므로, main에 push(=병합)된 경우에만 배포한다.
-  # github.event (객체)가 아니라 github.event_name (문자열)으로 비교해야 한다 - 공식 문서/이슈에서
-  # 확인된 흔한 실수 포인트(actions/runner#950).
-  deploy:
-    needs: image-scanning
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
-    steps:
-      # v4
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - name: Log in to Harbor
-        # v3
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: harbor.hizero.local
-          username: ${{ secrets.HARBOR_ROBOT_USER }}
-          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
-      - name: Pull image
-        run: docker pull ${{ env.IMAGE_NAME }}:${{ github.sha }}
-      - name: Record previously deployed tag
-        run: |
-          mkdir -p ~/ci-sandbox-state
-          PREV_TAG=$(cat ~/ci-sandbox-state/last-good-tag 2>/dev/null || true)
-          echo "PREV_TAG=$PREV_TAG" >> "$GITHUB_ENV"
-          echo "Previous good tag: ${PREV_TAG:-<none>}"
-      - name: Deploy via Docker Compose
-        working-directory: infra/ci-sandbox
-        run: IMAGE_TAG=${{ github.sha }} docker compose up -d
-      - name: Health check
-        run: |
-          for i in $(seq 1 10); do
-            if curl -fs http://localhost:8080/health; then
-              echo "Health check passed"
-              exit 0
-            fi
-            echo "Health check attempt $i failed, retrying in 3s..."
-            sleep 3
-          done
-          echo "Health check failed after retries"
-          exit 1
-      - name: Rollback on failed health check
-        if: failure()
-        working-directory: infra/ci-sandbox
-        run: |
-          if [ -n "$PREV_TAG" ]; then
-            echo "Rolling back to previous good tag: $PREV_TAG"
-            IMAGE_TAG=$PREV_TAG docker compose up -d
-          else
-            echo "No previous good tag recorded - nothing to roll back to"
-          fi
-      - name: Record this deploy as last-good
-        if: success()
-        run: echo "${{ github.sha }}" > ~/ci-sandbox-state/last-good-tag
-
   notify-on-failure:
     needs:
-      - build-test
       - backend-build-test
       - frontend-build-test
       - code-scanning
-      - image-scanning
       - backend-image-scanning
       - frontend-image-scanning
-      - deploy
       - backend-deploy-production
       - frontend-deploy-production
     if: failure()
@@ -722,14 +578,11 @@ jobs:
       - name: Notify Slack
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          BUILD_TEST_RESULT: ${{ needs.build-test.result }}
           BACKEND_TEST_RESULT: ${{ needs.backend-build-test.result }}
           FRONTEND_TEST_RESULT: ${{ needs.frontend-build-test.result }}
           CODE_SCANNING_RESULT: ${{ needs.code-scanning.result }}
-          IMAGE_SCANNING_RESULT: ${{ needs.image-scanning.result }}
           BACKEND_SCAN_RESULT: ${{ needs.backend-image-scanning.result }}
           FRONTEND_SCAN_RESULT: ${{ needs.frontend-image-scanning.result }}
-          DEPLOY_RESULT: ${{ needs.deploy.result }}
           BACKEND_DEPLOY_RESULT: ${{ needs.backend-deploy-production.result }}
           FRONTEND_DEPLOY_RESULT: ${{ needs.frontend-deploy-production.result }}
         run: |
@@ -745,7 +598,6 @@ jobs:
               FAILED_JOBS="$FAILED_JOBS, $1"
             fi
           }
-          [ "$BUILD_TEST_RESULT" = "failure" ] && add_failed "build-test"
           if [ "$BACKEND_TEST_RESULT" = "failure" ]; then
             add_failed "backend-build-test"
           fi
@@ -753,16 +605,12 @@ jobs:
             add_failed "frontend-build-test"
           fi
           [ "$CODE_SCANNING_RESULT" = "failure" ] && add_failed "code-scanning"
-          if [ "$IMAGE_SCANNING_RESULT" = "failure" ]; then
-            add_failed "image-scanning"
-          fi
           if [ "$BACKEND_SCAN_RESULT" = "failure" ]; then
             add_failed "backend-image-scanning"
           fi
           if [ "$FRONTEND_SCAN_RESULT" = "failure" ]; then
             add_failed "frontend-image-scanning"
           fi
-          [ "$DEPLOY_RESULT" = "failure" ] && add_failed "deploy"
           if [ "$BACKEND_DEPLOY_RESULT" = "failure" ]; then
             add_failed "backend-deploy-production"
           fi
