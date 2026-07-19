@@ -362,6 +362,18 @@ jobs:
           registry: harbor.hizero.local
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+          # 2026-07-19, PR #49에서 실측 - docker/login-action은 기본적으로
+          # (logout: true) job 종료 시 post-step에서 자동 docker logout을
+          # 실행한다(공식 문서 확인). 이 job은 8개 backend 서비스가 매트릭스로
+          # self-hosted 러너 2대에서 병렬 실행되는데, 전부 같은
+          # $HOME/.docker/config.json을 공유한다 - 먼저 끝난 서비스의 자동
+          # logout이 아직 push 중인 다른 서비스의 인증정보까지 지워버려서
+          # "no basic auth credentials"로 push가 실패했다(community-service
+          # 실측, job 88208374622). logout을 꺼서 각 job이 알아서 지우지
+          # 않게 한다 - 러너는 CI 전용이라 인증정보가 남아있어도 위험 증가가
+          # 없다(harbor.hizero.local은 완료 후에도 robot 계정만 접근 가능한
+          # 내부 레지스트리).
+          logout: false
       # 재헌님이 이미 만들어 운영 중인 production VM(10.10.10.30)의
       # ~/backend/docker-compose.yaml이 기대하는 이미지 경로/태그 컨벤션을 그대로
       # 따른다(harbor VM 자체 대상으로 별도 경로/포트를 새로 만들었다가, 이미 잘
@@ -1139,6 +1151,11 @@ jobs:
           registry: harbor.hizero.local
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+          # backend-image-scanning과 동일한 이유(위 주석 참고) - 이 job은
+          # 매트릭스가 아니지만 backend-image-scanning과 같은 워크플로 실행
+          # 안에서 같은 self-hosted 러너를 동시에 쓸 수 있어 동일 레이스에
+          # 노출된다. 일관되게 logout을 끈다.
+          logout: false
       # frontend/compose.production.example.yaml(성애님 작성)는 FRONTEND_IMAGE에
       # 기본값을 안 두고 명시적인 불변 태그를 요구한다("Set FRONTEND_IMAGE to the
       # Harbor image and immutable tag") - 그래서 :latest를 기본 배포 태그로 쓰지
