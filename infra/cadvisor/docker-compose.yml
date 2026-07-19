@@ -27,7 +27,11 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
     ports:
-      - "8080:8080"
+      # Docker Compose 공식 문서(변수 치환) 기준 ${VAR:-default} 사용 - 대부분
+      # VM은 8080이 비어있지만 production VM은 b-gateway가 이미 8080을 쓰고
+      # 있어서(실측, "port is already allocated") 그 VM만 CADVISOR_PORT
+      # 환경변수로 다른 호스트 포트를 지정한다.
+      - "${CADVISOR_PORT:-8080}:8080"
     # cAdvisor 공식 문서에는 전용 헬스 엔드포인트가 문서화되어 있지 않지만
     # (UI 루트 "/"만 안내), 이 이미지엔 wget이 있는 것을 확인(docker exec) -
     # /metrics가 실제로 응답하는지로 헬스를 검증한다.

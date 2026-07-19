@@ -577,6 +577,11 @@ jobs:
     env:
       PROD_HOST: bruce@10.10.10.30
     steps:
+      # 2026-07-19, cAdvisor 배포 스텝 추가하며 실측 - 이 job엔 원래 checkout이
+      # 없었다(SSH 진단 위주라 저장소 파일이 불필요했음). self-hosted 러너의
+      # 이전 워크스페이스가 우연히 남아있어 production 배포(scp)는 우연히
+      # 통과했지만, 신뢰할 수 없어 명시적으로 checkout을 추가한다.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Control test - inline -p vs --password-stdin, side by side
         run: |
           echo "--- style A: -p '<token>' inline (matches earlier success) ---"
@@ -796,11 +801,14 @@ jobs:
           echo "--- docker without sudo? ---"
           $SSH "docker ps >/dev/null 2>&1 && echo OK || echo NEEDS_SUDO"
           echo "--- port 8080 free? ---"
+          # 2026-07-19 실측: production VM은 b-gateway가 이미 8080을 쓰고
+          # 있어서("port is already allocated") 기본 포트로 충돌났다. 이
+          # VM만 CADVISOR_PORT로 다른 호스트 포트(8090)를 지정한다.
           $SSH "ss -tln 2>/dev/null | grep ':8080' || echo free"
           $SSH "mkdir -p ~/cadvisor"
           $SCP infra/cadvisor/docker-compose.yml \
             "$PROD_HOST":~/cadvisor/docker-compose.yml
-          $SSH "cd ~/cadvisor && docker compose up -d"
+          $SSH "cd ~/cadvisor && CADVISOR_PORT=8090 docker compose up -d"
           sleep 5
           $SSH "docker ps --filter name=cadvisor \
             --format '{{.Names}}\t{{.Status}}'"
@@ -819,6 +827,9 @@ jobs:
       inputs.check_db_vm_harbor_trust
     runs-on: self-hosted
     steps:
+      # cAdvisor 배포 스텝의 scp가 저장소 파일(infra/cadvisor/docker-compose.yml)을
+      # 참조하므로 checkout 필요(실측: 없어서 "No such file or directory"로 실패).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Find working account/password combo
         env:
           PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
