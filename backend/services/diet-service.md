@@ -5,7 +5,6 @@
 - `service.meal_logs` (PK `meal_log_id` UUID, FK `user_id` → `public.users(id)`)
 - `service.meal_items` (PK `meal_item_id` UUID, FK `meal_log_id` → `meal_logs`, FK `product_id` → `service.products`(nullable))
 - view `service.v_meal_totals` (meal_log 단위 칼로리/당류/탄수화물 합계)
-- `service.user_favorites`도 잠정적으로 이 서비스가 관리(아래 "미정 항목" 참고)
 
 ## 참조하는 외부 데이터 (읽기 전용)
 
@@ -33,6 +32,11 @@
 | RC-0105 | 대체 제품 추천 | Product Service 검색 API 호출(이 서비스 데이터 아님) |
 | RC-0106 | 캘린더 (날짜별 식단) | `meal_logs.eaten_at` 기준 조회 |
 | MN-0106~0108 | 홈 당/칼로리 게이지 | `v_meal_totals`를 하루 단위로 재집계 |
+| RC-0113 | 식단 기록 생성 | `POST /diet/records` — 레시피/상품/사진 공통 모델. `meal_log`(1) + `meal_item`(1)을 즉시 `COMPLETED` 상태로 생성. `Authorization: Bearer` 헤더 인증 |
+| RC-0114 | 식단 기록 수정 | `PUT /diet/records/{id}` — mealType/serving/sugar/calories 부분 수정 |
+| RC-0115 | 식단 기록 삭제 | `DELETE /diet/records/{id}` — meal_item + meal_log 함께 삭제 |
+| RC-0116 | 식단 기록 날짜별/월별 조회 | `GET /diet/records?date=` 또는 `?year=&month=` — 합계 + 항목 목록 |
+| RC-0117 | 업로드 취소 | `DELETE /diet/upload/{id}` — `analysis_status != COMPLETED`인 draft만 취소 가능(확정된 건 409, RC-0115로 삭제) |
 
 ## 참고 쿼리
 
@@ -53,6 +57,6 @@ WHERE user_id = $1 AND eaten_at >= $2 AND eaten_at < $3
 ORDER BY eaten_at;
 ```
 
-## 미정 항목
+## 미정 항목 (해결됨)
 
-- `user_favorites`(즐겨찾기)를 이 서비스가 가질지, User 쪽에 둘지 팀 결정이 필요하다. `product_id`(Product 도메인)와 `external_recipe_id`(Recipe 도메인)를 동시에 다루는 경계 테이블이라 어느 쪽이 맡아도 다른 한쪽에 대한 소프트 참조가 생긴다.
+- ~~`user_favorites`(즐겨찾기)를 이 서비스가 가질지, User 쪽에 둘지~~ → **2026-07-18 명세(PR-0307/0308, RC-0111/0112)로 해결**: 하나의 경계 테이블 대신 상품 찜은 `product.product_favorites`(Product Service), 레시피 찜은 `recipe.recipe_favorites`(Recipe Service)로 각자 소유 도메인에 나눠 만들었다. Diet Service는 찜 데이터를 갖지 않는다.

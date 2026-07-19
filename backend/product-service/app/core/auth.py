@@ -2,7 +2,7 @@ import logging
 import time
 
 import jwt
-from fastapi import HTTPException, Query, Response
+from fastapi import Header, HTTPException, Query, Response
 
 from app.core.config import settings
 
@@ -11,10 +11,10 @@ logger = logging.getLogger("product_service.auth")
 _ALLOWED_ALGORITHMS = ["HS256"]
 
 
-def get_current_user(response: Response, usr: str = Query(...)) -> dict:
+def _decode_and_refresh(token: str, response: Response) -> dict:
     try:
         payload = jwt.decode(
-            usr,
+            token,
             settings.jwt_secret,
             algorithms=_ALLOWED_ALGORITHMS,
         )
@@ -34,6 +34,19 @@ def get_current_user(response: Response, usr: str = Query(...)) -> dict:
     )
 
     return payload
+
+
+def get_current_user(response: Response, usr: str = Query(...)) -> dict:
+    return _decode_and_refresh(usr, response)
+
+
+def get_current_user_bearer(response: Response, authorization: str = Header(...)) -> dict:
+    """찜 API(PR-0307/0308) 전용 — 신규 기능명세서가 `Authorization: Bearer` 헤더를
+    명시해서, 기존 `usr` 쿼리파라미터 방식(get_current_user)과 별도로 둔다."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization 헤더 형식이 올바르지 않습니다.")
+    token = authorization.removeprefix("Bearer ").strip()
+    return _decode_and_refresh(token, response)
 
 
 def get_current_admin(response: Response, usr: str = Query(...)) -> dict:

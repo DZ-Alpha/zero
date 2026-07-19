@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     postgres_user: str = ""
     postgres_password: str = ""
 
+    # RC-0111/0112(찜) 전용 — 이 서비스가 처음 인증을 다루는 기능이라 새로 추가.
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 180
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)

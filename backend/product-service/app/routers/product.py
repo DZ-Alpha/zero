@@ -2,10 +2,11 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, get_current_user_bearer
 from app.core.database import get_db
 from app.models.product import Product
 from app.models.user_health_profile_ref import UserHealthProfileRef
@@ -19,6 +20,8 @@ from app.services.product_store import (
     get_product,
     get_product_tags,
     get_sweetener_tags_for_product,
+    list_favorites,
+    toggle_favorite,
 )
 
 logger = logging.getLogger("product_service.product")
@@ -207,3 +210,44 @@ async def get_reviews(
         "message": "리뷰 기능은 준비 중입니다. (service.product_reviews 테이블 설계 필요)",
         "reviews": [],
     }
+
+
+class FavoriteToggleBody(BaseModel):
+    id: str
+
+
+def _favorite_list_item(p: Product) -> dict[str, object]:
+    return {
+        "id": str(p.product_id),
+        "name": p.product_name,
+        "brand": p.brand_name,
+        "image": p.image_url,
+    }
+
+
+@router.post("/favorite")
+async def toggle_product_favorite(
+    body: FavoriteToggleBody,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(get_current_user_bearer),
+) -> dict[str, object]:
+    """PR-0307: 상품 찜 등록/해제 토글."""
+    pid = _to_uuid(body.id)
+    user_id: int = payload["user_id"]
+    try:
+        liked = await toggle_favorite(db, pid, user_id)
+    except ProductNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return {"status": "SUCCESS", "liked": liked}
+
+
+@router.get("/favorite/list")
+async def get_product_favorite_list(
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(get_current_user_bearer),
+) -> dict[str, object]:
+    """PR-0308: 찜한 상품 목록."""
+    user_id: int = payload["user_id"]
+    products = await list_favorites(db, user_id)
+    return {"list-products": [_favorite_list_item(p) for p in products]}

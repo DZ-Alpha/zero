@@ -231,6 +231,18 @@ jobs:
   # 아래부터는 내부 SonarQube/Harbor에 접근해야 하므로 self-hosted(harbor VM) 러너에서 실행
   code-scanning:
     runs-on: self-hosted
+    # 2026-07-19, job 88199171036 실패로 실측: main 대상 PR이 열려있는 브랜치에 push하면
+    # push 이벤트와 pull_request 이벤트가 같은 커밋을 각각 트리거한다. 워크플로 상단의
+    # concurrency(github.ref 기준)는 이 둘을 안 묶는다 - push는 refs/heads/<branch>,
+    # pull_request는 refs/pull/<n>/merge라 ref 자체가 다르기 때문. 그 결과 같은 커밋이
+    # 같은 SonarQube projectKey로 동시에 두 번 제출돼 Compute Engine에서 충돌, "Error 500
+    # on /api/ce/submit"으로 실패했다. sha 기준으로 이 잡만 별도 그룹을 줘서 push/pull_request
+    # 어느 쪽이든 같은 커밋이면 하나만 SonarQube에 제출되게 한다. (배포 잡들의 ref 기준
+    # concurrency는 그대로 둔다 - sha 기준으로 바꾸면 서로 다른 커밋의 연속 배포를 더 이상
+    # 순차 실행시키지 못해 원래 막으려던 배포 겹침 문제가 재발한다.)
+    concurrency:
+      group: sonar-${{ github.sha }}
+      cancel-in-progress: true
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
