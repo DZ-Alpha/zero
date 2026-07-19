@@ -507,6 +507,17 @@ jobs:
             -u '${{ secrets.HARBOR_ROBOT_USER }}' \
             -p '${{ secrets.HARBOR_ROBOT_TOKEN }}' 2>&1 || true
           docker logout harbor.hizero.local 2>&1 || true
+      - name: Investigate DB VM 'unauthorized' - firewall on harbor VM
+        run: |
+          echo "--- host firewall (ufw/iptables) on harbor VM ---"
+          sudo -n ufw status verbose 2>&1 || echo "(needs sudo, skipped)"
+          sudo -n iptables -L -n 2>&1 || echo "(needs sudo, skipped)"
+          echo "--- nginx allow/deny directives under /data ---"
+          find /data -iname "*.conf" 2>/dev/null | xargs -I{} \
+            grep -l "allow \|deny " {} 2>/dev/null || \
+            echo "(none found)"
+          echo "--- raw /v2/ auth challenge from harbor VM itself ---"
+          curl -sk -i https://harbor.hizero.local/v2/ 2>&1 | head -20
       - name: Check Harbor CA trust and existing pull capability
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
