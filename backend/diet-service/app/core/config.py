@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     product_service_url: str = "http://localhost:8016"
 
+    # RC-0103 실제 분석 구현(PRODUCTION_HANDOFF.md P0-3) — Claude Vision으로 식단 사진 분석.
+    # 비어있으면 기존처럼 PREPARING을 반환한다(app/services/vision_service.py).
+    anthropic_api_key: str = ""
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)
