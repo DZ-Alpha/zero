@@ -63,6 +63,19 @@ on:
         required: false
         default: false
         type: boolean
+      check_db_vm_harbor_trust:
+        # 2026-07-19, DB VM(윤경 담당, 이 repo에 코드 없음 - 아직 yoonK/database
+        # 브랜치 자체가 없음)도 production과 같은 harbor DNS/CA 신뢰 문제를
+        # 겪을지 진단하고, production에 했던 것과 동일하게 /etc/hosts +
+        # /etc/docker/certs.d/ 를 미리 맞춰둔다(지훈 지시, 2026-07-19 - 문제
+        # 터지고 나서 고치지 말고 미리 선제 조치). DB VM은 원래 담당 범위
+        # 밖(harbor+monitoring VM만)이라 계정/비밀번호가 불확실해서 bruce/zero
+        # 계정과 팀 비밀번호 규칙 두 개(zeropass#/Zeropass#2026) 조합을 다
+        # 시도해 실제로 되는 걸 찾는다.
+        description: 'DB VM도 harbor DNS/CA 신뢰 미리 맞춤 + 진단'
+        required: false
+        default: false
+        type: boolean
 
 # 같은 브랜치에 연달아 push되면 deploy job이 harbor VM에 동시에 두 번 돌 수 있어서
 # (docker compose up이 겹치는 배포 사고로 이어질 수 있음), main push에서는 순차 실행을
@@ -562,6 +575,8 @@ jobs:
       # 한 줄만 추가하면 됨: echo "<IP> harbor.hizero.local" | sudo tee -a
       # /etc/hosts). bruce 계정에 NOPASSWD sudo가 이미 설정돼 있다는 전제.
       - name: Patch /etc/hosts (requires passwordless sudo)
+        id: patch-hosts
+        continue-on-error: true
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
         run: |
@@ -571,6 +586,8 @@ jobs:
           CMD="$CMD /etc/hosts"
           $SSH "$CMD"
       - name: Patch CA trust (requires passwordless sudo)
+        id: patch-ca
+        continue-on-error: true
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
         run: |
@@ -580,7 +597,9 @@ jobs:
           CMD="$CMD /etc/docker/certs.d/harbor.hizero.local/ca.crt"
           $SSH "$CMD"
       - name: Manual fallback if passwordless sudo unavailable
-        if: failure()
+        if: |
+          steps.patch-hosts.outcome == 'failure' ||
+          steps.patch-ca.outcome == 'failure'
         run: |
           echo "sudo -n failed (no NOPASSWD rule for this account)."
           echo "production VM(10.10.10.30)에 bruce 또는 zero 계정으로 직접"
@@ -596,6 +615,133 @@ jobs:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
         run: |
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          $SSH "getent hosts harbor.hizero.local"
+          $SSH "docker login harbor.hizero.local \
+            -u '${{ secrets.HARBOR_ROBOT_USER }}' \
+            -p '${{ secrets.HARBOR_ROBOT_TOKEN }}'"
+
+  # 2026-07-19, DB VM 선제 조치 일회성 job. DB VM은 harbor+monitoring VM과
+  # 별개 머신이라 production과 똑같이 harbor CA를 신뢰하도록 설정된 적이
+  # 없었다(진단으로 확인) - 윤경이 아직 하버에 push를 시도한 적이 없어서
+  # 지금까지 안 드러났을 뿐. production에서 겪은 것과 같은 문제를 미리
+  # 막기 위해 fix-harbor-dns와 동일한 두 가지(hosts, CA cert)를 여기도
+  # 적용한다. 결과 확인 후 이 job과 위 check_db_vm_harbor_trust 입력,
+  # DB_VM_SSH_PASSWORD(_ALT) 시크릿은 삭제한다.
+  check-db-vm-harbor-trust:
+    if: |
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.check_db_vm_harbor_trust
+    runs-on: self-hosted
+    steps:
+      - name: Find working account/password combo
+        env:
+          PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
+          PW2: ${{ secrets.DB_VM_SSH_PASSWORD_ALT }}
+        run: |
+          FOUND=""
+          for USER in bruce zero; do
+            for PW in "$PW1" "$PW2"; do
+              export SSHPASS="$PW"
+              SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new"
+              SSH="$SSH -o ConnectTimeout=5 $USER@10.10.20.10"
+              if $SSH "echo ok" 2>/dev/null | grep -q ok; then
+                echo "Working combo: $USER @ 10.10.20.10"
+                FOUND="1"
+                echo "DB_USER=$USER" >> "$GITHUB_ENV"
+                if [ "$PW" = "$PW1" ]; then
+                  echo "DB_PW_SECRET=DB_VM_SSH_PASSWORD" >> "$GITHUB_ENV"
+                else
+                  echo "DB_PW_SECRET=DB_VM_SSH_PASSWORD_ALT" >> "$GITHUB_ENV"
+                fi
+                break 2
+              fi
+            done
+          done
+          if [ -z "$FOUND" ]; then
+            echo "No account/password combo worked against 10.10.20.10"
+            exit 1
+          fi
+      - name: Diagnose DNS + CA trust state on DB VM
+        env:
+          PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
+          PW2: ${{ secrets.DB_VM_SSH_PASSWORD_ALT }}
+        run: |
+          if [ "$DB_PW_SECRET" = "DB_VM_SSH_PASSWORD" ]; then
+            export SSHPASS="$PW1"
+          else
+            export SSHPASS="$PW2"
+          fi
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new"
+          SSH="$SSH $DB_USER@10.10.20.10"
+          echo "--- /etc/hosts (harbor entry?) ---"
+          $SSH "grep harbor /etc/hosts || echo '(no harbor entry)'"
+          echo "--- /etc/docker/certs.d/ ---"
+          $SSH "ls -la /etc/docker/certs.d/ 2>&1 || echo '(directory missing)'"
+          echo "--- docker installed? ---"
+          $SSH "docker --version 2>&1 || echo '(docker not found)'"
+          echo "--- attempt Harbor login (expected to fail if unconfigured) ---"
+          $SSH "docker login harbor.hizero.local \
+            -u '${{ secrets.HARBOR_ROBOT_USER }}' \
+            -p '${{ secrets.HARBOR_ROBOT_TOKEN }}' 2>&1" || true
+      - name: Copy Harbor CA cert to DB VM home dir
+        env:
+          PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
+          PW2: ${{ secrets.DB_VM_SSH_PASSWORD_ALT }}
+        run: |
+          if [ "$DB_PW_SECRET" = "DB_VM_SSH_PASSWORD" ]; then
+            export SSHPASS="$PW1"
+          else
+            export SSHPASS="$PW2"
+          fi
+          SCP="sshpass -e scp -o StrictHostKeyChecking=accept-new"
+          CA_LOCAL="/etc/docker/certs.d/harbor.hizero.local/ca.crt"
+          $SCP "$CA_LOCAL" "$DB_USER@10.10.20.10":~/harbor-ca.crt
+          echo "harbor VM의 CA 인증서를 DB VM ~/harbor-ca.crt 로 복사 완료"
+      - name: Patch DB VM hosts + CA trust (requires passwordless sudo)
+        id: patch-db
+        continue-on-error: true
+        env:
+          PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
+          PW2: ${{ secrets.DB_VM_SSH_PASSWORD_ALT }}
+        run: |
+          if [ "$DB_PW_SECRET" = "DB_VM_SSH_PASSWORD" ]; then
+            export SSHPASS="$PW1"
+          else
+            export SSHPASS="$PW2"
+          fi
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new"
+          SSH="$SSH $DB_USER@10.10.20.10"
+          CMD="sudo -n sed -i '/harbor\.hizero\.local/d' /etc/hosts"
+          CMD="$CMD && echo '192.168.0.53 harbor.hizero.local'"
+          CMD="$CMD | sudo -n tee -a /etc/hosts"
+          CMD="$CMD && sudo -n mkdir -p /etc/docker/certs.d/harbor.hizero.local"
+          CMD="$CMD && sudo -n cp ~/harbor-ca.crt"
+          CMD="$CMD /etc/docker/certs.d/harbor.hizero.local/ca.crt"
+          $SSH "$CMD"
+      - name: Manual fallback for DB VM if passwordless sudo unavailable
+        if: steps.patch-db.outcome == 'failure'
+        run: |
+          echo "sudo -n failed on DB VM (no NOPASSWD rule for $DB_USER)."
+          echo "DB VM(10.10.20.10)에 $DB_USER 계정으로 직접 접속해서"
+          echo "아래 두 줄을 실행해줘 (idempotent):"
+          echo "  echo '192.168.0.53 harbor.hizero.local' \\"
+          echo "    | sudo tee -a /etc/hosts"
+          echo "  sudo mkdir -p /etc/docker/certs.d/harbor.hizero.local \\"
+          echo "    && sudo cp ~/harbor-ca.crt \\"
+          echo "    /etc/docker/certs.d/harbor.hizero.local/ca.crt"
+      - name: Verify Harbor login now works on DB VM
+        env:
+          PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
+          PW2: ${{ secrets.DB_VM_SSH_PASSWORD_ALT }}
+        run: |
+          if [ "$DB_PW_SECRET" = "DB_VM_SSH_PASSWORD" ]; then
+            export SSHPASS="$PW1"
+          else
+            export SSHPASS="$PW2"
+          fi
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new"
+          SSH="$SSH $DB_USER@10.10.20.10"
           $SSH "getent hosts harbor.hizero.local"
           $SSH "docker login harbor.hizero.local \
             -u '${{ secrets.HARBOR_ROBOT_USER }}' \
