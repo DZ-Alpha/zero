@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +8,9 @@ from app.models.recipe import Recipe
 from app.models.recipe_base_comparison import RecipeBaseComparison
 from app.models.recipe_ingredient import RecipeIngredient
 from app.services.recipe_store import (
+    PAGE_SIZE,
     RecipeNotFoundError,
+    count_recipes,
     get_base_comparisons,
     get_ingredients,
     get_recipe,
@@ -28,6 +30,11 @@ def _list_item(recipe: Recipe) -> dict[str, object]:
         "thumbnailUrl": recipe.thumbnail_url,
         "sugarReductionPct": float(recipe.sugar_reduction_pct) if recipe.sugar_reduction_pct is not None else None,
         "comparisonStatus": recipe.comparison_status,
+        # PRODUCTION_HANDOFF.md P1-2 — 카드 필드. category/time(조리시간)은 명세엔
+        # 있지만 service.recipes에 해당 컬럼이 없어서 아직 못 채운다.
+        "sugar": float(recipe.total_sugar_g) if recipe.total_sugar_g is not None else None,
+        "calories": float(recipe.total_kcal) if recipe.total_kcal is not None else None,
+        "source": recipe.source,
     }
 
 
@@ -58,9 +65,21 @@ def _ingredient_item(ingredient: RecipeIngredient, comparison: RecipeBaseCompari
 
 
 @router.get("")
-async def get_recipe_list(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
-    recipes = await list_recipes(db)
-    return {"recipes": [_list_item(recipe) for recipe in recipes]}
+async def get_recipe_list(
+    source: str | None = Query(None, description="출처 필터: 10000recipe | youtube (PRODUCTION_HANDOFF.md P1-2)"),
+    sort: str | None = Query(None, description="정렬: sugarReduction(저당 비율순) | 기본(최신 적재순)"),
+    page: int = Query(1, ge=1),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    recipes = await list_recipes(db, source=source, sort=sort, page=page)
+    total = await count_recipes(db, source=source)
+    return {
+        "recipes": [_list_item(recipe) for recipe in recipes],
+        "page": page,
+        "pageSize": PAGE_SIZE,
+        "total": total,
+        "hasNext": page * PAGE_SIZE < total,
+    }
 
 
 class FavoriteToggleBody(BaseModel):
