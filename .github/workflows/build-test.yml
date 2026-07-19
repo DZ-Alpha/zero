@@ -500,6 +500,13 @@ jobs:
     env:
       PROD_HOST: bruce@10.10.10.30
     steps:
+      - name: Control test - robot login from harbor VM itself
+        run: |
+          echo "--- docker login on harbor VM (this runner), same creds ---"
+          docker login harbor.hizero.local \
+            -u '${{ secrets.HARBOR_ROBOT_USER }}' \
+            -p '${{ secrets.HARBOR_ROBOT_TOKEN }}' 2>&1 || true
+          docker logout harbor.hizero.local 2>&1 || true
       - name: Check Harbor CA trust and existing pull capability
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
