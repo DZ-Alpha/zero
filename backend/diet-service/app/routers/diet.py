@@ -313,6 +313,9 @@ def _record_item_dict(log, item) -> dict[str, object]:
     else:
         item_id = str(log.meal_log_id)
     return {
+        # 프론트 삭제(RC-0115 DELETE /diet/records/{id})용 — itemId는 상품/레시피
+        # 원본 참조라 삭제 대상 식별에 못 쓴다. recordId가 실제 meal_log_id.
+        "recordId": str(log.meal_log_id),
         "mealType": log.meal_type,
         "itemType": _INPUT_TYPE_TO_ITEM_TYPE.get(log.input_type, "photo"),
         "itemId": item_id,
