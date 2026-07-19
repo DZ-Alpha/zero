@@ -27,15 +27,16 @@
 
 | 기능ID | 설명 | 참고 |
 |---|---|---|
-| RC-0101~0102 | 한끼/하루 식단 사진 업로드 | `meal_logs` insert (`input_type='VISION'`, `analysis_status='PENDING'`) |
-| RC-0103~0104 | AI/OCR 분석 결과로 식단 항목 채우기 | 분석 완료 후 `meal_items` insert, `meal_logs.analysis_status='COMPLETED'`로 갱신 |
+| RC-0101~0102 | 한끼/하루 식단 사진 업로드 | `meal_logs` insert (`input_type='VISION'`, `analysis_status='PENDING'`). `mealType`/`eatenAt`은 선택값(PRODUCTION_HANDOFF.md P0-3) — 안 보내면 기존처럼 `mode` 기반 기본값/업로드 시각을 쓴다 |
+| RC-0103 | AI 식단 분석 (실제 구현) | `app/services/vision_service.py` — Claude Vision(`claude-opus-4-8`)으로 사진 속 음식 항목(이름/제공량/칼로리/당류/탄수화물)을 구조화 출력으로 추정, `meal_items` insert 후 `analysis_status='COMPLETED'`. `ANTHROPIC_API_KEY` 없으면 기존과 동일하게 `PREPARING` 반환(무비용 폴백) |
+| RC-0104 | OCR 분석 결과로 식단 항목 채우기 | 아직 미구현 — OCR 전용 파이프라인 필요(`services/알릴거.md` 2번 참고) |
 | RC-0105 | 대체 제품 추천 | Product Service 검색 API 호출(이 서비스 데이터 아님) |
 | RC-0106 | 캘린더 (날짜별 식단) | `meal_logs.eaten_at` 기준 조회 |
 | MN-0106~0108 | 홈 당/칼로리 게이지 | `v_meal_totals`를 하루 단위로 재집계 |
 | RC-0113 | 식단 기록 생성 | `POST /diet/records` — 레시피/상품/사진 공통 모델. `meal_log`(1) + `meal_item`(1)을 즉시 `COMPLETED` 상태로 생성. `Authorization: Bearer` 헤더 인증 |
 | RC-0114 | 식단 기록 수정 | `PUT /diet/records/{id}` — mealType/serving/sugar/calories 부분 수정 |
 | RC-0115 | 식단 기록 삭제 | `DELETE /diet/records/{id}` — meal_item + meal_log 함께 삭제 |
-| RC-0116 | 식단 기록 날짜별/월별 조회 | `GET /diet/records?date=` 또는 `?year=&month=` — 합계 + 항목 목록 |
+| RC-0116 | 식단 기록 날짜별/월별 조회 | `GET /diet/records?date=` — 그 날짜의 합계+항목 목록. `?year=&month=` — 날짜별로 묶어서 각 날짜의 합계+항목 목록을 한 응답에 담는다(PRODUCTION_HANDOFF.md P1-3, 캘린더 N+1 제거) |
 | RC-0117 | 업로드 취소 | `DELETE /diet/upload/{id}` — `analysis_status != COMPLETED`인 draft만 취소 가능(확정된 건 409, RC-0115로 삭제) |
 
 ## 참고 쿼리

@@ -87,6 +87,14 @@ export type ProductSearchItem = {
   name: string;
   desc: string;
   url: string;
+  // 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P1-1 반영분 — 카드 렌더링용 필드.
+  brand?: string | null;
+  category?: string | null;
+  serving?: string | null;
+  sugar?: number | null;
+  calories?: number | null;
+  image?: string | null;
+  tags?: string[];
 };
 
 export type HomeProductItem = {
@@ -206,8 +214,29 @@ export function searchProducts(values: {
   sort?: string;
   page?: number;
 }) {
-  return apiRequest<{ items: ProductSearchItem[]; page: number }>(
+  // 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P1-1 반영분 — total/pageSize/hasNext 추가.
+  return apiRequest<{ items: ProductSearchItem[]; page: number; total?: number; pageSize?: number; hasNext?: boolean }>(
     query("/search", { ...values, page: values.page ?? 1 }),
+  );
+}
+
+function authHeader(token: string) {
+  return { Authorization: `Bearer ${token}` };
+}
+
+// 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P0-4/P1-4 반영분(PR-0307/0308) — 상품 찜.
+export function toggleProductFavorite(id: string, token: string) {
+  return apiRequest<{ status: string; liked: boolean }>("/product/favorite", {
+    method: "POST",
+    headers: authHeader(token),
+    body: JSON.stringify({ id }),
+  });
+}
+
+export function getProductFavorites(token: string) {
+  return apiRequest<{ "list-products": Array<{ id: string; name: string; brand?: string | null; image?: string | null }> }>(
+    "/product/favorite/list",
+    { headers: authHeader(token) },
   );
 }
 
@@ -243,12 +272,78 @@ export function getDietOtherFoods(token: string, id: string) {
   return apiRequest<DietAnalysisResponse>(query("/diet/other-foods", { usr: token, id }));
 }
 
+// 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P0-2/P1-3 반영분(RC-0113~0117) — 식단
+// 기록 CRUD. 캘린더 월 조회는 날짜별로 이미 묶여서 오기 때문에(day-grouped),
+// 기존 getDietCalendar + 로그마다 getDietOtherFoods 호출하던 N+1이 필요 없다.
+export type DietRecordApiItem = {
+  recordId: string;
+  mealType: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK" | "OTHER";
+  itemType: "recipe" | "product" | "photo";
+  itemId: string;
+  name: string;
+  sugar?: number | null;
+  calories?: number | null;
+};
+
+export type DietRecordsDayGroup = {
+  date: string;
+  "sugar-total": number;
+  "calories-total": number;
+  list: DietRecordApiItem[];
+};
+
+export function getDietRecordsByMonth(token: string, year: number, month: number) {
+  return apiRequest<{ list: DietRecordsDayGroup[] }>(query("/diet/records", { year, month }), {
+    headers: authHeader(token),
+  });
+}
+
+export function createDietRecord(token: string, values: {
+  date: string;
+  mealType: string;
+  itemType: "recipe" | "product" | "photo";
+  itemId: string;
+  serving: number;
+  sugar: number;
+  calories: number;
+}) {
+  return apiRequest<{ status: string; id: string }>("/diet/records", {
+    method: "POST",
+    headers: authHeader(token),
+    body: JSON.stringify(values),
+  });
+}
+
+export function deleteDietRecord(token: string, id: string) {
+  return apiRequest<{ status: string }>(`/diet/records/${id}`, {
+    method: "DELETE",
+    headers: authHeader(token),
+  });
+}
+
 export function getSearchRecommendations(searchQuery: string) {
   return apiRequest<{ items: Array<{ id: string; name: string }> }>(query("/search/recommend", { query: searchQuery }));
 }
 
 export function getRecipeSubstitutes(id: number) {
   return apiRequest<RecipeSubstituteResponse>(`/recipes/${id}/substitutes`);
+}
+
+// 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P0-4/P1-4 반영분(RC-0111/0112) — 레시피 찜.
+// recipe-service는 이 두 엔드포인트가 Authorization: Bearer 헤더만 받는다(usr 쿼리 불가).
+export function toggleRecipeFavorite(id: number, token: string) {
+  return apiRequest<{ status: string; liked: boolean }>("/recipes/favorite", {
+    method: "POST",
+    headers: authHeader(token),
+    body: JSON.stringify({ id }),
+  });
+}
+
+export function getRecipeFavorites(token: string) {
+  return apiRequest<{ "list-receipe": Array<{ id: number; name: string; image?: string | null }> }>(
+    "/recipes/favorite/list",
+    { headers: authHeader(token) },
+  );
 }
 
 export type ChatbotResponse = {

@@ -69,7 +69,7 @@ export function RecordMealModal({
   onClose: () => void;
   onSaved?: (dateKey: string, record: DietRecord) => void;
 }) {
-  const { recordsByDate: hookRecordsByDate, addRecord } = useDietRecords();
+  const { recordsByDate: hookRecordsByDate, addRecord, addServerRecord } = useDietRecords();
   const { ready: authReady, signedIn } = useAuthSession();
   const recordsByDate = existingRecordsByDate ?? hookRecordsByDate;
   const { goals } = useUserSettings();
@@ -319,14 +319,40 @@ export function RecordMealModal({
     if (photoInput.current) photoInput.current.value = "";
   }
 
-  function saveItem() {
+  async function saveItem() {
     if (!selected) return;
     if (!authReady || !signedIn) {
       setLoginPrompt(true);
       return;
     }
     setSaveState("saving");
-    // 서버에 등록된 사진 기록이면 캘린더의 서버 병합과 같은 id를 써서 중복 표시를 막는다.
+
+    // 레시피/식품은 이번에 실제 서버에 저장한다(RC-0113). 사진은 analyzePhoto()에서
+    // 이미 /diet/upload + /diet/ai-analyze로 서버에 저장이 끝난 상태라 다시 만들지
+    // 않고, 캘린더 서버 병합과 같은 id로 로컬에 낙관적으로만 반영한다.
+    if (selected.kind === "레시피" || selected.kind === "식품") {
+      try {
+        const itemId = selected.id.replace(/^(recipe|product)-/, "");
+        const record = await addServerRecord(recordDate, {
+          meal,
+          itemType: selected.kind === "레시피" ? "recipe" : "product",
+          itemId,
+          sugar: selected.sugar,
+          calories: selected.calories,
+          name: selected.name,
+          category: selected.category,
+          note: selected.note,
+          href: selected.href,
+        });
+        onSaved?.(recordDate, record);
+        setSaveState("saved");
+        window.setTimeout(onClose, 720);
+      } catch {
+        setSaveState("error");
+      }
+      return;
+    }
+
     const isServerPhoto = selected.kind === "사진 분석" && serverMealLogId;
     const record: DietRecord = {
       id: isServerPhoto ? `server-${serverMealLogId}` : `${selected.id}-${Date.now()}`,

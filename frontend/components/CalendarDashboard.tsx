@@ -103,8 +103,8 @@ export function CalendarDashboard() {
     setActionMessage("");
   }
 
-  function deleteRecord(recordId: string) {
-    removeRecord(selectedDateKey, recordId);
+  async function deleteRecord(record: DietRecord) {
+    await removeRecord(selectedDateKey, record);
     setPendingDeleteId(null);
     setActionMessage("기록을 삭제했어요.");
   }
@@ -198,12 +198,12 @@ export function CalendarDashboard() {
                         {mealItems.length > 0 ? mealItems.map((item) => (
                           <article className="day-food-item" key={item.id}>
                             <div className="day-food-copy"><b>{item.name}</b><small>당류 {item.sugar}g · {item.calories}kcal</small></div>
-                            {item.source === "server" ? <span className="server-record-label">사진 기록</span> : <button type="button" onClick={() => setPendingDeleteId(item.id)} aria-label={`${item.name} 기록 삭제`}>삭제</button>}
+                            <button type="button" onClick={() => setPendingDeleteId(item.id)} aria-label={`${item.name} 기록 삭제`}>삭제</button>
                             {pendingDeleteId === item.id && (
                               <div className="record-delete-confirm" role="alertdialog" aria-label="기록 삭제 확인">
                                 <p>이 기록을 삭제할까요?</p>
                                 <button type="button" onClick={() => setPendingDeleteId(null)}>취소</button>
-                                <button type="button" onClick={() => deleteRecord(item.id)}>삭제하기</button>
+                                <button type="button" onClick={() => void deleteRecord(item)}>삭제하기</button>
                               </div>
                             )}
                           </article>

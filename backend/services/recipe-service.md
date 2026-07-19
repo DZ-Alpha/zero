@@ -20,7 +20,7 @@
 
 | 기능ID | 설명 |
 |---|---|
-| RC-0107 | 저당 레시피 목록 |
+| RC-0107 | 저당 레시피 목록 — `GET /recipes`에 `source`(10000recipe/youtube) 필터, `sort=sugarReduction`, `page`/`pageSize`/`total`/`hasNext` 추가(PRODUCTION_HANDOFF.md P1-2). 카드에 `sugar`/`calories`/`source`도 채움 — `category`/`time`(조리시간)은 명세엔 있지만 `service.recipes`에 컬럼이 없어서 아직 못 채움 |
 | RC-0108 | 레시피 상세 (재료, 요리법) |
 | RC-0109 | AI 대체 상품 추천 (레시피 재료 → 제로/저당 상품) — **Product Service 검색 API 호출 필요** |
 | RC-0110 | 저당 vs 기본 레시피 당/칼로리 비교 요약 |

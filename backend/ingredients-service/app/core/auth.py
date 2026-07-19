@@ -2,7 +2,7 @@ import logging
 import time
 
 import jwt
-from fastapi import HTTPException, Query, Response
+from fastapi import Header, HTTPException, Query, Response
 
 from app.core.config import settings
 
@@ -11,10 +11,10 @@ logger = logging.getLogger("ingredients_service.auth")
 _ALLOWED_ALGORITHMS = {"HS256"}
 
 
-def get_current_user(response: Response, usr: str = Query(..., description="JWT 토큰")) -> dict:
+def _decode_and_refresh(token: str, response: Response) -> dict:
     try:
         payload = jwt.decode(
-            usr,
+            token,
             settings.jwt_secret,
             algorithms=list(_ALLOWED_ALGORITHMS),
         )
@@ -37,8 +37,28 @@ def get_current_user(response: Response, usr: str = Query(..., description="JWT 
     return payload
 
 
-def get_current_admin(response: Response, usr: str = Query(..., description="JWT 토큰")) -> dict:
-    payload = get_current_user(response, usr)
+def get_current_user(
+    response: Response,
+    usr: str | None = Query(None, description="JWT 토큰 (또는 Authorization: Bearer 헤더)"),
+    authorization: str | None = Header(None),
+) -> dict:
+    """PRODUCTION_HANDOFF.md P0-4 — usr 쿼리파라미터와 Authorization: Bearer 헤더를
+    둘 다 받는다(헤더 우선). 기존 usr 방식 호출은 그대로 동작한다."""
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+    elif usr:
+        token = usr
+    else:
+        raise HTTPException(status_code=401, detail="인증 정보가 없습니다.")
+    return _decode_and_refresh(token, response)
+
+
+def get_current_admin(
+    response: Response,
+    usr: str | None = Query(None),
+    authorization: str | None = Header(None),
+) -> dict:
+    payload = get_current_user(response, usr, authorization)
     if payload.get("role") != "admin":
         logger.warning("auth: non-admin access attempt user_id=%r", payload.get("user_id"))
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")

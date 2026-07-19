@@ -1,11 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import get_current_user_from_token
+from app.core.security import get_current_user_from_token, resolve_token
 from app.models.user_health_profile import UserHealthProfile
 from app.services.health_profile_store import (
     HealthDataConsentRequiredError,
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/home")
 class HealthProfileUpdateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    usr: str
+    usr: str | None = None
     consent: bool = False
     birth_year: Annotated[int | None, Field(alias="birthYear")] = None
     gender: str | None = None
@@ -61,18 +61,24 @@ def _serialize(profile: UserHealthProfile | None) -> dict[str, object]:
 
 @router.get("/health-profile")
 async def read_health_profile(
-    usr: str, response: Response, db: AsyncSession = Depends(get_db)
+    response: Response,
+    usr: str | None = None,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user = get_current_user_from_token(usr, response)
+    user = get_current_user_from_token(resolve_token(usr, authorization), response)
     profile = await get_health_profile(db, user.user_id)
     return _serialize(profile)
 
 
 @router.put("/health-profile")
 async def update_health_profile(
-    payload: HealthProfileUpdateRequest, response: Response, db: AsyncSession = Depends(get_db)
+    payload: HealthProfileUpdateRequest,
+    response: Response,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user = get_current_user_from_token(payload.usr, response)
+    user = get_current_user_from_token(resolve_token(payload.usr, authorization), response)
     try:
         profile = await upsert_health_profile(
             db,

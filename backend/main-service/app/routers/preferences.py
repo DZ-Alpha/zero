@@ -1,12 +1,12 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import get_current_user_from_token
+from app.core.security import get_current_user_from_token, resolve_token
 from app.services.preference_store import (
     DuplicatePreferenceError,
     InvalidPreferenceError,
@@ -22,15 +22,20 @@ router = APIRouter(prefix="/home/preferences")
 class AddPreferenceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    usr: str
+    usr: str | None = None
     preference_type: Annotated[str, Field(alias="preferenceType")]
     tag_id: Annotated[uuid.UUID | None, Field(alias="tagId")] = None
     custom_value: Annotated[str | None, Field(alias="customValue")] = None
 
 
 @router.get("")
-async def get_preferences(usr: str, response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
-    user = get_current_user_from_token(usr, response)
+async def get_preferences(
+    response: Response,
+    usr: str | None = None,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    user = get_current_user_from_token(resolve_token(usr, authorization), response)
     preferences = await list_preferences(db, user.user_id)
     return {
         "preferences": [
@@ -47,9 +52,12 @@ async def get_preferences(usr: str, response: Response, db: AsyncSession = Depen
 
 @router.post("")
 async def create_preference(
-    payload: AddPreferenceRequest, response: Response, db: AsyncSession = Depends(get_db)
+    payload: AddPreferenceRequest,
+    response: Response,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user = get_current_user_from_token(payload.usr, response)
+    user = get_current_user_from_token(resolve_token(payload.usr, authorization), response)
     try:
         preference = await add_preference(
             db, user.user_id, payload.preference_type, payload.tag_id, payload.custom_value
@@ -66,9 +74,13 @@ async def create_preference(
 
 @router.delete("/{preference_id}")
 async def delete_preference(
-    preference_id: uuid.UUID, usr: str, response: Response, db: AsyncSession = Depends(get_db)
+    preference_id: uuid.UUID,
+    response: Response,
+    usr: str | None = None,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    user = get_current_user_from_token(usr, response)
+    user = get_current_user_from_token(resolve_token(usr, authorization), response)
     deleted = await remove_preference(db, user.user_id, preference_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="선호 정보를 찾을 수 없습니다.")

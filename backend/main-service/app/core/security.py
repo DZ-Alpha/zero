@@ -37,3 +37,13 @@ def get_current_user_from_token(token: str, response: Response) -> UserIdentity:
     response.headers["X-Refreshed-Token"] = jwt.encode(refreshed_payload, settings.jwt_secret, algorithm="HS256")
 
     return UserIdentity(user_id=user_id, nickname=nickname)
+
+
+def resolve_token(usr: str | None, authorization: str | None) -> str:
+    """PRODUCTION_HANDOFF.md P0-4 — usr 쿼리파라미터/바디와 Authorization: Bearer
+    헤더를 둘 다 받는다(헤더 우선). 기존 usr 방식 호출은 그대로 동작한다."""
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.removeprefix("Bearer ").strip()
+    if usr:
+        return usr
+    raise _UNAUTHORIZED

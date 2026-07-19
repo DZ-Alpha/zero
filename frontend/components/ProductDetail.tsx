@@ -130,7 +130,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
           <h1>{detail.title}</h1>
           <p>{detail.summary}</p>
           <div className="product-key-nutrients"><div><span>당류</span><strong>{format(detail.sugar)}g</strong></div><div><span>열량</span><strong>{format(detail.calories)}kcal</strong></div><div><span>단백질</span><strong>{format(detail.protein)}g</strong></div><div><span>탄수화물</span><strong>{format(detail.carbs)}g</strong></div></div>
-          <FavoriteButton label={detail.title} initial />
+          <FavoriteButton label={detail.title} id={productId} kind="product" />
         </div>
       </section>
 

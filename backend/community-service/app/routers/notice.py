@@ -1,12 +1,12 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import get_current_admin_from_token, get_current_user_from_token
+from app.core.security import get_current_admin_from_token, get_current_user_from_token, resolve_token
 from app.models.notice import Notice
 from app.services.notice_store import (
     NoticeNotFoundError,
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/community/notice")
 class NoticeCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    usr: str
+    usr: str | None = None
     name: str
     desc: str
     tag: str | None = None
@@ -36,7 +36,7 @@ class NoticeCreateRequest(BaseModel):
 class NoticeUpdateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    usr: str
+    usr: str | None = None
     name: str | None = None
     desc: str | None = None
     tag: str | None = None
@@ -81,9 +81,12 @@ async def get_notice_detail(notice_id: uuid.UUID, db: AsyncSession = Depends(get
 
 @router.post("")
 async def write_notice(
-    payload: NoticeCreateRequest, response: Response, db: AsyncSession = Depends(get_db)
+    payload: NoticeCreateRequest,
+    response: Response,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    admin = get_current_admin_from_token(payload.usr, response)
+    admin = get_current_admin_from_token(resolve_token(payload.usr, authorization), response)
     notice = await create_notice(
         db,
         admin.user_id,
@@ -98,9 +101,13 @@ async def write_notice(
 
 @router.put("/{notice_id}")
 async def edit_notice(
-    notice_id: uuid.UUID, payload: NoticeUpdateRequest, response: Response, db: AsyncSession = Depends(get_db)
+    notice_id: uuid.UUID,
+    payload: NoticeUpdateRequest,
+    response: Response,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    get_current_admin_from_token(payload.usr, response)
+    get_current_admin_from_token(resolve_token(payload.usr, authorization), response)
     try:
         notice = await update_notice(
             db,
@@ -125,9 +132,13 @@ async def edit_notice(
 
 @router.delete("/{notice_id}")
 async def remove_notice(
-    notice_id: uuid.UUID, usr: str, response: Response, db: AsyncSession = Depends(get_db)
+    notice_id: uuid.UUID,
+    response: Response,
+    usr: str | None = None,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    get_current_admin_from_token(usr, response)
+    get_current_admin_from_token(resolve_token(usr, authorization), response)
     try:
         await delete_notice(db, notice_id)
     except NoticeNotFoundError as error:
@@ -138,9 +149,13 @@ async def remove_notice(
 
 @router.post("/{notice_id}/like")
 async def like_notice(
-    notice_id: uuid.UUID, usr: str, response: Response, db: AsyncSession = Depends(get_db)
+    notice_id: uuid.UUID,
+    response: Response,
+    usr: str | None = None,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user = get_current_user_from_token(usr, response)
+    user = get_current_user_from_token(resolve_token(usr, authorization), response)
     try:
         liked, count = await toggle_like(db, notice_id, user.user_id)
     except NoticeNotFoundError as error:

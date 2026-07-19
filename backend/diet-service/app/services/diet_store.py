@@ -33,6 +33,7 @@ async def create_meal_log(
     image_object_key: str,
     meal_type: str = "SNACK",
     input_type: str = "VISION",
+    eaten_at: datetime | None = None,
 ) -> MealLog:
     log = MealLog(
         meal_log_id=uuid.uuid4(),
@@ -41,7 +42,7 @@ async def create_meal_log(
         meal_type=meal_type,
         image_object_key=image_object_key,
         analysis_status="PENDING",
-        eaten_at=datetime.now(timezone.utc),
+        eaten_at=eaten_at or datetime.now(timezone.utc),
         created_at=datetime.now(timezone.utc),
     )
     db.add(log)

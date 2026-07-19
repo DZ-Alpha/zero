@@ -3,7 +3,7 @@ from datetime import date
 from typing import Annotated
 
 import jwt as pyjwt
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,16 @@ def _calculate_age(birthday: date | None) -> int | None:
     return today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
 
 
+def _resolve_token(usr: str | None, authorization: str | None) -> str:
+    """PRODUCTION_HANDOFF.md P0-4 — usr 쿼리파라미터/바디와 Authorization: Bearer
+    헤더를 둘 다 받는다(헤더 우선). 기존 usr 방식 호출은 그대로 동작한다."""
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.removeprefix("Bearer ").strip()
+    if usr:
+        return usr
+    raise HTTPException(status_code=401, detail="인증 정보가 없습니다.")
+
+
 def _decode_user_id_or_401(token: str, response: Response) -> int:
     try:
         payload = jwt_service.decode_payload(token)
@@ -44,7 +54,7 @@ def _decode_user_id_or_401(token: str, response: Response) -> int:
 class FirstSetRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    usr: str
+    usr: str | None = None
     favorite_category: Annotated[list[str] | None, Field(alias="favoriteCategory")] = None
     is_allergic: Annotated[bool | None, Field(alias="isAllergic")] = None
     optional_agree: Annotated[bool | None, Field(alias="optionalAgree")] = None
@@ -55,9 +65,12 @@ class FirstSetRequest(BaseModel):
 
 @router.post("/firstset")
 async def first_set(
-    payload: FirstSetRequest, response: Response, db: AsyncSession = Depends(get_db)
+    payload: FirstSetRequest,
+    response: Response,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    user_id = _decode_user_id_or_401(payload.usr, response)
+    user_id = _decode_user_id_or_401(_resolve_token(payload.usr, authorization), response)
 
     user = await db.get(User, user_id)
     if user is None:
@@ -82,8 +95,13 @@ async def first_set(
 
 
 @router.get("/mypage")
-async def get_mypage(usr: str, response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
-    user_id = _decode_user_id_or_401(usr, response)
+async def get_mypage(
+    response: Response,
+    usr: str | None = None,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    user_id = _decode_user_id_or_401(_resolve_token(usr, authorization), response)
 
     user = await db.get(User, user_id)
     if user is None:
@@ -114,9 +132,13 @@ async def get_mypage(usr: str, response: Response, db: AsyncSession = Depends(ge
 
 @router.delete("/social/{provider}")
 async def unlink_social(
-    provider: str, usr: str, response: Response, db: AsyncSession = Depends(get_db)
+    provider: str,
+    response: Response,
+    usr: str | None = None,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user_id = _decode_user_id_or_401(usr, response)
+    user_id = _decode_user_id_or_401(_resolve_token(usr, authorization), response)
 
     try:
         remaining = await user_store.unlink_social_account(db, user_id=user_id, provider=provider)
@@ -130,14 +152,18 @@ async def unlink_social(
 
 @router.delete("/mypage")
 async def leave(
-    usr: str, exituser: str, response: Response, db: AsyncSession = Depends(get_db)
+    exituser: str,
+    response: Response,
+    usr: str | None = None,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     if exituser != "EXIT":
         raise HTTPException(status_code=400, detail="exituser=EXIT 파라미터로 탈퇴 의사를 명시적으로 확인해야 합니다.")
 
     # 탈퇴 처리 자체엔 갱신 토큰이 의미 없지만(계정이 곧 사라짐), 검증 로직은
     # 통일해서 쓴다 — 헤더는 그냥 무시돼도 무해하다.
-    user_id = _decode_user_id_or_401(usr, response)
+    user_id = _decode_user_id_or_401(_resolve_token(usr, authorization), response)
     await user_store.delete_user(db, user_id)
 
     return {"status": "SUCCESS"}
