@@ -487,6 +487,20 @@ jobs:
     env:
       PROD_HOST: bruce@10.10.10.30
     steps:
+      - name: Check Harbor CA trust and existing pull capability
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          echo "--- /etc/docker/certs.d/ ---"
+          $SSH "ls -la /etc/docker/certs.d/ 2>&1 || echo '(directory missing)'"
+          echo "--- can production already pull a known backend image? ---"
+          IMG="harbor.hizero.local/dangdang-backend/login-service:latest"
+          $SSH "docker pull $IMG 2>&1 | tail -5"
+          echo "--- system CA trust store check ---"
+          HOST="harbor.hizero.local"
+          OPENSSL="openssl s_client -connect $HOST:443 -servername $HOST"
+          $SSH "$OPENSSL </dev/null 2>&1 | grep -E 'verify|issuer|subject'"
       - name: Check for any existing NOPASSWD sudo rule
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
