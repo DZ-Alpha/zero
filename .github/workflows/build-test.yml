@@ -711,6 +711,12 @@ jobs:
           echo "$TOKEN" | $SSH "docker login \
             harbor.hizero.local -u '$USR' \
             --password-stdin"
+      - name: Diagnose backend compose tag variables
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          $SSH "cat ~/backend/docker-compose.yaml"
       - name: Diagnose /b/search gateway routing failure
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
