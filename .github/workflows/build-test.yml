@@ -539,8 +539,8 @@ jobs:
             echo "harbor VM 로컬에 $CA_LOCAL 이 없음 - 경로 재확인 필요"
             exit 1
           fi
-          $SCP "$CA_LOCAL" "$PROD_HOST":~/harbor-ca.crt
-          echo "harbor VM의 CA 인증서를 production ~/harbor-ca.crt 로 복사 완료"
+          $SCP "$CA_LOCAL" "$PROD_HOST":/home/bruce/harbor-ca.crt
+          echo "harbor VM의 CA 인증서를 production /home/bruce/harbor-ca.crt 로 복사 완료"
       - name: Check for any existing NOPASSWD sudo rule
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
@@ -598,7 +598,7 @@ jobs:
         run: |
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           CMD="sudo -n mkdir -p /etc/docker/certs.d/harbor.hizero.local"
-          CMD="$CMD && sudo -n cp ~/harbor-ca.crt"
+          CMD="$CMD && sudo -n cp /home/bruce/harbor-ca.crt"
           CMD="$CMD /etc/docker/certs.d/harbor.hizero.local/ca.crt"
           $SSH "$CMD"
       - name: Manual fallback if passwordless sudo unavailable
@@ -613,7 +613,7 @@ jobs:
           echo "  echo '$WORKING_IP harbor.hizero.local' \\"
           echo "    | sudo tee -a /etc/hosts"
           echo "  sudo mkdir -p /etc/docker/certs.d/harbor.hizero.local \\"
-          echo "    && sudo cp ~/harbor-ca.crt \\"
+          echo "    && sudo cp /home/bruce/harbor-ca.crt \\"
           echo "    /etc/docker/certs.d/harbor.hizero.local/ca.crt"
       - name: Verify Harbor login now works
         env:
