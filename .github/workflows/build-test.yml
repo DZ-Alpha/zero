@@ -711,6 +711,11 @@ jobs:
           USR="${{ secrets.HARBOR_ROBOT_USER }}"
           echo "$TOKEN" | $SSH "docker login harbor.hizero.local -u '$USR' \
             --password-stdin 2>&1" || true
+          echo "--- direct curl of the token endpoint from DB VM ---"
+          REALM="https://harbor.hizero.local/service/token"
+          SVC="service=harbor-registry"
+          $SSH "curl -sk -w '\nHTTP_CODE:%{http_code}\n' \
+            -u '$USR:$TOKEN' '$REALM?$SVC'"
       - name: Copy Harbor CA cert to DB VM home dir
         env:
           PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
