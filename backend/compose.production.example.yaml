@@ -54,9 +54,43 @@ services:
     image: 192.168.0.53/dangdang-backend/login-service:${TAG:-latest}
     container_name: login-service
     env_file: ./.env
+    # 2026-07-20, OTel 계측 파일럿 - login-service 하나로 먼저 검증
+    # (otel-guide.md 참고). Alloy 없이 Tempo(4318)/Loki(3100)/
+    # Prometheus(9090) OTLP 엔드포인트로 직접 전송한다. 재헌님이
+    # requirements.txt/Dockerfile에 계측 코드를 추가하기 전까지는
+    # 이 env들은 아무 효과 없음(SDK 자체가 없어서) - 코드 쪽 PR과
+    # 같이 반영되는 걸 전제로 미리 넣어둔다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=login-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "8000:8000"
-    <<: *hardening
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   admin-service:
     image: 192.168.0.53/dangdang-backend/admin-service:${TAG:-latest}

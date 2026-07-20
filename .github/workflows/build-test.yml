@@ -445,6 +445,19 @@ jobs:
     # 때만, workflow_dispatch는 deploy_target이 backend/both일 때만 허용한다
     # (2026-07-19, frontend/가 main에 없는 상태에서 backend만 수동 재배포하려다
     # frontend-deploy-production까지 같이 돌아 scp 실패하는 걸 실측 - 대상 분리).
+    # 2026-07-20, compose.production.example.yaml만 바뀐 push(예: 볼륨/포트
+    # 등 서비스 코드 변경 없는 인프라 설정 수정)에서 이 job 전체가 스킵되는
+    # 걸 실측(backend-image-scanning이 매트릭스 없이 "skipped"로 나와
+    # 'success' 조건을 못 만족). 'skipped'도 허용해서 compose 파일만 바뀐
+    # 경우도 (파일 동기화만이라도) 자동으로 돌게 한다 - 실제 이미지
+    # 재배포는 그 아래 per-service pull 성공 여부로 여전히 걸러지므로
+    # (해당 태그로 새로 빌드된 서비스만 up -d), 이 조건 완화가 스캔 안 된
+    # 이미지를 배포하게 만들지는 않는다. 다만 이건 required_pull_request_
+    # reviews + enforce_admins를 먼저 켠 뒤에만 안전(2026-07-20 리스크
+    # 평가 - compose 파일 자체의 보안 설정은 Trivy가 스캔 못 하는
+    # 사각지대라, PR 리뷰가 유일한 실질적 게이트).
+    # 'failure'/'cancelled'는 여전히 막는다 - 명시적으로 뭔가 실패한
+    # 경우까지 배포를 진행하면 안 되므로.
     if: |
       always() &&
       (
@@ -453,7 +466,8 @@ jobs:
             inputs.deploy_target == 'both')) ||
         (
           github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-          needs.backend-image-scanning.result == 'success' &&
+          (needs.backend-image-scanning.result == 'success' ||
+            needs.backend-image-scanning.result == 'skipped') &&
           needs.code-scanning.result == 'success'
         )
       )
