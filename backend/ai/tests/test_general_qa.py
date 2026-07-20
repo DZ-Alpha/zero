@@ -40,17 +40,31 @@ def test_context_block_without_consent_uses_general_baseline():
     assert "일반" in block
 
 
-async def test_handler_injects_rag_and_product_into_prompt():
+async def test_handler_injects_rag_and_context_into_prompt():
     llm = _FakeLLM()
     handler = GeneralQAHandler(llm=llm, retriever=_FakeRetriever())
     data = HandlerInput(msg="이 초코바 먹어도 돼?", img=None, template=None, context=_ctx(True, 48.0))
     result = await handler.handle(data)
     assert result.msg == "대화체 답변입니다"
     assert result.is_img is False
-    # 프롬프트에 RAG·상품·사용자맥락이 실제로 주입됐는지
+    # ①번은 RAG 문서 + 사용자맥락을 주입한다(상품검색은 기능② 영역이라 여기선 미사용).
     assert "0.5g 미만" in llm.last_user
-    assert "20g" in llm.last_user
     assert "48" in llm.last_user
+
+
+async def test_handler_does_not_call_search_products():
+    # ①번 경로는 search_products를 호출하지 않는다(상품벡터 테이블 스키마 상이).
+    called = {"products": False}
+
+    class _R(_FakeRetriever):
+        async def search_products(self, query: str, k: int = 4):
+            called["products"] = True
+            return []
+
+    handler = GeneralQAHandler(llm=_FakeLLM(), retriever=_R())
+    data = HandlerInput(msg="탄수화물이 뭐야?", img=None, template=None, context=_ctx(False, None))
+    await handler.handle(data)
+    assert called["products"] is False
 
 
 async def test_handler_uses_system_prompt():

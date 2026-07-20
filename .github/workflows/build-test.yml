@@ -32,15 +32,25 @@ on:
         # 어느 쪽을 배포할지 명시하게 해서 관련 없는 쪽까지 끌려나가는 걸 막는다.
         # none은 bgateway-cutover처럼 backend/frontend 배포 없이 workflow_dispatch
         # 자체만 필요한 일회성 job을 돌릴 때 씀(2026-07-19 추가).
-        description: '수동 배포 대상'
+        # 2026-07-20, 기본값을 both -> none으로 변경. loki 청소용으로
+        # fix_harbor_dns=true만 주고 workflow_dispatch를 돌렸다가, deploy_target이
+        # 기본값 both로 남아 frontend-deploy-production까지 딸려 돌면서 그 커밋
+        # SHA로 빌드된 적 없는 frontend 이미지를 pull하려다 "not found"로 실패,
+        # 불필요한 Slack 오탐 알람이 떴다(production 영향은 없었음 - pull 단계에서만
+        # 실패). 일회성 job(fix_harbor_dns 등)이 목적일 때 매번 deploy_target=none을
+        # 기억해서 넘기는 것보다, 기본을 "아무것도 배포 안 함"으로 두고 배포할 때만
+        # 명시적으로 선택하게 하는 게 안전하다(자동 push 배포 경로는 이 입력을
+        # 참조하지 않는 별도 조건이라 영향 없음). 하루 종일 적용해온 "production을
+        # 건드리는 건 명시적 opt-in" 원칙과도 일관됨.
+        description: '수동 배포 대상 (기본 none - 배포하려면 명시적으로 선택)'
         required: false
-        default: 'both'
+        default: 'none'
         type: choice
         options:
+          - none
           - both
           - backend
           - frontend
-          - none
       run_bgateway_cutover:
         # 2026-07-19, b-gateway non-root/read-only 전환 검증차 처음 추가했으나
         # prod-env-fix류 일회성 job과 달리, b-gateway는 이 job 전엔 자동화된
