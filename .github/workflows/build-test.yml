@@ -829,6 +829,20 @@ jobs:
           $SSH "timeout 5 bash -c \
             'cat < /dev/null > /dev/tcp/192.168.0.51/4317' \
             2>&1 && echo REACHABLE || echo UNREACHABLE"
+      # 2026-07-20, 일회성 진단 - ~/backend/docker-compose.yaml이 git 추적
+      # 파일이 아니라 production VM에만 존재해서, PR #52(ai 서비스 추가)
+      # 배포가 "no such service: ai"로 실패했다(파일에 새 서비스 블록이
+      # 없었음). frontend처럼 git 관리+CI 자동 동기화로 바꾸기 위해 실제
+      # 구조를 먼저 확인한다 - 비밀번호/시크릿 값은 절대 출력하지 않고
+      # 구조(서비스명/포트/네트워크/볼륨/env 키 이름)만 sed로 마스킹해서 본다.
+      # 확인 끝나면 이 스텝은 삭제한다.
+      - name: Dump production backend compose structure (secrets masked)
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          $SSH "cat ~/backend/docker-compose.yaml" | \
+            sed -E 's/(PASSWORD|SECRET|TOKEN|KEY)=.*/\1=***MASKED***/'
 
   # 2026-07-19, DB VM 선제 조치 일회성 job. DB VM은 harbor+monitoring VM과
   # 별개 머신이라 production과 똑같이 harbor CA를 신뢰하도록 설정된 적이
