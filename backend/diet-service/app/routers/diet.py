@@ -7,7 +7,7 @@ from datetime import datetime, time, timezone
 from decimal import Decimal
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +15,13 @@ from app.core.auth import get_current_user, get_current_user_bearer
 from app.core.config import settings
 from app.core.database import get_db
 from app.services.diet_store import (
+    MealLogNotConfirmableError,
     MealLogNotFoundError,
     ProductNotFoundError,
     RecipeNotFoundError,
+    apply_vision_result,
     complete_meal_log,
+    confirm_meal_log,
     create_manual_record,
     create_meal_log,
     delete_meal_log,
@@ -33,6 +36,7 @@ from app.services.diet_store import (
     make_meal_item_from_product,
     update_record,
 )
+from app.services.storage import StorageUploadError, validate_diet_photo_key
 
 logger = logging.getLogger("diet_service.diet")
 
@@ -91,26 +95,30 @@ def _item_dict(item) -> dict:
     }
 
 
-# RC-0101: 한끼 식단 사진 업로드
-# RC-0102: 하루 식단 사진 업로드 (mode=daily)
-@router.post("/upload")
+class DietPhotoUploadBody(BaseModel):
+    object_key: str
+    mealType: str | None = None
+    date: str | None = None
+
+
+# RC-0101~0102: 식단 사진 업로드 — object_key(POST /uploads/diet-photo가 반환한
+# 값) 등록 → meal_log(PENDING) 생성 + diet.photo.requested outbox 이벤트.
+# user_id는 body가 아니라 인증 JWT에서만 뽑는다.
+@router.post("/upload", status_code=202)
 async def upload_diet(
-    body: dict,
+    body: DietPhotoUploadBody,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user),
+    payload: dict = Depends(get_current_user_bearer),
 ) -> dict[str, object]:
-    """RC-0101~0102: 식단 사진 URL 등록 → meal_log 생성 (분석은 별도 호출).
-
-    body: {img: S3_URL, mode: 'daily'(optional)}
-    """
     user_id: int = payload["user_id"]
-    image_object_key: str | None = body.get("img")
-    if not image_object_key:
-        raise HTTPException(status_code=422, detail="필수 필드 누락: img")
 
-    # 실제 DB의 meal_type CHECK 제약엔 'DAILY'가 없다(BREAKFAST/LUNCH/DINNER/
-    # SNACK/OTHER만 허용) — "하루 식단" 업로드는 OTHER로 매핑한다.
-    meal_type = "OTHER" if body.get("mode") == "daily" else "SNACK"
+    try:
+        image_object_key = validate_diet_photo_key(body.object_key, user_id)
+    except StorageUploadError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    meal_type = _normalize_meal_type(body.mealType) if body.mealType else "SNACK"
+    eaten_at = _parse_date(body.date) if body.date else None
 
     log = await create_meal_log(
         db,
@@ -118,9 +126,132 @@ async def upload_diet(
         image_object_key=image_object_key,
         meal_type=meal_type,
         input_type="VISION",
+        eaten_at=eaten_at,
     )
     logger.info("diet: meal_log created meal_log_id=%s user_id=%s", log.meal_log_id, user_id)
-    return {"status": "SUCCESS", "id": str(log.meal_log_id)}
+    return {"meal_log_id": str(log.meal_log_id), "status": log.analysis_status}
+
+
+# 사진 분석 상태 폴링 — RecordMealModal이 여기를 반복 호출한다. 업로드 성공을
+# 분석 완료로 취급하면 안 된다는 게 이 엔드포인트를 따로 둔 이유.
+@router.get("/photo/{meal_log_id}")
+async def get_diet_photo_status(
+    meal_log_id: str,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(get_current_user_bearer),
+) -> dict[str, object]:
+    user_id: int = payload["user_id"]
+    log_id = _to_uuid(meal_log_id, "meal_log ID")
+
+    try:
+        log = await get_meal_log_for_user(db, log_id, user_id)
+    except MealLogNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    items = (
+        await get_meal_items(db, log_id)
+        if log.analysis_status in ("AWAITING_CONFIRMATION", "COMPLETED")
+        else []
+    )
+    return {
+        "meal_log_id": str(log_id),
+        "status": log.analysis_status,
+        "needs_user_confirmation": log.needs_user_confirmation,
+        "confidence": float(log.vision_confidence) if log.vision_confidence is not None else None,
+        "confidence_source": log.vision_provider,
+        "list-diet": [_item_dict(i) for i in items],
+    }
+
+
+class DietConfirmItem(BaseModel):
+    name: str
+    sugar: Decimal = Decimal("0")
+    calories: Decimal = Decimal("0")
+    carbohydrate: Decimal = Decimal("0")
+
+
+class DietConfirmBody(BaseModel):
+    items: list[DietConfirmItem]
+
+
+# 사용자가 AWAITING_CONFIRMATION 초안을 (필요하면 수정해서) 확정한다.
+@router.post("/ai-analyze/{meal_log_id}/confirm")
+async def confirm_diet_analysis(
+    meal_log_id: str,
+    body: DietConfirmBody,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(get_current_user_bearer),
+) -> dict[str, object]:
+    user_id: int = payload["user_id"]
+    log_id = _to_uuid(meal_log_id, "meal_log ID")
+
+    items = [
+        make_meal_item_from_analysis(log_id, i.name, Decimal("0"), "인분", i.calories, i.sugar, i.carbohydrate)
+        for i in body.items
+    ]
+
+    try:
+        log = await confirm_meal_log(db, log_id, user_id, items)
+    except MealLogNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except MealLogNotConfirmableError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"status": "SUCCESS", "meal_log_id": str(log.meal_log_id), "analysisStatus": log.analysis_status}
+
+
+_VISION_CALLBACK_STATUSES = {"COMPLETED", "AWAITING_CONFIRMATION", "FAILED"}
+
+
+class VisionCallbackItem(BaseModel):
+    name: str
+    sugar: Decimal = Decimal("0")
+    calories: Decimal = Decimal("0")
+    carbohydrate: Decimal = Decimal("0")
+
+
+class VisionCallbackBody(BaseModel):
+    event_id: str | None = None
+    status: str
+    confidence: Decimal | None = None
+    provider: str | None = None
+    items: list[VisionCallbackItem] = []
+
+
+# 내부 전용 — Vision worker(zero-db dangdang-pipeline-worker)가 분석 결과를
+# 돌려주는 콜백. 사용자 JWT가 아니라 공유 시크릿으로 인증한다.
+@router.post("/photo/{meal_log_id}/vision-callback")
+async def vision_callback(
+    meal_log_id: str,
+    body: VisionCallbackBody,
+    db: AsyncSession = Depends(get_db),
+    x_vision_callback_secret: str | None = Header(default=None),
+) -> dict[str, object]:
+    if not settings.vision_callback_secret:
+        raise HTTPException(status_code=501, detail="Vision 콜백 시크릿이 설정되지 않았습니다.")
+    if x_vision_callback_secret != settings.vision_callback_secret:
+        raise HTTPException(status_code=401, detail="유효하지 않은 콜백 시크릿입니다.")
+    if body.status not in _VISION_CALLBACK_STATUSES:
+        raise HTTPException(status_code=422, detail=f"유효하지 않은 status입니다: {body.status}")
+
+    log_id = _to_uuid(meal_log_id, "meal_log ID")
+    items = [
+        make_meal_item_from_analysis(log_id, i.name, Decimal("0"), "인분", i.calories, i.sugar, i.carbohydrate)
+        for i in body.items
+    ]
+
+    try:
+        log = await apply_vision_result(
+            db, log_id, status=body.status, confidence=body.confidence, provider=body.provider, items=items,
+        )
+    except MealLogNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    logger.info(
+        "diet: vision callback applied meal_log_id=%s status=%s event_id=%s",
+        log_id, log.analysis_status, body.event_id,
+    )
+    return {"status": "SUCCESS", "meal_log_id": str(log.meal_log_id), "analysisStatus": log.analysis_status}
 
 
 # RC-0103: AI 식단 분석 (Vision AI → 음식 인식 + 영양 추정)

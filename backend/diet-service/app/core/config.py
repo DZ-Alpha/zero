@@ -21,6 +21,17 @@ class Settings(BaseSettings):
 
     product_service_url: str = "http://localhost:8016"
 
+    # zero-db 이벤트 파이프라인(Kafka/MinIO/Vision worker, 2026-07-20) 연동용.
+    # 비어있으면 사진 업로드/vision 콜백 엔드포인트는 501을 반환한다 — 값이 없는
+    # 채로 MinIO/콜백을 그냥 통과시키면 잘못된 요청을 조용히 받아버리게 된다.
+    minio_endpoint: str = ""
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_bucket: str = "diet-photos"
+    # Vision worker(dangdang-pipeline-worker)가 분석 결과를 콜백으로 보낼 때
+    # X-Vision-Callback-Secret 헤더로 보내야 하는 공유 시크릿.
+    vision_callback_secret: str = ""
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)

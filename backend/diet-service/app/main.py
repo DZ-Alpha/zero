@@ -12,7 +12,7 @@ from app.core.config import settings  # noqa: E402
 from app.core.database import Base, engine  # noqa: E402
 from app.models.meal_item import MealItem  # noqa: F401, E402
 from app.models.meal_log import MealLog  # noqa: F401, E402
-from app.routers import diet, health, home  # noqa: E402
+from app.routers import diet, health, home, uploads  # noqa: E402
 
 logger = logging.getLogger("diet_service")
 
@@ -48,3 +48,4 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(health.router)
 app.include_router(home.router)
 app.include_router(diet.router)
+app.include_router(uploads.router)

@@ -10,6 +10,7 @@ from app.models.meal_log import MealLog
 from app.models.product_ref import ProductRef
 from app.models.recipe_ref import RecipeRef
 from app.models.user_health_profile_ref import UserHealthProfileRef
+from app.services.outbox import enqueue_outbox
 
 
 class MealLogNotFoundError(Exception):
@@ -24,6 +25,10 @@ class RecipeNotFoundError(Exception):
     pass
 
 
+class MealLogNotConfirmableError(Exception):
+    pass
+
+
 # ── MealLog ──────────────────────────────────────────────────────────────────
 
 async def create_meal_log(
@@ -33,7 +38,11 @@ async def create_meal_log(
     image_object_key: str,
     meal_type: str = "SNACK",
     input_type: str = "VISION",
+    eaten_at: datetime | None = None,
 ) -> MealLog:
+    """PENDING meal_log 생성 + 같은 트랜잭션 안에서 diet.photo.requested outbox
+    이벤트 기록. Kafka 발행은 이 서비스가 하지 않는다 — zero-db의 outbox
+    publisher가 service.event_outbox를 폴링해서 발행한다."""
     log = MealLog(
         meal_log_id=uuid.uuid4(),
         user_id=user_id,
@@ -41,10 +50,22 @@ async def create_meal_log(
         meal_type=meal_type,
         image_object_key=image_object_key,
         analysis_status="PENDING",
-        eaten_at=datetime.now(timezone.utc),
+        eaten_at=eaten_at or datetime.now(timezone.utc),
         created_at=datetime.now(timezone.utc),
     )
     db.add(log)
+    await db.flush()
+
+    await enqueue_outbox(
+        db,
+        event_type="diet.photo.requested",
+        user_id=user_id,
+        producer="diet-service",
+        aggregate_type="meal_log",
+        aggregate_id=str(log.meal_log_id),
+        payload={"job_id": str(log.meal_log_id), "image_key": image_object_key},
+    )
+
     await db.commit()
     await db.refresh(log)
     return log
@@ -72,6 +93,101 @@ async def complete_meal_log(db: AsyncSession, meal_log_id: uuid.UUID, items: lis
     for item in items:
         db.add(item)
     log.analysis_status = "COMPLETED"
+    await db.commit()
+    await db.refresh(log)
+    return log
+
+
+async def _replace_meal_items(db: AsyncSession, meal_log_id: uuid.UUID, items: list[MealItem]) -> None:
+    for existing in await get_meal_items(db, meal_log_id):
+        await db.delete(existing)
+    await db.flush()
+    for item in items:
+        db.add(item)
+
+
+async def apply_vision_result(
+    db: AsyncSession,
+    meal_log_id: uuid.UUID,
+    *,
+    status: str,
+    confidence: Decimal | None,
+    provider: str | None,
+    items: list[MealItem],
+) -> MealLog:
+    """Vision worker 콜백 처리: confidence/provider 기록 + 상태 전이 + outbox.
+
+    같은 event_id로 재전달돼도(at-least-once) 안전하도록, 이미 종결 상태
+    (COMPLETED/FAILED)인 meal_log는 그대로 반환하고 재적용하지 않는다.
+    """
+    log = await get_meal_log(db, meal_log_id)
+    if log.analysis_status in ("COMPLETED", "FAILED"):
+        return log
+
+    log.vision_confidence = confidence
+    log.vision_provider = provider
+
+    if status == "FAILED":
+        log.analysis_status = "FAILED"
+        await enqueue_outbox(
+            db,
+            event_type="diet.analysis_failed",
+            user_id=log.user_id,
+            producer="diet-service",
+            aggregate_type="meal_log",
+            aggregate_id=str(meal_log_id),
+            payload={"meal_log_id": str(meal_log_id)},
+        )
+    else:
+        await _replace_meal_items(db, meal_log_id, items)
+        if status == "AWAITING_CONFIRMATION":
+            log.analysis_status = "AWAITING_CONFIRMATION"
+            log.needs_user_confirmation = True
+        else:
+            log.analysis_status = "COMPLETED"
+            log.needs_user_confirmation = False
+            await enqueue_outbox(
+                db,
+                event_type="diet.analysis_completed",
+                user_id=log.user_id,
+                producer="diet-service",
+                aggregate_type="meal_log",
+                aggregate_id=str(meal_log_id),
+                payload={"meal_log_id": str(meal_log_id)},
+            )
+
+    await db.commit()
+    await db.refresh(log)
+    return log
+
+
+async def confirm_meal_log(
+    db: AsyncSession,
+    meal_log_id: uuid.UUID,
+    user_id: int,
+    items: list[MealItem],
+) -> MealLog:
+    """사용자가 (수정 가능한) 초안을 확정 — AWAITING_CONFIRMATION에서만 허용."""
+    log = await get_meal_log_for_user(db, meal_log_id, user_id)
+    if log.analysis_status != "AWAITING_CONFIRMATION":
+        raise MealLogNotConfirmableError(
+            f"확정할 수 없는 상태입니다: {log.analysis_status}"
+        )
+
+    await _replace_meal_items(db, meal_log_id, items)
+    log.analysis_status = "COMPLETED"
+    log.needs_user_confirmation = False
+
+    await enqueue_outbox(
+        db,
+        event_type="user.diet.meal_confirmed",
+        user_id=user_id,
+        producer="diet-service",
+        aggregate_type="meal_log",
+        aggregate_id=str(meal_log_id),
+        payload={"meal_log_id": str(meal_log_id)},
+    )
+
     await db.commit()
     await db.refresh(log)
     return log
