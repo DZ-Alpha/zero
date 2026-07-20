@@ -133,6 +133,11 @@ jobs:
       services: >-
         ${{ github.event_name == 'workflow_dispatch' && '[]' ||
         steps.filter.outputs.changes }}
+      # 2026-07-20, b-gateway(nginx 라우팅) 자동배포용 - main push에서
+      # infra/b-gateway/** 가 바뀌었는지. workflow_dispatch에선 before가 없어
+      # 신뢰 불가하지만, cutover의 수동 경로는 inputs.run_bgateway_cutover를
+      # 쓰고 이 출력은 push 경로에서만 참조하므로 무방하다.
+      bgateway: ${{ steps.filter.outputs.bgateway }}
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -170,6 +175,7 @@ jobs:
             main-service: 'backend/main-service/**'
             product-service: 'backend/product-service/**'
             recipe-service: 'backend/recipe-service/**'
+            bgateway: 'infra/b-gateway/**'
       # 2026-07-20, 위 allowlist의 구조적 한계(새 서비스 추가 시 안 고치면 조용히
       # skip) 자체를 없애지는 못하지만(dorny/paths-filter는 디렉터리 자동탐지를
       # 지원 안 함 - 공식 문서 확인), 최소한 "조용한 스킵"을 "시끄러운 실패"로
@@ -1096,12 +1102,28 @@ jobs:
     # 첫 실행(run 29675180327)에서 run_bgateway_cutover=true로 dispatch했는데도
     # skipped됨 - backend-deploy-production 주석의 "always() 없으면 커스텀
     # if:에 암묵적 success()가 붙는다"는 문제와 동일할 가능성이 높아 이
-    # job도 always()를 명시한다. needs: [backend-checks]도 이 job과
-    # 무관한 의존성이라 제거(불필요하게 skip 조건을 늘릴 수 있음).
+    # job도 always()를 명시한다.
+    #
+    # 2026-07-20, backend/frontend처럼 자동배포로 전환. 그동안 b-gateway만
+    # 수동(workflow_dispatch)이라, 윤경님이 /b/ai 라우팅을 push해도 "빌드는
+    # 되는데 프로덕션 반영이 안 되는" 혼란이 반복됐다(실측: /b/ai가 프로덕션
+    # 404). 이 job은 이미 백업→배포→핵심 라우트 검증→실패시 자동 롤백을
+    # 갖추고 있어(아래 스텝) 자동배포로 돌려도 나쁜 nginx 설정은 스스로
+    # 롤백된다. detect-backend가 infra/b-gateway/** 변경을 감지(needs 추가),
+    # main push에서 변경 시에만 자동 cutover. 수동 workflow_dispatch 경로는
+    # 온디맨드 재배포/롤백용으로 그대로 유지.
+    needs: [detect-backend]
     if: |
       always() &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.run_bgateway_cutover
+      (
+        (github.event_name == 'workflow_dispatch' &&
+          inputs.run_bgateway_cutover) ||
+        (
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.detect-backend.outputs.bgateway == 'true'
+        )
+      )
     runs-on: self-hosted
     env:
       PROD_HOST: bruce@10.10.10.30
@@ -1445,6 +1467,9 @@ jobs:
       - frontend-image-scanning
       - backend-deploy-production
       - frontend-deploy-production
+      # 2026-07-20, bgateway-cutover 자동배포 전환에 맞춰 추가 - 자동 cutover가
+      # (롤백까지 실패하는 등으로) 죽었을 때도 Slack 알람이 울리게 한다.
+      - bgateway-cutover
     if: failure()
     runs-on: ubuntu-latest
     steps:
