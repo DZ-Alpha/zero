@@ -57,17 +57,40 @@ async def create_meal_log(
     db.add(log)
     await db.flush()
 
-    # 개발팀 요청서 정정 2 — worker 쪽 diet_analysis_jobs.user_id 컬럼이 text라
-    # 정수를 보내면 스키마 검증에서 거부(INVALID_EVENT)된다. 요청 이벤트에만
-    # str(user_id)로 넣는다 (user.activity.raw는 반대로 정수 필수, enqueue_activity 참고).
+    # worker의 실제 계약(dangdang-event-pipeline/app/contracts.py
+    # requested_event/validate_requested_event, 2026-07-20 원본 확인)은
+    # event_id/analysis_id/upload_id/user_id/image_key/requested_at/
+    # schema_version을 전부 요구한다 — job_id 하나만 보내던 예전 payload는
+    # analysis_id/upload_id가 없어 validate_requested_event가
+    # "missing fields: analysis_id,upload_id"로 거부했을 것이다(실사용 전에
+    # contracts.py 원본 대조로 발견).
+    #
+    # upload_id는 meal_log(업로드된 사진) 자체의 식별자, analysis_id는 이
+    # 업로드에 대한 "이번 분석 시도"의 식별자로 분리해서 쓴다 — worker 쪽에서
+    # 재시도 시 같은 upload_id에 다른 analysis_id를 쓸 수 있게.
+    #
+    # user_id는 worker의 diet_analysis_jobs.user_id 컬럼이 text라 문자열로
+    # 보낸다(개발팀 요청서 정정 2) — user.activity.raw는 반대로 정수 필수
+    # (enqueue_activity 참고).
+    request_event_id = uuid.uuid4()
+    analysis_id = uuid.uuid4()
     request_event = await enqueue_outbox(
         db,
         event_type="diet.photo.requested",
+        event_id=request_event_id,
         user_id=user_id,
         producer="diet-service",
         aggregate_type="meal_log",
         aggregate_id=str(log.meal_log_id),
-        payload={"job_id": str(log.meal_log_id), "image_key": image_object_key, "user_id": str(user_id)},
+        payload={
+            "event_id": str(request_event_id),
+            "analysis_id": str(analysis_id),
+            "upload_id": str(log.meal_log_id),
+            "user_id": str(user_id),
+            "image_key": image_object_key,
+            "requested_at": datetime.now(timezone.utc).isoformat(),
+            "schema_version": 1,
+        },
     )
     # worker가 diet.photo.completed/failed에 실어 보내는 causation_event_id로
     # 이 meal_log를 다시 찾기 위한 멱등 키 (app/services/vision_consumer.py).
