@@ -24,7 +24,9 @@ class EventOutbox(Base):
     event_type: Mapped[str] = mapped_column(String(100))
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     producer: Mapped[str] = mapped_column(String(50))
-    aggregate_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # 2026-07-20 운영에서 IntegrityError로 실측 — NOT NULL이다 (모델에 nullable=True로
+    # 잘못 적혀 있었음). enqueue_outbox 호출부는 항상 값을 넘겨야 한다.
+    aggregate_type: Mapped[str] = mapped_column(String(50))
     aggregate_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     schema_version: Mapped[int] = mapped_column(SmallInteger, default=1)

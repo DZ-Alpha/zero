@@ -60,6 +60,11 @@ async def enqueue_activity(
         event_type=event_type,
         producer=producer,
         user_id=int(user_id),
+        # 실제 service.event_outbox.aggregate_type은 NOT NULL이다 (2026-07-20,
+        # 운영에서 IntegrityError로 실측) — 활동 이벤트는 항상 user 하나에 붙으니
+        # user/user_id를 기본 aggregate로 쓴다.
+        aggregate_type="user",
+        aggregate_id=str(user_id),
         trace_id=trace_id,
         payload=payload,
         schema_version=1,
