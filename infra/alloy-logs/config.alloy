@@ -1,0 +1,35 @@
+// 2026-07-20, 설계도(docker 탭) 🟠 "컨테이너 로그 (Alloy -> Loki)" - harbor VM 확장.
+// monitoring VM 파일럿(검증 완료)과 동일 구성, 차이는 두 곳뿐:
+//  - labels.vm = "harbor-vm"
+//  - loki.write가 원격 Loki(monitoring VM Tailscale IP - blackbox/cadvisor job과
+//    동일한 이유로 LAN 대신 Tailscale 주소 사용)로 push.
+// 문법은 공식문서 그대로(grafana.com/docs/alloy reference), monitoring VM에서
+// alloy fmt로 검증된 구조 재사용.
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "container_name" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+    regex         = "/?(.+)"
+    replacement   = "${1}"
+  }
+}
+
+loki.source.docker "default" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.container_name.output
+  labels     = {"vm" = "harbor-vm"}
+  forward_to = [loki.write.central.receiver]
+}
+
+loki.write "central" {
+  endpoint {
+    url = "http://100.110.81.51:3100/loki/api/v1/push"
+  }
+}
