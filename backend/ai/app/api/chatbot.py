@@ -9,7 +9,12 @@ from app.handlers.base import HandlerInput
 from app.core.security import get_current_user_from_token
 from app.router.dispatcher import Dispatcher
 from app.router.intent import IntentClassifier
-from app.schemas import ChatbotRequest, ChatbotResponse
+from app.schemas import ChatbotRequest, ChatbotResponse, UserContext
+
+_ANONYMOUS_CONTEXT = UserContext(
+    user_id=0, logged_in=False, interests=[], has_allergy=False,
+    consent=False, daily_sugar_target_g=None, daily_calorie_target=None,
+)
 
 logger = logging.getLogger("ai_chatbot")
 
@@ -44,12 +49,16 @@ async def chatbot(
     response: Response,
     deps: Dependencies = Depends(get_dependencies),
 ) -> ChatbotResponse:
-    # JWT 검증 (실패 시 401) — 성공 시 X-Refreshed-Token 부여
-    identity = get_current_user_from_token(payload.usr, response)
-    logger.info("chatbot request: user_id=%s msg=%r has_img=%s",
-                identity.user_id, payload.msg, bool(payload.img))
-
-    context = await deps.provider.load(payload.usr)
+    # usr(JWT) 있으면 검증 후 개인화, 없으면 익명(일반 기준) 답변.
+    if payload.usr:
+        # JWT 검증 (실패 시 401) — 성공 시 X-Refreshed-Token 부여
+        identity = get_current_user_from_token(payload.usr, response)
+        logger.info("chatbot request: user_id=%s msg=%r has_img=%s",
+                    identity.user_id, payload.msg, bool(payload.img))
+        context = await deps.provider.load(payload.usr)
+    else:
+        logger.info("chatbot request(anonymous): msg=%r has_img=%s", payload.msg, bool(payload.img))
+        context = _ANONYMOUS_CONTEXT
     intent = await deps.classifier.classify(msg=payload.msg, has_image=bool(payload.img))
     result = await deps.dispatcher.dispatch(
         intent,
