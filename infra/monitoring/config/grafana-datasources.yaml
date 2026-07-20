@@ -11,6 +11,21 @@ datasources:
     type: loki
     access: proxy
     url: http://loki:3100
+    # 2026-07-20, Loki 로그 -> Tempo 트레이스 원클릭 점프(체크리스트
+    # Observability "분산 추적 연동" 항목). OTLP로 들어온 앱 로그는 trace_id가
+    # 로그 본문이 아니라 structured metadata(라벨)라, matcherType: label로
+    # 라벨에서 추출한다(Grafana 소스 DerivedFieldConfig에 'label'|'regex'
+    # 두 값 확인). datasourceUid는 이미 존재하는 Tempo 데이터소스의 실제
+    # uid(P214B5B846CF3925F, API 조회값)를 참조만 한다 - 7/19에 Tempo 쪽에
+    # uid를 새로 부여하려다 provisioning 크래시루프가 났었으므로(실측),
+    # 이번엔 Tempo 엔트리를 일절 건드리지 않는 방식으로 재시도.
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          url: '$${__value.raw}'
+          datasourceUid: P214B5B846CF3925F
 
   - name: Tempo
     type: tempo
