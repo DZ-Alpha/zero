@@ -211,6 +211,7 @@ services:
       product-service: { condition: service_healthy }
       ingredients-service: { condition: service_healthy }
       diet-service: { condition: service_healthy }
+      ai: { condition: service_healthy }
     restart: unless-stopped
     cap_drop:
       - ALL
