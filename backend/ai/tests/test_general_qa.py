@@ -1,0 +1,61 @@
+from app.handlers.base import HandlerInput
+from app.handlers.general_qa import GeneralQAHandler, render_user_context_block
+from app.rag.retriever import RagChunk, Retriever
+from app.schemas import UserContext
+
+
+class _FakeLLM:
+    def __init__(self):
+        self.last_user = None
+        self.last_system = None
+
+    async def complete(self, system: str, user: str) -> str:
+        self.last_system = system
+        self.last_user = user
+        return "대화체 답변입니다"
+
+
+class _FakeRetriever(Retriever):
+    async def search_docs(self, query: str, k: int = 4):
+        return [RagChunk(text="식약처: 무당류 100g당 0.5g 미만", source="식약처", score=0.9)]
+
+    async def search_products(self, query: str, k: int = 4):
+        return [RagChunk(text="초코바 당류 20g", source="상품DB", score=0.8)]
+
+
+def _ctx(consent: bool, sugar):
+    return UserContext(user_id=1, logged_in=True, interests=["저당"], has_allergy=True,
+                       consent=consent, daily_sugar_target_g=sugar, daily_calorie_target=1900.0 if consent else None)
+
+
+def test_context_block_with_targets_mentions_goal():
+    block = render_user_context_block(_ctx(True, 48.0))
+    assert "48" in block
+    assert "알레르기" in block  # has_allergy=True 반영
+
+
+def test_context_block_without_consent_uses_general_baseline():
+    block = render_user_context_block(_ctx(False, None))
+    # 개인 목표값을 지어내지 않는다 — 숫자 목표가 없어야 함
+    assert "일반" in block
+
+
+async def test_handler_injects_rag_and_product_into_prompt():
+    llm = _FakeLLM()
+    handler = GeneralQAHandler(llm=llm, retriever=_FakeRetriever())
+    data = HandlerInput(msg="이 초코바 먹어도 돼?", img=None, template=None, context=_ctx(True, 48.0))
+    result = await handler.handle(data)
+    assert result.msg == "대화체 답변입니다"
+    assert result.is_img is False
+    # 프롬프트에 RAG·상품·사용자맥락이 실제로 주입됐는지
+    assert "0.5g 미만" in llm.last_user
+    assert "20g" in llm.last_user
+    assert "48" in llm.last_user
+
+
+async def test_handler_uses_system_prompt():
+    llm = _FakeLLM()
+    handler = GeneralQAHandler(llm=llm, retriever=_FakeRetriever())
+    data = HandlerInput(msg="탄수화물이 뭐야?", img=None, template=None, context=_ctx(False, None))
+    await handler.handle(data)
+    assert "당당봇" in llm.last_system
