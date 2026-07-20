@@ -138,6 +138,13 @@ jobs:
       # 8개 전부 다시 빌드+Trivy 스캔을 돌려서, self-hosted 러너 1대에 큐가 쌓여 실제로
       # 51분까지 걸린 적이 있었음(2026-07-16 직접 확인) - dorny/paths-filter(변경 경로 기반
       # 매트릭스 생성의 공식 예시 패턴)로 필요한 것만 돌리게 줄인다.
+      # 2026-07-20, PR #52(backend/ai 신규 서비스 추가)에서 backend-build-test/
+      # backend-image-scanning이 전부 skip되는 걸 실측 확인 - 이 필터 목록이
+      # 서비스별로 하드코딩돼 있어서, 새 서비스 디렉터리를 추가해도 여기 안
+      # 넣으면 dorny/paths-filter의 changes 출력에 아예 안 잡히고(빈 배열),
+      # 매트릭스가 통째로 비어 skip된다. 새 backend/<service> 디렉터리를
+      # 추가할 때마다 이 목록에도 반드시 같이 추가해야 한다 - 자동 탐지가
+      # 아니라 수동 allowlist라는 게 이 워크플로우의 구조적 한계.
       # v4
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706
         id: filter
@@ -145,6 +152,7 @@ jobs:
         with:
           filters: |
             admin-service: 'backend/admin-service/**'
+            ai: 'backend/ai/**'
             community-service: 'backend/community-service/**'
             diet-service: 'backend/diet-service/**'
             ingredients-service: 'backend/ingredients-service/**'
@@ -423,8 +431,11 @@ jobs:
       )
     runs-on: self-hosted
     env:
+      # 2026-07-20, detect-backend의 paths-filter와 동일한 이유로 ai 추가 -
+      # 이 목록도 하드코딩이라 별도로 안 넣으면 build/scan은 통과해도 배포
+      # 대상에서 빠진다.
       SERVICES: >-
-        admin-service community-service diet-service ingredients-service
+        admin-service ai community-service diet-service ingredients-service
         login-service main-service product-service recipe-service
       # 2026-07-19 아침, 구 LAN IP(192.168.0.13)가 인프라 공지("당분간 병행
       # 유지")보다 먼저 죽은 걸 실측(ping "Destination Host Unreachable",
@@ -511,9 +522,9 @@ jobs:
         run: |
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           declare -A PORTS=(
-            [admin-service]=8008 [community-service]=8012 [diet-service]=8020
-            [ingredients-service]=8018 [login-service]=8000 [main-service]=8010
-            [product-service]=8016 [recipe-service]=8014
+            [admin-service]=8008 [ai]=8022 [community-service]=8012
+            [diet-service]=8020 [ingredients-service]=8018 [login-service]=8000
+            [main-service]=8010 [product-service]=8016 [recipe-service]=8014
           )
           # 이번에 실제 배포한 서비스만 검사한다 - 안 바꾼 서비스까지 여기서
           # 실패 처리하면, 이 배포와 무관한 기존 이슈로 멀쩡한 배포가
