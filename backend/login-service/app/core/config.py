@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # 세션/OAuth state/rate-limit 저장용 (app/services/*_store.py, rate_limiter.py)
     redis_host: str = "localhost"
     redis_port: int = 6379
+    redis_password: str = ""
     # PRODUCTION_HANDOFF.md P0-1 - Redis 클라이언트에 타임아웃이 없어서, 방화벽/네트워크
     # 문제로 Redis에 연결이 안 되면 create_state() 호출이 끝없이 멈춰 OAuth 로그인
     # 시작 요청 자체가 응답을 안 하는 것처럼 보였다(프론트 8초 타임아웃으로만 감지됨).

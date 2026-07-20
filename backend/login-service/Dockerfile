@@ -8,6 +8,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# OTel 계측 파일럿(otel-guide.md) - 설치된 라이브러리(fastapi/httpx/redis/asyncpg 등)에
+# 맞는 auto-instrumentation 패키지를 골라 넣는다. requirements.txt가 바뀌면
+# 여기서 골라지는 패키지 조합도 바뀔 수 있어 빌드 시점에 매번 실행한다.
+RUN opentelemetry-bootstrap -a install
 
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
 
@@ -35,4 +39,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["opentelemetry-instrument", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

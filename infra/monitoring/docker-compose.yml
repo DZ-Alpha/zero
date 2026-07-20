@@ -23,6 +23,21 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.enable-remote-write-receiver"
+      # 2026-07-20, 8개 backend 서비스가 /metrics를 전혀 노출 안 하고 있는 걸
+      # 실측(curl 전부 404)으로 확인 - 앱 RED 지표(요청량/에러율/응답시간)가
+      # 하나도 안 보이는 상태였음. 공식문서(opentelemetry.io/docs/languages/
+      # python/exporters) 확인 결과 "Prometheus OTLP Receiver를 켜고 OTLP
+      # exporter를 쓰는 것"이 Best Practice로 명시돼 있어 이 방식으로 채택 -
+      # 재헌님 계측 완료되면 이 플래그가 있어야 Prometheus가 직접 받는다.
+      - "--web.enable-otlp-receiver"
+      # 2026-07-19, 실무 기준 재점검 - retention을 암묵적 기본값(15d)에 의존
+      # 중이었다. 공식 문서(prometheus.io/docs storage) 권장대로 명시 - 값은
+      # 기존 기본값과 동일하게 유지(동작 안 바뀜, "우연히 15일"에서 "의도적
+      # 으로 15일"로만 바꿈). retention.size는 안전 마진 - 실측 TSDB 크기
+      # 494MB(15일치) 대비 4배, 디스크 여유 58GB 대비 충분히 작은 값으로
+      # 급격한 메트릭 증가 시 디스크 고갈을 막는 방어선.
+      - "--storage.tsdb.retention.time=15d"
+      - "--storage.tsdb.retention.size=2GB"
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -70,6 +85,17 @@ services:
       - tempo_data:/var/tempo
     ports:
       - "3200:3200"
+      # 2026-07-20, Alloy 제거하며 앱 트레이스 수신을 여기로 직접 이전.
+      # tempo.yaml의 distributor.receivers.otlp가 이미 이 포트로 리슨 중이었으나
+      # host port 미노출 상태였음(Alloy가 유일한 OTLP 진입점이었음) - OTel 공식
+      # 문서(opentelemetry.io/docs/collector) 확인 결과 Collector는 필수가 아니고
+      # "소규모/시작 단계엔 직접 전송이 권장"이라 명시돼 있고, Tempo 자체가 OTLP를
+      # 네이티브로 수신하므로(공식 configuration 문서 확인) 중계 없이 바로 연결한다.
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    networks:
+      default:
+        ipv4_address: 172.18.0.10 # memberlist advertise_addr 고정용
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3200/ready"]
       interval: 30s
@@ -78,6 +104,28 @@ services:
       retries: 3
     mem_limit: 256m
     cpus: 0.5
+    logging: *default-logging
+    restart: unless-stopped
+
+  # 2026-07-19, well-architected 체크리스트 Observability-3("Kafka 모니터링
+  # (Consumer Lag 등) 수집") 재점검 중 발견 - dangdang-p0-alerts.yml에
+  # dangdang_kafka_consumer_lag 참조 알림 규칙은 있는데, 그 메트릭을 실제로
+  # 수집하는 exporter가 Prometheus scrape_configs 어디에도 없어서 계속
+  # NoData였다. 공식 문서(github.com/danielqsj/kafka_exporter) 기준 표준
+  # Kafka Exporter를 신규 배포 - Kafka 브로커(10.10.20.10:9092, EXTERNAL
+  # 리스너, 도달 확인함)에 컨슈머로 접속해 offset/lag을 직접 수집한다.
+  # exporter 자체는 Kafka와 물리적으로 같은 VM에 있을 필요 없음(공식 문서
+  # 확인) - monitoring VM에 두면 이 스택의 다른 exporter들과 운영 방식이
+  # 통일된다.
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.9.0
+    container_name: kafka-exporter
+    command:
+      - "--kafka.server=10.10.20.10:9092"
+    ports:
+      - "9308:9308"
+    mem_limit: 128m
+    cpus: 0.25
     logging: *default-logging
     restart: unless-stopped
 
@@ -102,30 +150,47 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  alloy:
-    image: grafana/alloy:v1.17.1
-    container_name: alloy
-    command:
-      - run
-      - --server.http.listen-addr=0.0.0.0:12345
-      - /etc/alloy/config.alloy
+  # 2026-07-20, Alloy 서비스 제거함. config.alloy 확인 결과 이 인스턴스는
+  # OTLP 수신 → Prometheus remote_write/Loki push/Tempo OTLP로 중계하는
+  # 역할뿐이었고(자체 노드/컨테이너 스크레이핑 없음), 24시간치 로그 확인 결과
+  # 실제로 앱에서 들어온 OTLP 트래픽이 0건이라 안전하게 제거. 앱 트레이스/로그는
+  # 이제 Tempo(4317/4318)·Loki(3100, /otlp)로 직접 전송한다(멘토 피드백 + OTel/
+  # Tempo/Loki 공식문서 검증 결과 - Collector 계층 없이 SDK→백엔드 직결이 공식
+  # 지원 경로임). 인프라(node_exporter/cAdvisor)는 애초에 Alloy를 거친 적이
+  # 없었으므로(Prometheus가 직접 scrape) 이 제거는 앱 트레이스/로그 경로에만
+  # 영향을 준다.
+
+  # 2026-07-19, well-architected 체크리스트 Observability-4("cAdvisor와 Node
+  # Exporter를 사용해 개별 도커 컨테이너 레벨의 리소스 점유율") 재점검 중 발견 -
+  # node_exporter(호스트별 systemd 서비스, prometheus.yml의 harbor-vm/db-vm/
+  # monitoring-vm job)만 있고 컨테이너 레벨 지표(cAdvisor)가 아예 없었다.
+  # 공식 문서(github.com/google/cadvisor docs/running.md) 기준 구성 - v0.53.0
+  # 이후 이미지 위치가 gcr.io/cadvisor/cadvisor에서 ghcr.io/google/cadvisor로
+  # 이전됐다(공식 문서 확인). 컨테이너별 CPU/MEM/블록I/O를 읽으려면 호스트의
+  # cgroup/docker 소켓 접근이 구조적으로 필요해서 privileged + 아래 볼륨들이
+  # 전부 공식 문서에 명시된 필수 마운트다(추측 아님, README 그대로).
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.5
+    container_name: cadvisor
+    privileged: true
     volumes:
-      - ./config/config.alloy:/etc/alloy/config.alloy:ro
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
     ports:
-      - "4317:4317" # OTLP gRPC - 앱이 여기로 로그/메트릭/트레이스 전송
-      - "4318:4318" # OTLP HTTP
-      - "12345:12345" # Alloy UI/디버그
-    depends_on:
-      - tempo
-      - loki
-      - prometheus
-    # Alloy 공식 이미지엔 /-/ready 엔드포인트가 있지만(공식 HTTP endpoints 문서
-    # 확인), docker exec으로 확인해보니 이 이미지엔 wget/curl이 전혀 없다(alloy
-    # 바이너리 + 최소 coreutils뿐) - CIS Docker Benchmark 4.3(불필요한 패키지
-    # 설치 지양) 원칙상 헬스체크 하나 위해 패키지를 새로 심지 않는다. 대신
-    # Docker 프로세스 liveness(기본 동작)로만 두고, 실질적 헬스는 Alloy가
-    # 스스로 만드는 파이프라인(OTLP 수신, 각 서비스 스크레이핑)이 끊기면
-    # Grafana 대시보드/알람으로 드러나는 구조로 대체한다.
+      - "8080:8080"
+    # cAdvisor 공식 문서에는 전용 헬스 엔드포인트가 문서화되어 있지 않지만
+    # (UI 루트 "/"만 안내), 배포 후 docker exec으로 확인해보니 이 이미지엔
+    # wget이 있다(다른 도구들과 동일 패턴 적용 가능). /metrics가 실제로
+    # 응답하는지로 헬스를 검증한다.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/metrics"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     mem_limit: 256m
     cpus: 0.5
     logging: *default-logging
@@ -172,8 +237,50 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
+  # 2026-07-20, 설계도(docker 탭)의 🟠 "컨테이너 로그 (Alloy -> Loki)" 레이어 구현.
+  # 오늘 제거한 Alloy(OTLP 중계용)와 역할이 완전히 다름 - 이건 로그수집 전용이다.
+  # 앱 텔레메트리는 여전히 Tempo/Loki/Prometheus로 직접 전송하고, 이 Alloy는 OTel이
+  # 물리적으로 못 하는 일(기성 컨테이너 stdout tail -> Loki)만 한다. config.alloy의
+  # discovery.docker/discovery.relabel/loki.source.docker/loki.write는 전부 공식문서
+  # (grafana.com/docs/alloy .../loki.source.docker 등) 문법 그대로. docker.sock은
+  # 읽기전용 마운트(컨테이너 목록/로그 읽기 전용, 제어 불가). 우선 monitoring VM만
+  # 파일럿 - 검증 후 production/harbor/db로 vm 라벨 바꿔 확장.
+  alloy:
+    image: grafana/alloy:v1.17.1
+    container_name: alloy
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./config/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    ports:
+      - "12345:12345" # Alloy UI/디버그
+    depends_on:
+      - loki
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *default-logging
+    restart: unless-stopped
+
 volumes:
   prometheus_data:
   loki_data:
   tempo_data:
   grafana_data:
+  alloy_data:
+
+# 2026-07-20, tempo의 memberlist가 컨테이너 시작 시점에 자기 IP 자동탐지에
+# 반복 실패("no private IP address found") - 원래 compose가 암묵적으로 만드는
+# default 네트워크는 IP가 매 recreate마다 바뀌어 advertise_addr(공식문서상
+# 리터럴 IP만 허용, 호스트명 파싱 불가 - 실측 확인)에 고정값을 못 씀. subnet을
+# 기존 값(172.18.0.0/16, 기존 default 네트워크와 동일)으로 명시해 tempo에만
+# 고정 IP를 부여한다.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16

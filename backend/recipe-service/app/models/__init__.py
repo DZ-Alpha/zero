@@ -1,7 +1,6 @@
 from app.models.product import Product
 from app.models.raw_ingredient_nutrient import RawIngredientNutrient
 from app.models.recipe import Recipe
-from app.models.recipe_base_comparison import RecipeBaseComparison
 from app.models.recipe_favorite import RecipeFavorite
 from app.models.recipe_ingredient import RecipeIngredient
 from app.models.recipe_ingredient_product import RecipeIngredientProduct
@@ -11,7 +10,6 @@ __all__ = [
     "Product",
     "RawIngredientNutrient",
     "Recipe",
-    "RecipeBaseComparison",
     "RecipeFavorite",
     "RecipeIngredient",
     "RecipeIngredientProduct",

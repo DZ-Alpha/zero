@@ -12,7 +12,33 @@ import { useRecipeCatalog } from "@/hooks/useRecipeCatalog";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { getAccessToken } from "@/lib/api/client";
-import { analyzeDietPhoto, DietAnalysisItem, getProductDetail, getRecipeDetail, uploadDietPhoto } from "@/lib/api/zerocheck";
+import {
+  confirmDietPhoto,
+  DietAnalysisItem,
+  DietPhotoStatusResponse,
+  getDietPhotoStatus,
+  getProductDetail,
+  getRecipeDetail,
+  uploadDietPhoto,
+  uploadDietPhotoFile,
+} from "@/lib/api/zerocheck";
+
+// worker 분석은 비동기라 202로 등록만 되고, 결과는 폴링으로 받는다. 60초
+// 넘으면 "아직 분석 중" 상태로 그냥 보여주고 폴링을 멈춘다.
+const POLL_DELAYS_MS = [1000, 2000, 3000, 5000];
+const POLL_MAX_MS = 60_000;
+
+async function pollDietPhotoStatus(token: string, mealLogId: string): Promise<DietPhotoStatusResponse> {
+  const start = Date.now();
+  let attempt = 0;
+  for (;;) {
+    const status = await getDietPhotoStatus(token, mealLogId);
+    if (status.status !== "PENDING" && status.status !== "PROCESSING") return status;
+    if (Date.now() - start >= POLL_MAX_MS) return status;
+    await new Promise((resolve) => window.setTimeout(resolve, POLL_DELAYS_MS[Math.min(attempt, POLL_DELAYS_MS.length - 1)]));
+    attempt += 1;
+  }
+}
 
 type Source = "recipe" | "photo" | "product" | "favorite";
 type FoodItem = {
@@ -85,6 +111,9 @@ export function RecordMealModal({
   const [analysisError, setAnalysisError] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [serverMealLogId, setServerMealLogId] = useState<string | null>(null);
+  const [draftItems, setDraftItems] = useState<DietAnalysisItem[] | null>(null);
+  const [draftConfidence, setDraftConfidence] = useState<number | null>(null);
+  const [confirmState, setConfirmState] = useState<"idle" | "confirming" | "error">("idle");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [loginPrompt, setLoginPrompt] = useState(false);
   const [resolvingItemId, setResolvingItemId] = useState<string | null>(null);
@@ -223,42 +252,61 @@ export function RecordMealModal({
     setIsAnalyzing(true);
     setUploadProgress(18);
 
-    // 실제 백엔드에 사진을 등록한다: 파일 → 프론트 업로드 라우트로 URL 생성
-    // → RC-0101 /diet/upload → RC-0103 /diet/ai-analyze.
-    let registeredId: string | null = null;
-    let serverItems: DietAnalysisItem[] = [];
+    // 실제 백엔드에 사진을 등록한다: gateway -> MinIO(object_key) -> RC-0101
+    // /diet/upload(202, PENDING) -> Vision worker가 비동기로 분석 -> 폴링.
+    // 업로드 성공 == 분석 완료가 아니다 - 반드시 상태를 폴링해서 확인한다.
     const token = getAccessToken();
     if (!token) {
       setIsAnalyzing(false);
       setLoginPrompt(true);
       return;
     }
+
+    let registeredId: string;
     try {
-      const form = new FormData();
-      form.append("file", photoFile);
-      const hosted = await fetch("/api/upload", { method: "POST", body: form });
-      if (!hosted.ok) throw new Error("upload failed");
-      const { url } = (await hosted.json()) as { url: string };
-      setUploadProgress(55);
+      const { object_key } = await uploadDietPhotoFile(token, photoFile);
+      setUploadProgress(45);
       const mealType = ({ 아침: "BREAKFAST", 점심: "LUNCH", 저녁: "DINNER", 간식: "SNACK" } as const)[meal];
-      const registered = await uploadDietPhoto(token, url, undefined, mealType);
-      registeredId = registered.id ?? null;
-      if (!registeredId) throw new Error("missing meal log id");
-      const analysis = await analyzeDietPhoto(token, registeredId);
-      if (analysis.status !== "PREPARING") serverItems = analysis["list-diet"] ?? [];
+      const registered = await uploadDietPhoto(token, object_key, mealType, recordDate);
+      registeredId = registered.meal_log_id;
+      setUploadProgress(65);
     } catch {
       setIsAnalyzing(false);
       setUploadProgress(0);
       setAnalysisError("사진을 서버에 등록하지 못했어요. 연결을 확인하고 다시 시도해 주세요.");
       return;
     }
-
     setServerMealLogId(registeredId);
+
+    let status: DietPhotoStatusResponse;
+    try {
+      status = await pollDietPhotoStatus(token, registeredId);
+    } catch {
+      setIsAnalyzing(false);
+      setUploadProgress(0);
+      setAnalysisError("분석 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+
     setUploadProgress(100);
     await new Promise((resolve) => window.setTimeout(resolve, 380));
     setIsAnalyzing(false);
 
-    if (serverItems.length > 0) {
+    const serverItems = status["list-diet"] ?? [];
+
+    if (status.status === "AWAITING_CONFIRMATION") {
+      // pending은 오류가 아니다 - 확신이 낮을 때 사용자가 확인/수정하는 화면으로 넘긴다.
+      setDraftItems(serverItems);
+      setDraftConfidence(status.confidence ?? null);
+      return;
+    }
+
+    if (status.status === "FAILED") {
+      setAnalysisError("사진 분석에 실패했어요. 다른 사진으로 다시 시도해 주세요.");
+      return;
+    }
+
+    if (status.status === "COMPLETED" && serverItems.length > 0) {
       const analyzedSugar = serverItems.reduce((sum, item) => sum + Number(item.dang ?? 0), 0);
       const analyzedCalories = serverItems.reduce((sum, item) => sum + Number(item.calo ?? 0), 0);
       setSelected({
@@ -275,6 +323,7 @@ export function RecordMealModal({
       return;
     }
 
+    // 60초 넘게 폴링해도 여전히 PENDING/PROCESSING인 경우 - worker가 느릴 뿐 오류는 아니다.
     setSelected({
       id: `vision-${registeredId}`,
       name: "사진 분석을 기다리고 있어요",
@@ -286,6 +335,45 @@ export function RecordMealModal({
       href: "/diet",
       nutritionAvailable: false,
     });
+  }
+
+  function removeDraftItem(index: number) {
+    setDraftItems((current) => (current ? current.filter((_, i) => i !== index) : current));
+  }
+
+  async function confirmDraft() {
+    if (!draftItems || !serverMealLogId) return;
+    const token = getAccessToken();
+    if (!token) {
+      setLoginPrompt(true);
+      return;
+    }
+    setConfirmState("confirming");
+    try {
+      await confirmDietPhoto(
+        token,
+        serverMealLogId,
+        draftItems.map((item) => ({ name: item.name, sugar: Number(item.dang ?? 0), calories: Number(item.calo ?? 0) })),
+      );
+      const analyzedSugar = draftItems.reduce((sum, item) => sum + Number(item.dang ?? 0), 0);
+      const analyzedCalories = draftItems.reduce((sum, item) => sum + Number(item.calo ?? 0), 0);
+      setSelected({
+        id: `vision-${serverMealLogId}`,
+        name: draftItems.map((item) => item.name).filter(Boolean).join(", ") || "사진으로 분석한 식단",
+        kind: "사진 분석",
+        category: "사진으로 계산",
+        sugar: roundSugar(analyzedSugar),
+        calories: Math.round(analyzedCalories),
+        note: "확인한 내용으로 저장했어요.",
+        href: "/diet",
+        nutritionAvailable: true,
+      });
+      setDraftItems(null);
+      setDraftConfidence(null);
+      setConfirmState("idle");
+    } catch {
+      setConfirmState("error");
+    }
   }
 
   function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
@@ -327,9 +415,9 @@ export function RecordMealModal({
     }
     setSaveState("saving");
 
-    // 레시피/식품은 이번에 실제 서버에 저장한다(RC-0113). 사진은 analyzePhoto()에서
-    // 이미 /diet/upload + /diet/ai-analyze로 서버에 저장이 끝난 상태라 다시 만들지
-    // 않고, 캘린더 서버 병합과 같은 id로 로컬에 낙관적으로만 반영한다.
+    // 레시피/식품은 이번에 실제 서버에 저장한다(RC-0113). 사진은 analyzePhoto()/
+    // confirmDraft()에서 이미 /diet/upload(+필요시 confirm)로 서버에 저장이 끝난
+    // 상태라 다시 만들지 않고, 캘린더 서버 병합과 같은 id로 로컬에 낙관적으로만 반영한다.
     if (selected.kind === "레시피" || selected.kind === "식품") {
       try {
         const itemId = selected.id.replace(/^(recipe|product)-/, "");
@@ -393,7 +481,38 @@ export function RecordMealModal({
 
         <RecordDateNavigator value={recordDate} onChange={(date) => { setRecordDate(date); setSelected(null); }} min={minDate} max={maxDate} />
 
-        {!selected ? (
+        {draftItems ? (
+          <div className="vision-draft">
+            <p className="eyebrow">사진 인식 확신이 낮아요</p>
+            <h3>인식된 음식을 확인하고 필요하면 지워주세요</h3>
+            {draftConfidence != null && <small>인식 확신도 {Math.round(draftConfidence * 100)}%</small>}
+            {confirmState === "error" && <p className="vision-file-error" role="alert">확정하지 못했어요. 다시 시도해 주세요.</p>}
+            {draftItems.length === 0 ? (
+              <p className="entry-data-state">인식된 음식이 없어요. 다른 사진으로 다시 시도해 주세요.</p>
+            ) : (
+              <ul className="vision-draft-list">
+                {draftItems.map((item, index) => (
+                  <li key={`${item.name}-${index}`}>
+                    <span>{item.name}</span>
+                    <small>당류 {item.dang ?? 0}g · {item.calo ?? 0}kcal</small>
+                    <button type="button" onClick={() => removeDraftItem(index)} aria-label={`${item.name} 지우기`}>×</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <footer className="mini-detail-actions">
+              <button type="button" onClick={() => { setDraftItems(null); setDraftConfidence(null); resetPhoto(); }}>다른 사진으로 다시 시도</button>
+              <button
+                type="button"
+                className="solid-button"
+                onClick={confirmDraft}
+                disabled={draftItems.length === 0 || confirmState === "confirming"}
+              >
+                {confirmState === "confirming" ? "저장하고 있어요" : "확인하고 저장하기"}
+              </button>
+            </footer>
+          </div>
+        ) : !selected ? (
           <>
             <div className="entry-source-tabs">{sourceTabs.map((tab) => <button type="button" className={source === tab.id ? "is-active" : ""} key={tab.id} onClick={() => { setSource(tab.id); setCategory("전체"); }}>{tab.label}</button>)}</div>
             {source === "photo" ? (

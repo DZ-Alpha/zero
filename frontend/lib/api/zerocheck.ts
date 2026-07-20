@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/api/client";
+import { ApiError, apiRequest } from "@/lib/api/client";
 
 export type GaugeResponse = {
   cal: number;
@@ -124,6 +124,17 @@ export type DietAnalysisResponse = {
   id?: string;
   dang?: number | null;
   calo?: number | null;
+  "list-diet"?: DietAnalysisItem[];
+};
+
+export type DietPhotoStatus = "PENDING" | "PROCESSING" | "AWAITING_CONFIRMATION" | "COMPLETED" | "FAILED";
+
+export type DietPhotoStatusResponse = {
+  meal_log_id: string;
+  status: DietPhotoStatus;
+  needs_user_confirmation: boolean;
+  confidence?: number | null;
+  confidence_source?: string | null;
   "list-diet"?: DietAnalysisItem[];
 };
 
@@ -369,15 +380,61 @@ export function unlinkSocialAccount(token: string, provider: string) {
   );
 }
 
-// RC-0101~0102: usr은 쿼리 파라미터, img/mode는 바디 (백엔드 get_current_user가 Query로 받음)
-export function uploadDietPhoto(token: string, img: string, mode?: "daily", mealType?: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK") {
-  return apiRequest<{ status: string; id?: string }>(query("/diet/upload", { usr: token }), {
+// gateway -> diet-service가 MinIO diet-photos에 저장하고 object_key만 돌려준다.
+// 브라우저는 MinIO를 직접 보지 않는다. multipart라 apiRequest(항상 JSON
+// Content-Type을 붙임)를 쓰지 않고 직접 fetch한다.
+export async function uploadDietPhotoFile(token: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch("/b/uploads/diet-photo", {
     method: "POST",
-    body: JSON.stringify({ img, ...(mode ? { mode } : {}), ...(mealType ? { mealType } : {}) }),
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const contentType = response.headers.get("content-type") ?? "";
+  const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+  if (!response.ok) {
+    const detail = typeof payload === "object" && payload && "detail" in payload
+      ? String((payload as { detail: unknown }).detail)
+      : "사진 업로드에 실패했어요.";
+    throw new ApiError(detail, response.status, payload);
+  }
+  return payload as { object_key: string };
+}
+
+// RC-0101~0102: object_key(uploadDietPhotoFile 결과) 등록 -> meal_log(PENDING)
+// 생성. 202를 받으면 분석은 아직 끝난 게 아니다 - getDietPhotoStatus로 폴링한다.
+export function uploadDietPhoto(token: string, objectKey: string, mealType?: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK", eatenAt?: string) {
+  return apiRequest<{ meal_log_id: string; status: string }>("/diet/upload", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ object_key: objectKey, ...(mealType ? { mealType } : {}), ...(eatenAt ? { eatenAt } : {}) }),
   });
 }
 
-// RC-0103: 명세는 img 입력이지만 실제 백엔드는 upload가 돌려준 meal_log id를 받는다
+export function getDietPhotoStatus(token: string, mealLogId: string) {
+  return apiRequest<DietPhotoStatusResponse>(`/diet/photo/${mealLogId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function confirmDietPhoto(
+  token: string,
+  mealLogId: string,
+  items: Array<{ name: string; sugar: number; calories: number; carbohydrate?: number }>,
+) {
+  return apiRequest<{ status: string; meal_log_id: string; analysisStatus: string }>(
+    `/diet/ai-analyze/${mealLogId}/confirm`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+// RC-0103: 옛 1회성 스텁 - 새 폴링 플로우에서는 getDietPhotoStatus를 쓴다.
+// 다른 곳에서 여전히 참조할 수 있어 남겨둔다.
 export function analyzeDietPhoto(token: string, id: string) {
   return apiRequest<DietAnalysisResponse>(query("/diet/ai-analyze", { usr: token, id }));
 }

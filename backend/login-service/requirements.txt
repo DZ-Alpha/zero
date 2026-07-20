@@ -10,3 +10,5 @@ asyncpg==0.30.0
 python-multipart==0.0.32
 bcrypt==4.2.1
 redis==5.2.1
+opentelemetry-distro==0.65b0
+opentelemetry-exporter-otlp==1.44.0

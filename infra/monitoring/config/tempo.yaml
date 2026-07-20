@@ -1,6 +1,16 @@
 server:
   http_listen_port: 3200
 
+# 2026-07-20, memberlist 자동 IP탐지가 컨테이너 시작 시점에 반복 실패해서
+# ("no private IP address found") crash loop 발생 - docker-compose.yml에서
+# tempo에 고정 IP(172.18.0.10)를 부여하고 여기서 advertise_addr로 명시.
+# advertise_addr는 실제 IP 문자열만 허용(호스트명 파싱 시도 시 에러 - 실측
+# 확인, "field interface_names not found" 에러로 Mimir 문서의 필드명이
+# Tempo 2.9.0에는 없다는 것도 확인해서 이 방식으로 확정).
+memberlist:
+  bind_addr: ["0.0.0.0"]
+  advertise_addr: "172.18.0.10"
+
 distributor:
   receivers:
     otlp:

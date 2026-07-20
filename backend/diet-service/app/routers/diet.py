@@ -12,13 +12,14 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
-from app.core.config import settings
 from app.core.database import get_db
 from app.services.diet_store import (
+    MealLogNotConfirmableError,
     MealLogNotFoundError,
     ProductNotFoundError,
     RecipeNotFoundError,
     complete_meal_log,
+    confirm_meal_log,
     create_manual_record,
     create_meal_log,
     delete_meal_log,
@@ -33,6 +34,7 @@ from app.services.diet_store import (
     make_meal_item_from_product,
     update_record,
 )
+from app.services.storage import StorageUploadError, validate_diet_photo_key
 from app.services.vision_service import analyze_meal_photo
 
 logger = logging.getLogger("diet_service.diet")
@@ -92,35 +94,46 @@ def _item_dict(item) -> dict:
     }
 
 
-# RC-0101: 한끼 식단 사진 업로드
-# RC-0102: 하루 식단 사진 업로드 (mode=daily)
-@router.post("/upload")
+class DietPhotoUploadBody(BaseModel):
+    object_key: str
+    mealType: str | None = None
+    mode: str | None = None
+    eatenAt: str | None = None
+
+
+# RC-0101~0102: 식단 사진 업로드 — object_key(POST /uploads/diet-photo가 반환한
+# 값) 등록 → meal_log(PENDING) 생성 + diet.photo.requested outbox 이벤트.
+# user_id는 body가 아니라 인증 JWT에서만 뽑는다.
+@router.post("/upload", status_code=202)
 async def upload_diet(
-    body: dict,
+    body: DietPhotoUploadBody,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
-    """RC-0101~0102: 식단 사진 URL 등록 → meal_log 생성 (분석은 별도 호출).
+    """RC-0101~0102: object_key(POST /uploads/diet-photo가 반환한 값) 등록 →
+    meal_log(PENDING) 생성. 분석은 GET /diet/photo/{id} 폴링(비동기, zero-db
+    Vision worker가 diet.photo.completed/failed를 Kafka로 발행 →
+    app/services/vision_consumer.py가 구독) 또는 GET /diet/ai-analyze(동기,
+    Claude Vision) 둘 중 실제로 연결된 경로를 프론트가 사용한다 —
+    PRODUCTION_HANDOFF.md P0-3.
 
-    body: {img: S3_URL, mode: 'daily'(optional), mealType(optional), eatenAt(optional)}
-    mealType/eatenAt은 PRODUCTION_HANDOFF.md P0-3 요구사항 — 둘 다 선택값이라 안 보내면
-    기존과 동일하게 동작한다(mode 기반 기본값, 업로드 시각).
+    mode='daily'는 mealType 없을 때만 쓰는 하위호환 폴백이다.
     """
     user_id: int = payload["user_id"]
-    image_object_key: str | None = body.get("img")
-    if not image_object_key:
-        raise HTTPException(status_code=422, detail="필수 필드 누락: img")
+
+    try:
+        image_object_key = validate_diet_photo_key(body.object_key, user_id)
+    except StorageUploadError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
     # 실제 DB의 meal_type CHECK 제약엔 'DAILY'가 없다(BREAKFAST/LUNCH/DINNER/
     # SNACK/OTHER만 허용) — "하루 식단" 업로드는 OTHER로 매핑한다.
-    meal_type_input = body.get("mealType")
-    if meal_type_input:
-        meal_type = _normalize_meal_type(meal_type_input)
+    if body.mealType:
+        meal_type = _normalize_meal_type(body.mealType)
     else:
-        meal_type = "OTHER" if body.get("mode") == "daily" else "SNACK"
+        meal_type = "OTHER" if body.mode == "daily" else "SNACK"
 
-    eaten_at_input = body.get("eatenAt")
-    eaten_at = _parse_date(eaten_at_input) if eaten_at_input else None
+    eaten_at = _parse_date(body.eatenAt) if body.eatenAt else None
 
     log = await create_meal_log(
         db,
@@ -131,7 +144,82 @@ async def upload_diet(
         eaten_at=eaten_at,
     )
     logger.info("diet: meal_log created meal_log_id=%s user_id=%s", log.meal_log_id, user_id)
-    return {"status": "SUCCESS", "id": str(log.meal_log_id)}
+    return {"meal_log_id": str(log.meal_log_id), "status": log.analysis_status}
+
+
+# 사진 분석 상태 폴링 — RecordMealModal이 여기를 반복 호출한다. 업로드 성공을
+# 분석 완료로 취급하면 안 된다는 게 이 엔드포인트를 따로 둔 이유.
+@router.get("/photo/{meal_log_id}")
+async def get_diet_photo_status(
+    meal_log_id: str,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(get_current_user),
+) -> dict[str, object]:
+    user_id: int = payload["user_id"]
+    log_id = _to_uuid(meal_log_id, "meal_log ID")
+
+    try:
+        log = await get_meal_log_for_user(db, log_id, user_id)
+    except MealLogNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    items = (
+        await get_meal_items(db, log_id)
+        if log.analysis_status in ("AWAITING_CONFIRMATION", "COMPLETED")
+        else []
+    )
+    return {
+        "meal_log_id": str(log_id),
+        "status": log.analysis_status,
+        "needs_user_confirmation": log.needs_user_confirmation,
+        "confidence": float(log.vision_confidence) if log.vision_confidence is not None else None,
+        "confidence_source": log.vision_provider,
+        "list-diet": [_item_dict(i) for i in items],
+    }
+
+
+class DietConfirmItem(BaseModel):
+    name: str
+    sugar: Decimal = Decimal("0")
+    calories: Decimal = Decimal("0")
+    carbohydrate: Decimal = Decimal("0")
+
+
+class DietConfirmBody(BaseModel):
+    items: list[DietConfirmItem]
+
+
+# 사용자가 AWAITING_CONFIRMATION 초안을 (필요하면 수정해서) 확정한다.
+@router.post("/ai-analyze/{meal_log_id}/confirm")
+async def confirm_diet_analysis(
+    meal_log_id: str,
+    body: DietConfirmBody,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(get_current_user),
+) -> dict[str, object]:
+    user_id: int = payload["user_id"]
+    log_id = _to_uuid(meal_log_id, "meal_log ID")
+
+    items = [
+        make_meal_item_from_analysis(log_id, i.name, Decimal("0"), "인분", i.calories, i.sugar, i.carbohydrate)
+        for i in body.items
+    ]
+
+    try:
+        log = await confirm_meal_log(db, log_id, user_id, items)
+    except MealLogNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except MealLogNotConfirmableError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"status": "SUCCESS", "meal_log_id": str(log.meal_log_id), "analysisStatus": log.analysis_status}
+
+
+# 개발팀 요청서 정정 1(2026-07-20) — worker는 HTTP callback을 호출하지 않는다.
+# 결과는 diet.photo.completed/diet.photo.failed Kafka topic으로만 온다.
+# app/services/vision_consumer.py가 전용 consumer group으로 직접 구독한다.
+# (이전에 여기 있던 POST /photo/{id}/vision-callback은 실제로 호출된 적이
+# 없어 삭제했다 — 개발팀 요청서 확인.)
 
 
 # RC-0103: AI 식단 분석 (Vision AI → 음식 인식 + 영양 추정)
@@ -161,6 +249,11 @@ async def ai_analyze(
             "dang": sum(float(i.sugars) for i in items if i.sugars is not None),
             "calo": sum(float(i.calories) for i in items if i.calories is not None),
             "list-diet": [_item_dict(i) for i in items],
+            # 개발팀 요청서 "변경된 파이프라인 API 응답" — 이전엔 list-diet만 내려줘서
+            # 프론트가 confidence 분기를 못 만들었다. 기존 필드는 안 건드려서 호환.
+            "confidence": float(log.vision_confidence) if log.vision_confidence is not None else None,
+            "confidence_source": log.vision_provider,
+            "needs_user_confirmation": log.needs_user_confirmation,
         }
 
     if not log.image_object_key:

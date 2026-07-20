@@ -5,13 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_bearer
 from app.core.database import get_db
 from app.models.recipe import Recipe
-from app.models.recipe_base_comparison import RecipeBaseComparison
 from app.models.recipe_ingredient import RecipeIngredient
 from app.services.recipe_store import (
     PAGE_SIZE,
     RecipeNotFoundError,
     count_recipes,
-    get_base_comparisons,
     get_ingredients,
     get_recipe,
     list_favorites,
@@ -38,21 +36,7 @@ def _list_item(recipe: Recipe) -> dict[str, object]:
     }
 
 
-def _comparison_item(comparison: RecipeBaseComparison | None) -> dict[str, object] | None:
-    if comparison is None:
-        return None
-    return {
-        "baseType": comparison.base_type,
-        "baseName": comparison.base_name,
-        "baseFoodCode": comparison.base_food_code,
-        # base_products 테이블이 아직 없어서 조인 안 함 — 원시 id만 노출.
-        "baseProductId": comparison.base_product_id,
-        "baseSugarG": float(comparison.base_sugar_g) if comparison.base_sugar_g is not None else None,
-        "baseKcal": float(comparison.base_kcal) if comparison.base_kcal is not None else None,
-    }
-
-
-def _ingredient_item(ingredient: RecipeIngredient, comparison: RecipeBaseComparison | None) -> dict[str, object]:
+def _ingredient_item(ingredient: RecipeIngredient) -> dict[str, object]:
     return {
         "id": ingredient.id,
         "name": ingredient.name,
@@ -60,7 +44,9 @@ def _ingredient_item(ingredient: RecipeIngredient, comparison: RecipeBaseCompari
         "type": ingredient.ingredient_type,
         "sugarG": float(ingredient.sugar_g) if ingredient.sugar_g is not None else None,
         "kcal": float(ingredient.kcal) if ingredient.kcal is not None else None,
-        "baseComparison": _comparison_item(comparison),
+        # substituted 재료가 원래 재료였다면의 당/칼로리. common은 sugarG/kcal과 동일값.
+        "baseSugarG": float(ingredient.base_sugar_g) if ingredient.base_sugar_g is not None else None,
+        "baseKcal": float(ingredient.base_kcal) if ingredient.base_kcal is not None else None,
     }
 
 
@@ -123,7 +109,6 @@ async def get_recipe_detail(recipe_id: int, db: AsyncSession = Depends(get_db)) 
         raise HTTPException(status_code=404, detail=str(error)) from error
 
     ingredients = await get_ingredients(db, recipe_id)
-    comparisons = await get_base_comparisons(db, [i.id for i in ingredients])
 
     return {
         "id": recipe.id,
@@ -140,7 +125,7 @@ async def get_recipe_detail(recipe_id: int, db: AsyncSession = Depends(get_db)) 
             "sugarReductionPct": float(recipe.sugar_reduction_pct) if recipe.sugar_reduction_pct is not None else None,
             "comparisonStatus": recipe.comparison_status,
         },
-        "ingredients": [_ingredient_item(ingredient, comparisons.get(ingredient.id)) for ingredient in ingredients],
+        "ingredients": [_ingredient_item(ingredient) for ingredient in ingredients],
     }
 
 

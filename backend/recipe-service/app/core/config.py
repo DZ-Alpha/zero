@@ -9,10 +9,10 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
 
     # Same Postgres instance as the other services. This service owns NO
-    # tables — recipes/recipe_ingredients/recipe_base_comparisons/
-    # recipe_ingredient_products/raw_ingredient_nutrients are all populated by
-    # the data team's YouTube recipe pipeline (레시피_데이터명세서_v0.2.xlsx).
-    # This app only ever SELECTs from the `service` schema, never DDL.
+    # tables — recipes/recipe_ingredients/recipe_ingredient_products/
+    # raw_ingredient_nutrients are all populated by the data team's YouTube
+    # recipe pipeline (receipe_spec_v0.4.xlsx). This app only ever SELECTs
+    # from the `service` schema, never DDL.
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "test_db"
