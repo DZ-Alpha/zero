@@ -13,10 +13,17 @@
 # 쓰기 때문에(.env.example 참고), 여기서 로컬 DB를 새로 띄우면 오히려 실제 데이터와
 # 어긋난다.
 #
-# 실행: docker compose -f backend/docker-compose.yaml pull && \
-#      docker compose -f backend/docker-compose.yaml up -d
-# 특정 태그 고정: TAG=<sha 등> docker compose -f backend/docker-compose.yaml \
-#   up -d (미지정 시 latest)
+# 실행(TAG 필수): TAG=<커밋SHA> docker compose -f docker-compose.yaml \
+#   up -d --no-deps <service>
+# 2026-07-20, `${TAG:-latest}` 기본값 제거 -> `${TAG:?...}` 필수화(지훈 결정).
+# 근거: production에서 TAG 없이 수동 `docker compose up`이 실행되면서 ai가
+# 두 번이나 :latest 컨테이너로 되돌아갔다(실측 2회) - "지금 프로덕션이 어느
+# 커밋인지"를 보장하는 불변태그 원칙이 수동 조작 한 번에 무너지는 구조였음.
+# 이제 TAG 미지정 시 어떤 compose 명령도 명확한 에러로 즉시 실패한다.
+# 배포는 CI(main 병합)가 TAG를 자동으로 넘기므로 사람이 이 파일을 직접
+# 실행할 일 자체가 없어야 정상. 컨테이너 확인은 compose 대신 `docker ps`,
+# 로그는 `docker logs <컨테이너명>`을 쓸 것(TAG 불필요).
+# 주의: production의 .env에 TAG=... 를 넣으면 이 방어가 우회되므로 금지.
 #
 # 런타임 하드닝은 docs/ops/Backend_Dockerfile_하드닝_템플릿.md의 "컨테이너 실행
 # 시점 하드닝" 절(= infra/ci-sandbox/docker-compose.yml과 동일 기준)을 그대로
@@ -51,7 +58,7 @@ x-hardening: &hardening
 
 services:
   login-service:
-    image: 192.168.0.53/dangdang-backend/login-service:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/login-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: login-service
     env_file: ./.env
     # 2026-07-20, OTel 계측 파일럿 - login-service 하나로 먼저 검증
@@ -93,7 +100,7 @@ services:
         max-file: "3"
 
   admin-service:
-    image: 192.168.0.53/dangdang-backend/admin-service:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/admin-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: admin-service
     env_file: ./.env
     ports:
@@ -104,7 +111,7 @@ services:
   # backend/ai/.env.example 참고(JWT_SECRET/BEDROCK_*/POSTGRES_* 등) -
   # 다른 서비스와 동일하게 통합 .env 하나를 공유해서 읽는다.
   ai:
-    image: 192.168.0.53/dangdang-backend/ai:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/ai:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: ai
     env_file: ./.env
     volumes:
@@ -114,7 +121,7 @@ services:
     <<: *hardening
 
   main-service:
-    image: 192.168.0.53/dangdang-backend/main-service:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/main-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: main-service
     env_file: ./.env
     ports:
@@ -122,7 +129,7 @@ services:
     <<: *hardening
 
   community-service:
-    image: 192.168.0.53/dangdang-backend/community-service:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/community-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: community-service
     env_file: ./.env
     ports:
@@ -130,7 +137,7 @@ services:
     <<: *hardening
 
   recipe-service:
-    image: 192.168.0.53/dangdang-backend/recipe-service:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/recipe-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: recipe-service
     env_file: ./.env
     ports:
@@ -138,7 +145,7 @@ services:
     <<: *hardening
 
   product-service:
-    image: 192.168.0.53/dangdang-backend/product-service:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/product-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: product-service
     env_file: ./.env
     ports:
@@ -146,7 +153,7 @@ services:
     <<: *hardening
 
   ingredients-service:
-    image: 192.168.0.53/dangdang-backend/ingredients-service:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/ingredients-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: ingredients-service
     env_file: ./.env
     ports:
@@ -154,7 +161,7 @@ services:
     <<: *hardening
 
   diet-service:
-    image: 192.168.0.53/dangdang-backend/diet-service:${TAG:-latest}
+    image: 192.168.0.53/dangdang-backend/diet-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: diet-service
     env_file: ./.env
     # .env의 PRODUCT_SERVICE_URL은 로컬 단독 실행 기준(localhost:8016)이라,
