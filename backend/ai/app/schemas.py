@@ -13,7 +13,9 @@ class Intent(str, Enum):
 
 
 class ChatbotRequest(BaseModel):
-    usr: str
+    # 비로그인 사용자도 일반 지식질문은 쓸 수 있게 usr은 옵셔널.
+    # 토큰이 있으면 개인화, 없으면 익명(일반 기준) 답변.
+    usr: str | None = None
     msg: str | None = None
     template: str | None = None
     img: str | None = None
