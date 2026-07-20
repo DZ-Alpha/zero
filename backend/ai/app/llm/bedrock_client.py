@@ -28,6 +28,7 @@ class BedrockClient(LLMClient):
             modelId=self._model_id,
             system=[{"text": system}],
             messages=[{"role": "user", "content": [{"text": user}]}],
-            inferenceConfig={"maxTokens": 250},
+            # 답변이 잘리지 않도록 넉넉히. 길이는 프롬프트(3문장 이내)로 조절한다.
+            inferenceConfig={"maxTokens": 500},
         )
         return resp["output"]["message"]["content"][0]["text"]
