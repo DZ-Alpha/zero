@@ -7,19 +7,17 @@ from datetime import datetime, time, timezone
 from decimal import Decimal
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
-from app.core.config import settings
 from app.core.database import get_db
 from app.services.diet_store import (
     MealLogNotConfirmableError,
     MealLogNotFoundError,
     ProductNotFoundError,
     RecipeNotFoundError,
-    apply_vision_result,
     complete_meal_log,
     confirm_meal_log,
     create_manual_record,
@@ -114,8 +112,10 @@ async def upload_diet(
 ) -> dict[str, object]:
     """RC-0101~0102: object_key(POST /uploads/diet-photo가 반환한 값) 등록 →
     meal_log(PENDING) 생성. 분석은 GET /diet/photo/{id} 폴링(비동기, zero-db
-    Vision worker 콜백) 또는 GET /diet/ai-analyze(동기, Claude Vision) 둘 중
-    실제로 연결된 경로를 프론트가 사용한다 — PRODUCTION_HANDOFF.md P0-3.
+    Vision worker가 diet.photo.completed/failed를 Kafka로 발행 →
+    app/services/vision_consumer.py가 구독) 또는 GET /diet/ai-analyze(동기,
+    Claude Vision) 둘 중 실제로 연결된 경로를 프론트가 사용한다 —
+    PRODUCTION_HANDOFF.md P0-3.
 
     mode='daily'는 mealType 없을 때만 쓰는 하위호환 폴백이다.
     """
@@ -215,58 +215,11 @@ async def confirm_diet_analysis(
     return {"status": "SUCCESS", "meal_log_id": str(log.meal_log_id), "analysisStatus": log.analysis_status}
 
 
-_VISION_CALLBACK_STATUSES = {"COMPLETED", "AWAITING_CONFIRMATION", "FAILED"}
-
-
-class VisionCallbackItem(BaseModel):
-    name: str
-    sugar: Decimal = Decimal("0")
-    calories: Decimal = Decimal("0")
-    carbohydrate: Decimal = Decimal("0")
-
-
-class VisionCallbackBody(BaseModel):
-    event_id: str | None = None
-    status: str
-    confidence: Decimal | None = None
-    provider: str | None = None
-    items: list[VisionCallbackItem] = []
-
-
-# 내부 전용 — Vision worker(zero-db dangdang-pipeline-worker)가 분석 결과를
-# 돌려주는 콜백. 사용자 JWT가 아니라 공유 시크릿으로 인증한다.
-@router.post("/photo/{meal_log_id}/vision-callback")
-async def vision_callback(
-    meal_log_id: str,
-    body: VisionCallbackBody,
-    db: AsyncSession = Depends(get_db),
-    x_vision_callback_secret: str | None = Header(default=None),
-) -> dict[str, object]:
-    if not settings.vision_callback_secret:
-        raise HTTPException(status_code=501, detail="Vision 콜백 시크릿이 설정되지 않았습니다.")
-    if x_vision_callback_secret != settings.vision_callback_secret:
-        raise HTTPException(status_code=401, detail="유효하지 않은 콜백 시크릿입니다.")
-    if body.status not in _VISION_CALLBACK_STATUSES:
-        raise HTTPException(status_code=422, detail=f"유효하지 않은 status입니다: {body.status}")
-
-    log_id = _to_uuid(meal_log_id, "meal_log ID")
-    items = [
-        make_meal_item_from_analysis(log_id, i.name, Decimal("0"), "인분", i.calories, i.sugar, i.carbohydrate)
-        for i in body.items
-    ]
-
-    try:
-        log = await apply_vision_result(
-            db, log_id, status=body.status, confidence=body.confidence, provider=body.provider, items=items,
-        )
-    except MealLogNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    logger.info(
-        "diet: vision callback applied meal_log_id=%s status=%s event_id=%s",
-        log_id, log.analysis_status, body.event_id,
-    )
-    return {"status": "SUCCESS", "meal_log_id": str(log.meal_log_id), "analysisStatus": log.analysis_status}
+# 개발팀 요청서 정정 1(2026-07-20) — worker는 HTTP callback을 호출하지 않는다.
+# 결과는 diet.photo.completed/diet.photo.failed Kafka topic으로만 온다.
+# app/services/vision_consumer.py가 전용 consumer group으로 직접 구독한다.
+# (이전에 여기 있던 POST /photo/{id}/vision-callback은 실제로 호출된 적이
+# 없어 삭제했다 — 개발팀 요청서 확인.)
 
 
 # RC-0103: AI 식단 분석 (Vision AI → 음식 인식 + 영양 추정)
@@ -296,6 +249,11 @@ async def ai_analyze(
             "dang": sum(float(i.sugars) for i in items if i.sugars is not None),
             "calo": sum(float(i.calories) for i in items if i.calories is not None),
             "list-diet": [_item_dict(i) for i in items],
+            # 개발팀 요청서 "변경된 파이프라인 API 응답" — 이전엔 list-diet만 내려줘서
+            # 프론트가 confidence 분기를 못 만들었다. 기존 필드는 안 건드려서 호환.
+            "confidence": float(log.vision_confidence) if log.vision_confidence is not None else None,
+            "confidence_source": log.vision_provider,
+            "needs_user_confirmation": log.needs_user_confirmation,
         }
 
     if not log.image_object_key:

@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.constants import SOCIAL_CODES
 from app.core.database import get_db
 from app.services import jwt_service, session_store, state_store, user_store
+from app.services.activity import enqueue_activity
 from app.services.oauth import apple, google, kakao, naver
 from app.services.oauth.types import OAuthExchangeError
 from app.services.user_store import SocialAccountAlreadyLinkedError
@@ -161,6 +162,18 @@ async def callback(
     token = jwt_service.create_access_token(user.id, provider, profile.nickname)
     await session_store.set_active_token(token)
     logger.info("social login success: provider=%s user_id=%s is_new=%s", provider, user.id, is_new)
+
+    try:
+        await enqueue_activity(
+            db,
+            event_type="user.auth.login_succeeded",
+            user_id=user.id,
+            producer="login-service",
+            properties={"method": provider},
+        )
+    except Exception:
+        # 활동 로그 실패로 로그인 자체를 막지 않는다 — analytics는 best-effort.
+        logger.exception("activity event enqueue failed: event_type=user.auth.login_succeeded user_id=%s", user.id)
 
     return _frontend_redirect(
         social=SOCIAL_CODES[provider],

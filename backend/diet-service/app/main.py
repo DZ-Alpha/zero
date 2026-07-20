@@ -13,6 +13,7 @@ from app.core.database import Base, engine  # noqa: E402
 from app.models.meal_item import MealItem  # noqa: F401, E402
 from app.models.meal_log import MealLog  # noqa: F401, E402
 from app.routers import diet, health, home, uploads  # noqa: E402
+from app.services.vision_consumer import start_consumer, stop_consumer  # noqa: E402
 
 logger = logging.getLogger("diet_service")
 
@@ -37,6 +38,12 @@ async def on_startup() -> None:
             lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES)
         )
     logger.info("diet-service started, owned tables ensured")
+    await start_consumer()
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    await stop_consumer()
 
 
 @app.exception_handler(Exception)

@@ -10,3 +10,4 @@ PyJWT==2.13.0
 python-multipart==0.0.32
 anthropic==0.69.0
 boto3==1.43.51
+aiokafka==0.14.0

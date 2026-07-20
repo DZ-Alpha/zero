@@ -10,7 +10,7 @@ from app.models.meal_log import MealLog
 from app.models.product_ref import ProductRef
 from app.models.recipe_ref import RecipeRef
 from app.models.user_health_profile_ref import UserHealthProfileRef
-from app.services.outbox import enqueue_outbox
+from app.services.outbox import enqueue_activity, enqueue_outbox
 
 
 class MealLogNotFoundError(Exception):
@@ -41,8 +41,9 @@ async def create_meal_log(
     eaten_at: datetime | None = None,
 ) -> MealLog:
     """PENDING meal_log 생성 + 같은 트랜잭션 안에서 diet.photo.requested outbox
-    이벤트 기록. Kafka 발행은 이 서비스가 하지 않는다 — zero-db의 outbox
-    publisher가 service.event_outbox를 폴링해서 발행한다."""
+    이벤트 기록 + user.diet.photo_uploaded 활동 이벤트 기록. Kafka 발행은 이
+    서비스가 하지 않는다 — zero-db의 outbox publisher가 service.event_outbox를
+    폴링해서 발행한다."""
     log = MealLog(
         meal_log_id=uuid.uuid4(),
         user_id=user_id,
@@ -56,19 +57,39 @@ async def create_meal_log(
     db.add(log)
     await db.flush()
 
-    await enqueue_outbox(
+    # 개발팀 요청서 정정 2 — worker 쪽 diet_analysis_jobs.user_id 컬럼이 text라
+    # 정수를 보내면 스키마 검증에서 거부(INVALID_EVENT)된다. 요청 이벤트에만
+    # str(user_id)로 넣는다 (user.activity.raw는 반대로 정수 필수, enqueue_activity 참고).
+    request_event = await enqueue_outbox(
         db,
         event_type="diet.photo.requested",
         user_id=user_id,
         producer="diet-service",
         aggregate_type="meal_log",
         aggregate_id=str(log.meal_log_id),
-        payload={"job_id": str(log.meal_log_id), "image_key": image_object_key},
+        payload={"job_id": str(log.meal_log_id), "image_key": image_object_key, "user_id": str(user_id)},
+    )
+    # worker가 diet.photo.completed/failed에 실어 보내는 causation_event_id로
+    # 이 meal_log를 다시 찾기 위한 멱등 키 (app/services/vision_consumer.py).
+    log.request_event_id = request_event.event_id
+
+    await enqueue_activity(
+        db,
+        event_type="user.diet.photo_uploaded",
+        user_id=user_id,
+        producer="diet-service",
+        properties={"meal_log_id": str(log.meal_log_id), "meal_type": meal_type},
     )
 
     await db.commit()
     await db.refresh(log)
     return log
+
+
+async def get_meal_log_by_request_event_id(db: AsyncSession, request_event_id: uuid.UUID) -> MealLog | None:
+    """Kafka consumer가 causation_event_id로 원본 meal_log를 찾을 때 쓴다."""
+    result = await db.execute(select(MealLog).where(MealLog.request_event_id == request_event_id))
+    return result.scalar_one_or_none()
 
 
 async def get_meal_log(db: AsyncSession, meal_log_id: uuid.UUID) -> MealLog:
@@ -114,11 +135,14 @@ async def apply_vision_result(
     confidence: Decimal | None,
     provider: str | None,
     items: list[MealItem],
+    retryable: bool | None = None,
 ) -> MealLog:
-    """Vision worker 콜백 처리: confidence/provider 기록 + 상태 전이 + outbox.
+    """Kafka consumer(diet.photo.completed/failed) 처리: confidence/provider
+    기록 + 상태 전이 + outbox.
 
-    같은 event_id로 재전달돼도(at-least-once) 안전하도록, 이미 종결 상태
-    (COMPLETED/FAILED)인 meal_log는 그대로 반환하고 재적용하지 않는다.
+    같은 causation_event_id로 재전달돼도(Kafka at-least-once) 안전하도록,
+    이미 종결 상태(COMPLETED/FAILED)인 meal_log는 그대로 반환하고 재적용하지
+    않는다 — vision_consumer.py는 이 반환값과 무관하게 매번 commit한다.
     """
     log = await get_meal_log(db, meal_log_id)
     if log.analysis_status in ("COMPLETED", "FAILED"):
@@ -129,6 +153,7 @@ async def apply_vision_result(
 
     if status == "FAILED":
         log.analysis_status = "FAILED"
+        log.vision_retryable = retryable
         await enqueue_outbox(
             db,
             event_type="diet.analysis_failed",
@@ -136,7 +161,7 @@ async def apply_vision_result(
             producer="diet-service",
             aggregate_type="meal_log",
             aggregate_id=str(meal_log_id),
-            payload={"meal_log_id": str(meal_log_id)},
+            payload={"meal_log_id": str(meal_log_id), "retryable": bool(retryable)},
         )
     else:
         await _replace_meal_items(db, meal_log_id, items)
@@ -178,14 +203,12 @@ async def confirm_meal_log(
     log.analysis_status = "COMPLETED"
     log.needs_user_confirmation = False
 
-    await enqueue_outbox(
+    await enqueue_activity(
         db,
         event_type="user.diet.meal_confirmed",
         user_id=user_id,
         producer="diet-service",
-        aggregate_type="meal_log",
-        aggregate_id=str(meal_log_id),
-        payload={"meal_log_id": str(meal_log_id)},
+        properties={"meal_log_id": str(meal_log_id)},
     )
 
     await db.commit()
