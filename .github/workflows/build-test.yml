@@ -430,7 +430,21 @@ jobs:
       # 돌아가는 실제 배포와 안 맞는 병렬 파이프라인이 되는 걸 확인하고 되돌림 -
       # 2026-07-18). :latest는 그 compose 파일의 기본값과 맞추기 위함이고, :sha는
       # 추적/롤백용으로 같이 남긴다.
+      #
+      # 2026-07-20, push를 main push 실행으로 한정. 그 전엔 pull_request
+      # 실행에서도 이 스텝이 돌아서, 미병합 PR 커밋이 같은 job의 Trivy만
+      # 통과하면(병렬인 build-test/code-scanning 결과와 무관하게) :sha+:latest가
+      # Harbor로 push됐다 - 특히 :latest가 PR 커밋으로 이동해, production에서
+      # 수동 compose pull(:latest 기본) 시 미병합 이미지를 집을 수 있는 경로가
+      # 있었다(자동배포는 needs+main 한정이라 영향 없음 - 실측 확인). PR은
+      # 빌드+스캔 검증만 하고 push는 생략한다 - main에 도달한 코드는 브랜치
+      # 보호(required checks + strict + enforce_admins)가 build/Sonar/Trivy
+      # 통과를 이미 보장하므로, "전 게이트 통과 이미지만 push"가 병렬성 손실
+      # 없이 달성된다. workflow_dispatch도 push 안 함(수동 재배포는 기존 태그
+      # 재사용이라 새 push 불요). Docker 공식 CI 문서의 조건부 push
+      # (push: github.event_name != 'pull_request') 표준 패턴과 동일 취지.
       - name: Tag and push (sha + latest)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           IMAGE="harbor.hizero.local/dangdang-backend/${{ matrix.service }}"
           SHA="${{ github.sha }}"
@@ -855,7 +869,12 @@ jobs:
       # 기본값을 안 두고 명시적인 불변 태그를 요구한다("Set FRONTEND_IMAGE to the
       # Harbor image and immutable tag") - 그래서 :latest를 기본 배포 태그로 쓰지
       # 않고 :sha를 기본으로 쓴다. :latest는 수동 확인/편의용으로만 같이 남긴다.
+      #
+      # 2026-07-20, backend-image-scanning의 push 가드와 동일한 이유(그쪽 주석
+      # 참고) - PR 실행에서 미병합 커밋이 :latest를 이동시키는 걸 막고,
+      # push는 main push 실행에서만 한다.
       - name: Tag and push (sha + latest)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           IMAGE="harbor.hizero.local/dangdang/frontend"
           SHA="${{ github.sha }}"
