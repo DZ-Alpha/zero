@@ -64,6 +64,16 @@ async def test_chatbot_general_question_returns_answer(client):
     assert "cs-partner" in body
 
 
+async def test_chatbot_anonymous_without_usr_returns_answer(client):
+    # 비로그인(usr 없음)도 일반 지식질문은 답한다(익명 맥락).
+    async with client as ac:
+        resp = await ac.post("/ai/chatbot", json={"msg": "탄수화물이 뭐야?"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["msg"] == "테스트 답변"
+    assert "cs-partner" in body
+
+
 async def test_chatbot_invalid_token_is_401(client):
     async with client as ac:
         resp = await ac.post("/ai/chatbot", json={"usr": "bad.token", "msg": "안녕"})

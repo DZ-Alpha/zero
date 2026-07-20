@@ -1097,3 +1097,45 @@ jobs:
             -H 'Content-type: application/json' \
             --data "{\"text\": \"$TEXT\"}" \
             "$SLACK_WEBHOOK_URL"
+
+  # 2026-07-20, 배포 "성공" 알림. 그동안 실패만 Slack에 오고 성공 배포는
+  # 무소식이라, 팀원이 배포 여부를 확인하려고 Actions를 뒤지다가 PR 검증
+  # run의 deploy job이 "skipped"로 표시되는 걸 보고 "배포가 안 됐다"고
+  # 오해하는 일이 같은 날 두 번 반복됨(윤경님, 실측). 프로덕션 배포 성공은
+  # 노이즈가 아니라 팀 전체가 알아야 할 신호이므로, 성공 시에도 무엇이
+  # 어떤 커밋으로 나갔는지 한 줄 통보해 Actions 화면을 볼 필요 자체를
+  # 없앤다.
+  notify-on-deploy:
+    needs:
+      - backend-deploy-production
+      - frontend-deploy-production
+      - bgateway-cutover
+    if: |
+      always() &&
+      (needs.backend-deploy-production.result == 'success' ||
+        needs.frontend-deploy-production.result == 'success' ||
+        needs.bgateway-cutover.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack (deploy success)
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BACKEND_R: ${{ needs.backend-deploy-production.result }}
+          FRONTEND_R: ${{ needs.frontend-deploy-production.result }}
+          BGATEWAY_R: ${{ needs.bgateway-cutover.result }}
+        run: |
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
+          RUN_URL="$REPO_URL/actions/runs/${{ github.run_id }}"
+          SHA_SHORT="$(echo '${{ github.sha }}' | cut -c1-8)"
+          DEPLOYED=""
+          add() { DEPLOYED="${DEPLOYED:+$DEPLOYED, }$1"; }
+          [ "$BACKEND_R" = "success" ] && add "backend"
+          [ "$FRONTEND_R" = "success" ] && add "frontend"
+          [ "$BGATEWAY_R" = "success" ] && add "b-gateway"
+          TEXT=":white_check_mark: *$DEPLOYED* 프로덕션 배포 완료"
+          TEXT="$TEXT (\`${{ github.ref_name }}\` @ $SHA_SHORT)"
+          TEXT="$TEXT\n<$RUN_URL|실행 보기>"
+          curl -sf -X POST \
+            -H 'Content-type: application/json' \
+            --data "{\"text\": \"$TEXT\"}" \
+            "$SLACK_WEBHOOK_URL"
