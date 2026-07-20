@@ -26,6 +26,8 @@ function selectService(parts: string[]) {
   if (["social-access", "user", "administrator-login", "administrator-signup", "webhooks"].includes(first)) return serviceUrls.login;
   if (first === "home" || (first === "search" && second === "lens")) return serviceUrls.main;
   if (first === "diet") return serviceUrls.diet;
+  // gateway가 MinIO diet-photos에 저장하는 자리 — diet-service가 이 라우트를 갖는다.
+  if (first === "uploads") return serviceUrls.diet;
   if (first === "recipes") return serviceUrls.recipe;
   if (first === "product" || first === "search") return serviceUrls.product;
   if (first === "tags") return serviceUrls.ingredients;
