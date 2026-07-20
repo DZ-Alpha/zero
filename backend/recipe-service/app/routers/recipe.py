@@ -21,11 +21,24 @@ from app.services.recipe_store import (
 router = APIRouter(prefix="/recipes")
 
 
+def _thumbnail_url(recipe: Recipe) -> str | None:
+    # 2026-07-20 실측 — source="유튜브" 레시피는 thumbnail_url이
+    # "/data/thumbnails/{id}.jpg" 같은 상대경로인데, 이 경로를 서빙하는 곳이
+    # 어디에도 없어(gateway/frontend 다 확인함) 항상 404가 난다. source="만개의레시피"는
+    # 절대 URL(recipe1.ezmember.co.kr)이라 정상 로드됨. YouTube는 video_id로
+    # 썸네일을 공개 제공하므로(API 키 불필요) 상대경로일 땐 그쪽을 대신 쓴다.
+    if recipe.thumbnail_url and not recipe.thumbnail_url.startswith("/"):
+        return recipe.thumbnail_url
+    if recipe.video_id:
+        return f"https://img.youtube.com/vi/{recipe.video_id}/hqdefault.jpg"
+    return recipe.thumbnail_url
+
+
 def _list_item(recipe: Recipe) -> dict[str, object]:
     return {
         "id": recipe.id,
         "name": recipe.name,
-        "thumbnailUrl": recipe.thumbnail_url,
+        "thumbnailUrl": _thumbnail_url(recipe),
         "sugarReductionPct": float(recipe.sugar_reduction_pct) if recipe.sugar_reduction_pct is not None else None,
         "comparisonStatus": recipe.comparison_status,
         # PRODUCTION_HANDOFF.md P1-2 — 카드 필드. category/time(조리시간)은 명세엔
@@ -98,7 +111,7 @@ async def get_recipe_favorite_list(
     """RC-0112: 찜한 레시피 목록."""
     user_id: int = payload["user_id"]
     recipes = await list_favorites(db, user_id)
-    return {"list-receipe": [{"id": r.id, "name": r.name, "image": r.thumbnail_url} for r in recipes]}
+    return {"list-receipe": [{"id": r.id, "name": r.name, "image": _thumbnail_url(r)} for r in recipes]}
 
 
 @router.get("/{recipe_id}")
@@ -113,7 +126,7 @@ async def get_recipe_detail(recipe_id: int, db: AsyncSession = Depends(get_db)) 
     return {
         "id": recipe.id,
         "name": recipe.name,
-        "thumbnailUrl": recipe.thumbnail_url,
+        "thumbnailUrl": _thumbnail_url(recipe),
         "steps": recipe.steps,
         "source": recipe.source,
         "publishedAt": recipe.published_at.isoformat() if recipe.published_at else None,
