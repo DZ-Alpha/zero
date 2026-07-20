@@ -473,6 +473,15 @@ jobs:
       PROD_HOST: bruce@10.10.10.30
       BACKEND_TAG: ${{ inputs.backend_tag }}
     steps:
+      # 2026-07-20, ~/backend/docker-compose.yaml이 production VM에만
+      # 존재하는 수동관리 파일이라 PR #52(ai 서비스 추가)의 배포가
+      # "no such service: ai"로 실패했다. frontend-deploy-production과
+      # 같은 패턴으로 checkout + scp를 추가해 git 추적본을 매 배포마다
+      # 동기화한다 - 새 서비스가 계속 추가될 예정이라, 이제부터는 compose
+      # 파일 변경이 코드리뷰에 드러나고 자동으로 반영된다. self-hosted
+      # 러너의 이전 워크스페이스가 우연히 남아있을 수 있어(신뢰 불가,
+      # fix-harbor-dns에서 실측된 패턴과 동일 이유) checkout을 명시한다.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       # 2026-07-19, well-architected 체크리스트의 "latest 배포 금지" 항목 재점검
       # 중 발견 - push 이벤트에선 inputs.backend_tag가 존재하지 않아 TAG가
       # 빈 문자열이 되고, 그 상태로 docker compose를 돌리면 production VM의
@@ -486,6 +495,15 @@ jobs:
           TAG="$BACKEND_TAG"
           if [ -z "$TAG" ]; then TAG="${{ github.sha }}"; fi
           echo "TAG=$TAG" >> "$GITHUB_ENV"
+      - name: Copy compose file to production VM
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          SCP="sshpass -e scp -o StrictHostKeyChecking=accept-new"
+          $SSH "mkdir -p ~/backend"
+          $SCP backend/compose.production.example.yaml \
+            "$PROD_HOST":~/backend/docker-compose.yaml
       - name: Log in to Harbor (production VM)
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
