@@ -27,3 +27,16 @@ jobs:
         run: pip install yamllint
       - name: Run yamllint
         run: yamllint .pre-commit-config.yaml .github/workflows
+      # 2026-07-20, PR #54에서 웹에디터로 compose 파일을 고치다 들여쓰기 1칸
+      # 오류(services 블록 깨짐)가 어떤 체크에도 안 걸리고 merge 직전까지 간
+      # 사고 재발 방지 - 배포에 실제 쓰이는 compose/infra YAML을 문법 게이트에
+      # 추가한다. relaxed 프로파일: 문법 오류(syntax)는 exit 1로 차단하되
+      # 스타일(중괄호 공백/80자 등)은 warning이라 기존 파일들이 안 깨짐을
+      # 실측 확인함(기존 4개 파일 exit 0, PR#54 재현본 exit 1).
+      - name: Run yamllint (deploy YAML syntax gate, relaxed)
+        run: |
+          yamllint -d relaxed \
+            backend/compose.production.example.yaml \
+            frontend/compose.frontend.yaml \
+            frontend/compose.production.example.yaml \
+            infra/
