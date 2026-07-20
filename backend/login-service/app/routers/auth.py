@@ -161,19 +161,23 @@ async def callback(
     )
     token = jwt_service.create_access_token(user.id, provider, profile.nickname)
     await session_store.set_active_token(token)
-    logger.info("social login success: provider=%s user_id=%s is_new=%s", provider, user.id, is_new)
+    user_id = user.id  # 커밋된 ORM 객체 — 실패 시 로그에서 다시 접근하면 lazy reload를 시도한다.
+    logger.info("social login success: provider=%s user_id=%s is_new=%s", provider, user_id, is_new)
 
     try:
         await enqueue_activity(
             db,
             event_type="user.auth.login_succeeded",
-            user_id=user.id,
+            user_id=user_id,
             producer="login-service",
             properties={"method": provider},
         )
     except Exception:
         # 활동 로그 실패로 로그인 자체를 막지 않는다 — analytics는 best-effort.
-        logger.exception("activity event enqueue failed: event_type=user.auth.login_succeeded user_id=%s", user.id)
+        # 실패한 커밋은 세션을 rollback-필요 상태로 만드므로, 로그에서 ORM 속성을
+        # 다시 읽으면(예: user.id) 또 실패한다 — 위에서 미리 뽑아둔 순수 값만 쓴다.
+        await db.rollback()
+        logger.exception("activity event enqueue failed: event_type=user.auth.login_succeeded user_id=%s", user_id)
 
     return _frontend_redirect(
         social=SOCIAL_CODES[provider],

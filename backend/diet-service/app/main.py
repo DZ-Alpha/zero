@@ -4,6 +4,7 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 logging.Formatter.converter = time.gmtime
 logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s")
@@ -16,6 +17,20 @@ from app.routers import diet, health, home, uploads  # noqa: E402
 from app.services.vision_consumer import start_consumer, stop_consumer  # noqa: E402
 
 logger = logging.getLogger("diet_service")
+
+# Base.metadata.create_all()은 "없는 테이블"만 만들고 이미 있는 테이블에 컬럼을
+# 추가해주지 않는다 — meal_logs는 이미 운영에 있던 테이블이라, 모델에 새 컬럼을
+# 추가해도(vision_confidence 등, 이번엔 request_event_id/vision_retryable) 실제
+# 테이블엔 반영이 안 돼 INSERT가 UndefinedColumnError로 죽는 걸 2026-07-20 운영에서
+# 실측했다. meal_logs는 diet-service 소유 테이블(OWNED_TABLES)이라 여기서 직접
+# ADD COLUMN IF NOT EXISTS로 맞춘다 — 기존 컬럼/데이터는 건드리지 않는 추가 전용 DDL.
+_MEAL_LOG_COLUMN_MIGRATIONS = [
+    "ALTER TABLE service.meal_logs ADD COLUMN IF NOT EXISTS request_event_id UUID",
+    "ALTER TABLE service.meal_logs ADD COLUMN IF NOT EXISTS vision_confidence NUMERIC(4,3)",
+    "ALTER TABLE service.meal_logs ADD COLUMN IF NOT EXISTS vision_provider VARCHAR(50)",
+    "ALTER TABLE service.meal_logs ADD COLUMN IF NOT EXISTS needs_user_confirmation BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE service.meal_logs ADD COLUMN IF NOT EXISTS vision_retryable BOOLEAN",
+]
 
 app = FastAPI(title="Diet Service")
 
@@ -37,6 +52,8 @@ async def on_startup() -> None:
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES)
         )
+        for statement in _MEAL_LOG_COLUMN_MIGRATIONS:
+            await conn.execute(text(statement))
     logger.info("diet-service started, owned tables ensured")
     await start_consumer()
 

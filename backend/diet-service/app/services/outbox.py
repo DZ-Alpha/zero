@@ -32,6 +32,7 @@ async def enqueue_outbox(
     event_type: str,
     producer: str,
     payload: dict,
+    event_id: uuid.UUID | None = None,
     user_id: int | None = None,
     aggregate_type: str | None = None,
     aggregate_id: str | None = None,
@@ -43,6 +44,11 @@ async def enqueue_outbox(
     Kafka로의 실제 발행은 zero-db 쪽 outbox publisher가 이 테이블을 폴링해서
     한다 — 여기서는 Kafka client를 쓰지 않는다. 업무 이벤트(diet.* 등, worker가
     구독)에 쓴다 — 사용자 행동 분석 이벤트는 enqueue_activity()를 쓴다.
+
+    event_id를 직접 지정할 수 있게 한 이유 — diet.photo.requested처럼 payload
+    안에도 event_id를 그대로 실어 보내야(worker 계약, contracts.py
+    requested_event) 하는 경우, INSERT 전에 값을 알아야 payload와 row의
+    event_id가 서로 다르게 어긋나지 않는다.
     """
     entry = EventOutbox(
         event_type=event_type,
@@ -54,6 +60,8 @@ async def enqueue_outbox(
         trace_id=trace_id,
         schema_version=schema_version,
     )
+    if event_id is not None:
+        entry.event_id = event_id
     session.add(entry)
     await session.flush()
     return entry
@@ -96,6 +104,11 @@ async def enqueue_activity(
         event_type=event_type,
         producer=producer,
         user_id=int(user_id),
+        # 실제 service.event_outbox.aggregate_type은 NOT NULL이다 (2026-07-20,
+        # 운영에서 IntegrityError로 실측) — 활동 이벤트는 항상 user 하나에 붙으니
+        # user/user_id를 기본 aggregate로 쓴다.
+        aggregate_type="user",
+        aggregate_id=str(user_id),
         trace_id=trace_id,
         payload=payload,
         schema_version=1,
