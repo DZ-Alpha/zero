@@ -28,6 +28,6 @@ class BedrockClient(LLMClient):
             modelId=self._model_id,
             system=[{"text": system}],
             messages=[{"role": "user", "content": [{"text": user}]}],
-            inferenceConfig={"maxTokens": 350},
+            inferenceConfig={"maxTokens": 250},
         )
         return resp["output"]["message"]["content"][0]["text"]

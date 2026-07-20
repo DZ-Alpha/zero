@@ -1,7 +1,16 @@
 from app.handlers.base import HandlerInput
-from app.handlers.general_qa import GeneralQAHandler, render_user_context_block
+from app.handlers.general_qa import GeneralQAHandler, render_user_context_block, strip_chat_markdown
 from app.rag.retriever import RagChunk, Retriever
 from app.schemas import UserContext
+
+
+def test_strip_chat_markdown_removes_bold_and_headings():
+    raw = "## 제목\n**당류**는 20g이고 *중요*합니다.\n\n\n\n끝."
+    out = strip_chat_markdown(raw)
+    assert "**" not in out
+    assert "##" not in out
+    assert "제목" in out and "당류" in out and "중요" in out
+    assert "\n\n\n" not in out  # 과한 줄바꿈 정리
 
 
 class _FakeLLM:
