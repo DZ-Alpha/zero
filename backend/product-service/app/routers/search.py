@@ -5,19 +5,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.product import Product
-from app.services.product_store import autocomplete_products, search_products
+from app.models.tag import Tag
+from app.services.product_store import (
+    PAGE_SIZE,
+    autocomplete_products,
+    count_search_products,
+    get_product_tags_bulk,
+    search_products,
+)
 
 logger = logging.getLogger("product_service.search")
 
 router = APIRouter()
 
 
-def _search_item(p: Product) -> dict[str, object]:
+def _search_item(p: Product, tags: list[Tag]) -> dict[str, object]:
+    category_tags = [t for t in tags if t.tag_type == "CATEGORY"]
+    serving = f"{p.serving_value}{p.serving_unit}" if p.serving_value is not None and p.serving_unit else None
     return {
         "id": str(p.product_id),
         "name": p.product_name,
         "desc": p.brand_name or "",
         "url": p.image_url or "",
+        # PRODUCTION_HANDOFF.md P1-1 — 카드 렌더링에 필요한 필드
+        "brand": p.brand_name,
+        "category": category_tags[0].tag_name if category_tags else None,
+        "serving": serving,
+        "sugar": float(p.sugars) if p.sugars is not None else None,
+        "calories": float(p.calories) if p.calories is not None else None,
+        "image": p.image_url,
+        "tags": [t.tag_name for t in tags],
     }
 
 
@@ -49,11 +66,20 @@ async def search(
         sort=sort,
         page=page,
     )
+    total = await count_search_products(db, query=query, category_codes=category_codes, warning_codes=warning_codes)
+    tags_by_product = await get_product_tags_bulk(db, [p.product_id for p in products])
     logger.info(
-        "search query=%r category=%r warning=%r sort=%r page=%d results=%d",
-        query, category, warning, sort, page, len(products),
+        "search query=%r category=%r warning=%r sort=%r page=%d results=%d total=%d",
+        query, category, warning, sort, page, len(products), total,
     )
-    return {"items": [_search_item(p) for p in products], "page": page}
+    return {
+        "items": [_search_item(p, tags_by_product.get(p.product_id, [])) for p in products],
+        "page": page,
+        # PRODUCTION_HANDOFF.md P1-1
+        "total": total,
+        "pageSize": PAGE_SIZE,
+        "hasNext": page * PAGE_SIZE < total,
+    }
 
 
 @router.get("/search/recommend")

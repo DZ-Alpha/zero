@@ -36,21 +36,29 @@ def _decode_and_refresh(token: str, response: Response) -> dict:
     return payload
 
 
-def get_current_user(response: Response, usr: str = Query(...)) -> dict:
-    return _decode_and_refresh(usr, response)
-
-
-def get_current_user_bearer(response: Response, authorization: str = Header(...)) -> dict:
-    """찜 API(PR-0307/0308) 전용 — 신규 기능명세서가 `Authorization: Bearer` 헤더를
-    명시해서, 기존 `usr` 쿼리파라미터 방식(get_current_user)과 별도로 둔다."""
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authorization 헤더 형식이 올바르지 않습니다.")
-    token = authorization.removeprefix("Bearer ").strip()
+def get_current_user(
+    response: Response,
+    usr: str | None = Query(None, description="JWT 토큰 (또는 Authorization: Bearer 헤더)"),
+    authorization: str | None = Header(None),
+) -> dict:
+    """PRODUCTION_HANDOFF.md P0-4 — usr 쿼리파라미터와 Authorization: Bearer 헤더를
+    둘 다 받는다(헤더 우선). 기존 usr 방식 호출은 그대로 동작 — 프론트가 자기 페이스로
+    헤더 방식으로 옮겨갈 수 있게 병행 지원한다."""
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+    elif usr:
+        token = usr
+    else:
+        raise HTTPException(status_code=401, detail="인증 정보가 없습니다.")
     return _decode_and_refresh(token, response)
 
 
-def get_current_admin(response: Response, usr: str = Query(...)) -> dict:
-    payload = get_current_user(response, usr)
+def get_current_admin(
+    response: Response,
+    usr: str | None = Query(None),
+    authorization: str | None = Header(None),
+) -> dict:
+    payload = get_current_user(response, usr, authorization)
     if payload.get("role") != "admin":
         logger.warning("auth: non-admin access attempt user_id=%r", payload.get("user_id"))
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")

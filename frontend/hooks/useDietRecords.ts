@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AUTH_CHANGE_EVENT } from "@/hooks/useAuthSession";
 import { getAccessToken, readJwtPayload } from "@/lib/api/client";
-import { getDietCalendar, getDietOtherFoods } from "@/lib/api/zerocheck";
+import { createDietRecord, deleteDietRecord, getDietRecordsByMonth } from "@/lib/api/zerocheck";
 
 export type MealType = "아침" | "점심" | "저녁" | "간식";
 
@@ -205,12 +205,85 @@ export function useDietRecords() {
     }));
   }, [updateRecords]);
 
-  const deleteRecord = useCallback((dateKey: string, recordId: string) => {
+  // record.source === "server"인 항목은 실제 백엔드 기록(RC-0113~0117)이라
+  // DELETE API를 먼저 호출해야 한다. 로컬 전용 항목은 그대로 localStorage에서만 지운다.
+  const deleteRecord = useCallback(async (dateKey: string, record: DietRecord) => {
+    if (record.source === "server") {
+      const token = getAccessToken();
+      const recordId = record.id.replace(/^server-/, "");
+      if (token) {
+        try {
+          await deleteDietRecord(token, recordId);
+        } catch {
+          // 삭제 실패해도 화면에서는 지워서 재시도를 유도한다 — 다음 loadServerMonth에서
+          // 서버에 남아있으면 다시 나타난다.
+        }
+      }
+      setServerRecordsByDate((current) => ({
+        ...current,
+        [dateKey]: (current[dateKey] ?? []).filter((item) => item.id !== record.id),
+      }));
+      return;
+    }
     updateRecords((current) => ({
       ...current,
-      [dateKey]: (current[dateKey] ?? []).filter((item) => item.id !== recordId),
+      [dateKey]: (current[dateKey] ?? []).filter((item) => item.id !== record.id),
     }));
   }, [updateRecords]);
+
+  // 레시피/상품 기록을 실제 서버에 저장한다(RC-0113). 사진 기록은 /diet/upload +
+  // /diet/ai-analyze 단계에서 이미 서버에 저장되므로 이 함수를 쓰지 않는다.
+  const addServerRecord = useCallback(async (dateKey: string, values: {
+    meal: MealType;
+    itemType: "recipe" | "product";
+    itemId: string;
+    serving?: number;
+    sugar: number;
+    calories: number;
+    name: string;
+    category?: string;
+    note?: string;
+    href?: string;
+  }) => {
+    const token = getAccessToken();
+    if (!token) throw new Error("로그인이 필요해요.");
+
+    const created = await createDietRecord(token, {
+      date: dateKey,
+      mealType: values.meal,
+      itemType: values.itemType,
+      itemId: values.itemId,
+      serving: values.serving ?? 1,
+      sugar: values.sugar,
+      calories: values.calories,
+    });
+
+    const record: DietRecord = {
+      id: `server-${created.id}`,
+      meal: values.meal,
+      name: values.name,
+      sugar: values.sugar,
+      calories: values.calories,
+      kind: values.itemType === "recipe" ? "레시피" : "식품",
+      category: values.category,
+      note: values.note,
+      href: values.href,
+      source: "server",
+    };
+    setServerRecordsByDate((current) => ({
+      ...current,
+      [dateKey]: [...(current[dateKey] ?? []), record],
+    }));
+    return record;
+  }, []);
+
+  const mealTypeToKorean: Record<string, MealType> = {
+    BREAKFAST: "아침",
+    LUNCH: "점심",
+    DINNER: "저녁",
+    SNACK: "간식",
+    OTHER: "간식",
+  };
 
   const loadServerMonth = useCallback(async (year: number, month: number) => {
     const token = getAccessToken();
@@ -219,74 +292,31 @@ export function useDietRecords() {
     setServerError("");
 
     try {
-      const calendar = await getDietCalendar(token, year, month);
-      const rows = await Promise.all(calendar.list.map(async (entry, entryIndex) => {
-        const id = new URL(entry.url, "http://local").searchParams.get("id");
-        if (!id) return [] as Array<[string, DietRecord]>;
-
-        const mealMap: Record<string, MealType> = {
-          BREAKFAST: "아침",
-          LUNCH: "점심",
-          DINNER: "저녁",
-          SNACK: "간식",
-          OTHER: "간식",
-        };
-        const meal = mealMap[entry.name.toUpperCase()] ?? "간식";
-
-        try {
-          const analysis = await getDietOtherFoods(token, id);
-          const items = analysis["list-diet"] ?? [];
-          if (items.length === 0) {
-            return [[entry.date, {
-              id: `server-${id}`,
-              meal,
-              name: analysis.status === "PENDING" ? "사진 분석을 기다리고 있어요" : "사진으로 등록한 식단",
-              sugar: Number(analysis.dang ?? 0),
-              calories: Number(analysis.calo ?? 0),
-              kind: "사진 분석" as const,
-              note: analysis.message ?? "서버에 저장된 사진 식단이에요.",
-              href: entry.url,
-              source: "server" as const,
-            }]] as Array<[string, DietRecord]>;
-          }
-
-          return items.map((item, itemIndex) => [entry.date, {
-            id: `server-${id}-${itemIndex}`,
-            meal,
-            name: item.name || `사진 식단 ${entryIndex + 1}`,
-            sugar: Number(item.dang ?? 0),
-            calories: Number(item.calo ?? 0),
-            kind: "사진 분석" as const,
-            category: meal,
-            note: "서버에 저장된 사진 분석 결과예요.",
-            href: entry.url,
-            source: "server" as const,
-          }]) as Array<[string, DietRecord]>;
-        } catch {
-          return [[entry.date, {
-            id: `server-${id}`,
-            meal,
-            name: "사진으로 등록한 식단",
-            sugar: 0,
-            calories: 0,
-            kind: "사진 분석" as const,
-            note: "분석 결과를 불러오지 못했어요.",
-            href: entry.url,
-            source: "server" as const,
-          }]] as Array<[string, DietRecord]>;
-        }
-      }));
-
+      // RC-0113~0117 반영 후: /diet/records?year=&month=가 날짜별로 합계+항목을
+      // 한 응답에 담아준다 — 예전처럼 캘린더 목록 이후 기록마다 /diet/other-foods를
+      // 또 부르는 N+1이 없다(PRODUCTION_HANDOFF.md P1-3).
+      const monthData = await getDietRecordsByMonth(token, year, month);
       const monthPrefix = `${year}-${pad(month)}-`;
-      setServerRecordsByDate((current) => {
-        const next = Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(monthPrefix))) as DietRecordsByDate;
-        rows.flat().forEach(([dateKey, record]) => {
-          next[dateKey] = [...(next[dateKey] ?? []), record];
-        });
-        return next;
+      const next: DietRecordsByDate = {};
+      monthData.list.forEach((day) => {
+        next[day.date] = day.list.map((item) => ({
+          id: `server-${item.recordId}`,
+          meal: mealTypeToKorean[item.mealType] ?? "간식",
+          name: item.name,
+          sugar: Number(item.sugar ?? 0),
+          calories: Number(item.calories ?? 0),
+          kind: item.itemType === "recipe" ? "레시피" : item.itemType === "product" ? "식품" : "사진 분석",
+          note: item.itemType === "photo" ? "서버에 저장된 사진 분석 결과예요." : undefined,
+          source: "server" as const,
+        }));
       });
+
+      setServerRecordsByDate((current) => ({
+        ...Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(monthPrefix))),
+        ...next,
+      }));
     } catch {
-      setServerError("서버의 사진 기록을 불러오지 못했어요.");
+      setServerError("서버의 식단 기록을 불러오지 못했어요.");
     } finally {
       setServerLoading(false);
     }
@@ -302,5 +332,5 @@ export function useDietRecords() {
     return merged;
   }, [localRecordsByDate, serverRecordsByDate]);
 
-  return { ready, recordsByDate, addRecord, deleteRecord, loadServerMonth, serverLoading, serverError };
+  return { ready, recordsByDate, addRecord, addServerRecord, deleteRecord, loadServerMonth, serverLoading, serverError };
 }

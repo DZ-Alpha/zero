@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, get_current_user_bearer
+from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models.product import Product
 from app.models.user_health_profile_ref import UserHealthProfileRef
@@ -229,7 +229,7 @@ def _favorite_list_item(p: Product) -> dict[str, object]:
 async def toggle_product_favorite(
     body: FavoriteToggleBody,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     """PR-0307: 상품 찜 등록/해제 토글."""
     pid = _to_uuid(body.id)
@@ -245,7 +245,7 @@ async def toggle_product_favorite(
 @router.get("/favorite/list")
 async def get_product_favorite_list(
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     """PR-0308: 찜한 상품 목록."""
     user_id: int = payload["user_id"]

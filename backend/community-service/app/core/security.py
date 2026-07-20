@@ -42,6 +42,16 @@ def get_current_user_from_token(token: str, response: Response) -> UserIdentity:
     return UserIdentity(user_id=user_id, role=role)
 
 
+def resolve_token(usr: str | None, authorization: str | None) -> str:
+    """PRODUCTION_HANDOFF.md P0-4 — usr 쿼리파라미터/바디와 Authorization: Bearer
+    헤더를 둘 다 받는다(헤더 우선). 기존 usr 방식 호출은 그대로 동작한다."""
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.removeprefix("Bearer ").strip()
+    if usr:
+        return usr
+    raise _UNAUTHORIZED
+
+
 def get_current_admin_from_token(token: str, response: Response) -> UserIdentity:
     """공지사항 쓰기/수정/삭제는 Admin Service를 통해서만 열어주는 게 자연스럽다
     (community-service.md, SC-0102 관리자 권한 분리와 일치) — 같은 role 클레임을

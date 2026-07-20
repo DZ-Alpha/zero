@@ -88,7 +88,7 @@ export function RecipeFeed() {
               <article className="feed-card" key={key}>
                 <Link href={`/recipes/${key}`} className="feed-image"><RecipeCover recipe={recipe} /></Link>
                 <div className="feed-card-copy"><small>{recipe.author}{recipe.nutritionCoverage ? ` · 영양 계산 ${recipe.nutritionCoverage}%` : ""}</small><h2><Link href={`/recipes/${key}`}>{recipe.title}</Link></h2><p>{recipe.nutritionCoverage ? <>등록 재료 합계 <b>당류 {recipe.estimatedSugar}g</b> · {recipe.estimatedCalories}kcal</> : "영양정보를 확인하고 있어요."}</p></div>
-                <FavoriteIconButton label={recipe.title} />
+                <FavoriteIconButton label={recipe.title} id={recipe.databaseId} kind="recipe" />
               </article>
             )})}
           </div>

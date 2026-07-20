@@ -11,9 +11,13 @@ on:
   workflow_dispatch:
     inputs:
       backend_tag:
-        description: '백엔드 배포 태그 (비우면 latest)'
+        # 2026-07-19, well-architected 체크리스트 "latest 배포 금지" 준수 -
+        # frontend_tag와 동일하게 기본값을 latest가 아니라 빈 값으로 두고,
+        # 비우면 job 내부에서 현재 커밋 sha로 폴백한다(불변 태그 강제).
+        # 수동 롤백/특정 버전 재배포는 명시적으로 태그를 넣어서 한다.
+        description: '백엔드 배포 태그 (비우면 현재 커밋 sha)'
         required: false
-        default: 'latest'
+        default: ''
       frontend_tag:
         # frontend compose는 불변 태그를 요구해서(immutable tag) latest를 기본으로
         # 안 두고, 비우면 이번 워크플로 실행의 커밋 sha를 쓴다(job 내부에서 처리).
@@ -134,6 +138,13 @@ jobs:
       # 8개 전부 다시 빌드+Trivy 스캔을 돌려서, self-hosted 러너 1대에 큐가 쌓여 실제로
       # 51분까지 걸린 적이 있었음(2026-07-16 직접 확인) - dorny/paths-filter(변경 경로 기반
       # 매트릭스 생성의 공식 예시 패턴)로 필요한 것만 돌리게 줄인다.
+      # 2026-07-20, PR #52(backend/ai 신규 서비스 추가)에서 backend-build-test/
+      # backend-image-scanning이 전부 skip되는 걸 실측 확인 - 이 필터 목록이
+      # 서비스별로 하드코딩돼 있어서, 새 서비스 디렉터리를 추가해도 여기 안
+      # 넣으면 dorny/paths-filter의 changes 출력에 아예 안 잡히고(빈 배열),
+      # 매트릭스가 통째로 비어 skip된다. 새 backend/<service> 디렉터리를
+      # 추가할 때마다 이 목록에도 반드시 같이 추가해야 한다 - 자동 탐지가
+      # 아니라 수동 allowlist라는 게 이 워크플로우의 구조적 한계.
       # v4
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706
         id: filter
@@ -141,6 +152,7 @@ jobs:
         with:
           filters: |
             admin-service: 'backend/admin-service/**'
+            ai: 'backend/ai/**'
             community-service: 'backend/community-service/**'
             diet-service: 'backend/diet-service/**'
             ingredients-service: 'backend/ingredients-service/**'
@@ -148,6 +160,34 @@ jobs:
             main-service: 'backend/main-service/**'
             product-service: 'backend/product-service/**'
             recipe-service: 'backend/recipe-service/**'
+      # 2026-07-20, 위 allowlist의 구조적 한계(새 서비스 추가 시 안 고치면 조용히
+      # skip) 자체를 없애지는 못하지만(dorny/paths-filter는 디렉터리 자동탐지를
+      # 지원 안 함 - 공식 문서 확인), 최소한 "조용한 스킵"을 "시끄러운 실패"로
+      # 바꾼다. backend/services는 실제 서비스가 아니라 문서(.md) 폴더라 예외.
+      # 새 backend/<name> 디렉터리가 생기면 이 job이 즉시 실패하면서 어디를
+      # 고쳐야 하는지 알려준다 - PR #52처럼 아무도 못 알아채고 넘어가는 걸 방지.
+      - name: Fail loudly if a backend/ dir is missing from known services
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          KNOWN="admin-service ai community-service diet-service
+                 ingredients-service login-service main-service
+                 product-service recipe-service"
+          for dir in backend/*/; do
+            name="$(basename "$dir")"
+            [ "$name" = "services" ] && continue
+            match=0
+            for k in $KNOWN; do
+              [ "$k" = "$name" ] && match=1 && break
+            done
+            if [ "$match" = "0" ]; then
+              echo "::error::backend/$name exists but isn't in" \
+                "detect-backend's paths-filter or" \
+                "backend-deploy-production's SERVICES list/PORTS map." \
+                "Add it to all three before this service can" \
+                "build/scan/deploy."
+              exit 1
+            fi
+          done
 
   # detect-backend와 같은 이유로 별도 job - frontend/ 존재 여부와 변경 여부를 체크아웃 후
   # 확인해서 넘긴다(2026-07-17 성애님 frontend/ 브랜치 인수 - sungA/front/main).
@@ -358,6 +398,18 @@ jobs:
           registry: harbor.hizero.local
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+          # 2026-07-19, PR #49에서 실측 - docker/login-action은 기본적으로
+          # (logout: true) job 종료 시 post-step에서 자동 docker logout을
+          # 실행한다(공식 문서 확인). 이 job은 8개 backend 서비스가 매트릭스로
+          # self-hosted 러너 2대에서 병렬 실행되는데, 전부 같은
+          # $HOME/.docker/config.json을 공유한다 - 먼저 끝난 서비스의 자동
+          # logout이 아직 push 중인 다른 서비스의 인증정보까지 지워버려서
+          # "no basic auth credentials"로 push가 실패했다(community-service
+          # 실측, job 88208374622). logout을 꺼서 각 job이 알아서 지우지
+          # 않게 한다 - 러너는 CI 전용이라 인증정보가 남아있어도 위험 증가가
+          # 없다(harbor.hizero.local은 완료 후에도 robot 계정만 접근 가능한
+          # 내부 레지스트리).
+          logout: false
       # 재헌님이 이미 만들어 운영 중인 production VM(10.10.10.30)의
       # ~/backend/docker-compose.yaml이 기대하는 이미지 경로/태그 컨벤션을 그대로
       # 따른다(harbor VM 자체 대상으로 별도 경로/포트를 새로 만들었다가, 이미 잘
@@ -407,8 +459,11 @@ jobs:
       )
     runs-on: self-hosted
     env:
+      # 2026-07-20, detect-backend의 paths-filter와 동일한 이유로 ai 추가 -
+      # 이 목록도 하드코딩이라 별도로 안 넣으면 build/scan은 통과해도 배포
+      # 대상에서 빠진다.
       SERVICES: >-
-        admin-service community-service diet-service ingredients-service
+        admin-service ai community-service diet-service ingredients-service
         login-service main-service product-service recipe-service
       # 2026-07-19 아침, 구 LAN IP(192.168.0.13)가 인프라 공지("당분간 병행
       # 유지")보다 먼저 죽은 걸 실측(ping "Destination Host Unreachable",
@@ -418,6 +473,15 @@ jobs:
       PROD_HOST: bruce@10.10.10.30
       BACKEND_TAG: ${{ inputs.backend_tag }}
     steps:
+      # 2026-07-20, ~/backend/docker-compose.yaml이 production VM에만
+      # 존재하는 수동관리 파일이라 PR #52(ai 서비스 추가)의 배포가
+      # "no such service: ai"로 실패했다. frontend-deploy-production과
+      # 같은 패턴으로 checkout + scp를 추가해 git 추적본을 매 배포마다
+      # 동기화한다 - 새 서비스가 계속 추가될 예정이라, 이제부터는 compose
+      # 파일 변경이 코드리뷰에 드러나고 자동으로 반영된다. self-hosted
+      # 러너의 이전 워크스페이스가 우연히 남아있을 수 있어(신뢰 불가,
+      # fix-harbor-dns에서 실측된 패턴과 동일 이유) checkout을 명시한다.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       # 2026-07-19, well-architected 체크리스트의 "latest 배포 금지" 항목 재점검
       # 중 발견 - push 이벤트에선 inputs.backend_tag가 존재하지 않아 TAG가
       # 빈 문자열이 되고, 그 상태로 docker compose를 돌리면 production VM의
@@ -431,14 +495,15 @@ jobs:
           TAG="$BACKEND_TAG"
           if [ -z "$TAG" ]; then TAG="${{ github.sha }}"; fi
           echo "TAG=$TAG" >> "$GITHUB_ENV"
-      - name: Record previous tag
+      - name: Copy compose file to production VM
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
         run: |
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
-          PREV=$($SSH "cat ~/backend/.last-deployed-tag 2>/dev/null" || true)
-          echo "PREV_TAG=$PREV" >> "$GITHUB_ENV"
-          echo "Previous deployed tag: ${PREV:-<none>}"
+          SCP="sshpass -e scp -o StrictHostKeyChecking=accept-new"
+          $SSH "mkdir -p ~/backend"
+          $SCP backend/compose.production.example.yaml \
+            "$PROD_HOST":~/backend/docker-compose.yaml
       - name: Log in to Harbor (production VM)
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
@@ -450,26 +515,71 @@ jobs:
           USR='${{ secrets.HARBOR_ROBOT_USER }}'
           echo "$TOKEN" | $SSH "docker login harbor.hizero.local \
             -u '$USR' --password-stdin"
+      - name: Record current per-service image tags (for rollback)
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          # 서비스마다 서로 다른 태그로 떠 있을 수 있으므로(부분 배포),
+          # 단일 .last-deployed-tag 대신 컨테이너별 현재 이미지 태그를
+          # 개별 기록해 둔다. 롤백 시 이번에 바꾼 서비스만 각자의 이전
+          # 태그로 되돌리기 위함.
+          for s in $SERVICES; do
+            CUR=$($SSH "docker inspect --format '{{.Config.Image}}' \
+              $s 2>/dev/null" || true)
+            echo "PREV_IMG_$s=$CUR" >> "$GITHUB_ENV"
+          done
       - name: Deploy via Docker Compose (SSH)
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
         run: |
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
-          CMD="cd ~/backend"
-          CMD="$CMD && TAG=$TAG docker compose -f docker-compose.yaml pull"
-          CMD="$CMD && TAG=$TAG docker compose -f docker-compose.yaml up -d"
-          $SSH "$CMD"
+          # 2026-07-19, well-architected 체크리스트 "latest 배포 금지" 재점검
+          # 중 PR #48 머지 push에서 실측 - backend는 8개 서비스 monorepo
+          # 매트릭스 빌드라, 한 커밋에서 일부 서비스만 재빌드되는 게 정상이다.
+          # compose 파일(재헌님 소유, ~/backend/docker-compose.yaml)의 공유
+          # TAG 변수로 8개를 한 번에 pull하면, 이번 커밋에 안 바뀐 서비스는
+          # 그 TAG의 이미지가 아예 없어서 매번 배포 전체가 깨졌다. Docker
+          # Registry HTTP API V2 공식 문서(존재하는 매니페스트는 pull 성공
+          # 여부로 확인 가능) 기준으로, 서비스마다 이번 TAG의 이미지가
+          # 실제로 존재하는지 먼저 pull로 확인하고, 존재하는 서비스만
+          # 그 태그로 개별 재배포한다 - 존재하지 않는(=이번에 재빌드
+          # 안 된) 서비스는 건드리지 않고 현재 배포 상태를 그대로 둔다.
+          UPDATED=""
+          for s in $SERVICES; do
+            IMG="192.168.0.53/dangdang-backend/$s:$TAG"
+            if $SSH "docker pull $IMG" >/dev/null 2>&1; then
+              echo "$s: $TAG found in registry, deploying"
+              $SSH "cd ~/backend && TAG=$TAG \
+                docker compose -f docker-compose.yaml up -d $s"
+              UPDATED="$UPDATED $s"
+            else
+              echo "$s: $TAG not in registry (not rebuilt this commit)" \
+                "- leaving current deployment untouched"
+            fi
+          done
+          echo "UPDATED_SERVICES=$UPDATED" >> "$GITHUB_ENV"
+          if [ -z "$UPDATED" ]; then
+            echo "No service had a new image for this commit; nothing to do"
+          fi
       - name: Health check
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
         run: |
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           declare -A PORTS=(
-            [admin-service]=8008 [community-service]=8012 [diet-service]=8020
-            [ingredients-service]=8018 [login-service]=8000 [main-service]=8010
-            [product-service]=8016 [recipe-service]=8014
+            [admin-service]=8008 [ai]=8022 [community-service]=8012
+            [diet-service]=8020 [ingredients-service]=8018 [login-service]=8000
+            [main-service]=8010 [product-service]=8016 [recipe-service]=8014
           )
-          for s in $SERVICES; do
+          # 이번에 실제 배포한 서비스만 검사한다 - 안 바꾼 서비스까지 여기서
+          # 실패 처리하면, 이 배포와 무관한 기존 이슈로 멀쩡한 배포가
+          # 롤백되는 오탐이 생긴다.
+          if [ -z "$UPDATED_SERVICES" ]; then
+            echo "No services updated this run - skipping health check"
+            exit 0
+          fi
+          for s in $UPDATED_SERVICES; do
             PORT="${PORTS[$s]}"
             OK=""
             for i in $(seq 1 10); do
@@ -485,28 +595,29 @@ jobs:
               exit 1
             fi
           done
-          echo "All backend services healthy"
+          echo "All updated backend services healthy: $UPDATED_SERVICES"
       - name: Rollback on failed health check
         if: failure()
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
         run: |
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
-          if [ -n "$PREV_TAG" ]; then
-            echo "Rolling back to previous tag: $PREV_TAG"
-            CMD="cd ~/backend && TAG=$PREV_TAG"
-            CMD="$CMD docker compose -f docker-compose.yaml up -d"
-            $SSH "$CMD"
-          else
-            echo "No previous tag recorded - nothing to roll back to"
-          fi
-      - name: Record this deploy as last-deployed
-        if: success()
-        env:
-          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
-        run: |
-          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
-          $SSH "echo $TAG > ~/backend/.last-deployed-tag"
+          # 이번에 배포한 서비스만, 각자의 이전 태그로 개별 롤백한다.
+          # 기록해둔 이전 이미지(레지스트리/경로/태그 전체)에서 태그만
+          # 떼어내 compose의 서비스 단위 up으로 되돌린다 - compose가 해당
+          # 서비스에만 그 TAG를 적용하므로 다른 서비스는 영향받지 않는다.
+          for s in $UPDATED_SERVICES; do
+            VAR="PREV_IMG_$s"
+            PREV="${!VAR}"
+            if [ -n "$PREV" ]; then
+              PREV_TAG="${PREV##*:}"
+              echo "Rolling back $s to tag $PREV_TAG"
+              $SSH "cd ~/backend && TAG=$PREV_TAG \
+                docker compose -f docker-compose.yaml up -d $s"
+            else
+              echo "$s: no previous image recorded - cannot roll back"
+            fi
+          done
 
   # 2026-07-19, 일회성 진단+수정 job(fix_harbor_dns 입력으로만 실행). 검증 끝나면
   # 이 job과 위 fix_harbor_dns 입력은 삭제한다(prod-env-fix와 동일 패턴) -
@@ -523,6 +634,11 @@ jobs:
     env:
       PROD_HOST: bruce@10.10.10.30
     steps:
+      # 2026-07-19, cAdvisor 배포 스텝 추가하며 실측 - 이 job엔 원래 checkout이
+      # 없었다(SSH 진단 위주라 저장소 파일이 불필요했음). self-hosted 러너의
+      # 이전 워크스페이스가 우연히 남아있어 production 배포(scp)는 우연히
+      # 통과했지만, 신뢰할 수 없어 명시적으로 checkout을 추가한다.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Control test - inline -p vs --password-stdin, side by side
         run: |
           echo "--- style A: -p '<token>' inline (matches earlier success) ---"
@@ -733,6 +849,43 @@ jobs:
           URL="http://b-gateway:8080/b/search?page=1"
           $SSH "docker exec dangdang-frontend sh -c \
             'wget -qO- $URL 2>&1 | head -c 300 || echo WGET_FAILED'"
+      - name: Deploy cAdvisor on production VM
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          SCP="sshpass -e scp -o StrictHostKeyChecking=accept-new"
+          echo "--- docker without sudo? ---"
+          $SSH "docker ps >/dev/null 2>&1 && echo OK || echo NEEDS_SUDO"
+          echo "--- port 8080 free? ---"
+          # 2026-07-19 실측: production VM은 b-gateway가 이미 8080을 쓰고
+          # 있어서("port is already allocated") 기본 포트로 충돌났다. 이
+          # VM만 CADVISOR_PORT로 다른 호스트 포트(8090)를 지정한다.
+          $SSH "ss -tln 2>/dev/null | grep ':8080' || echo free"
+          $SSH "mkdir -p ~/cadvisor"
+          $SCP infra/cadvisor/docker-compose.yml \
+            "$PROD_HOST":~/cadvisor/docker-compose.yml
+          $SSH "cd ~/cadvisor && CADVISOR_PORT=8090 docker compose up -d"
+          sleep 5
+          $SSH "docker ps --filter name=cadvisor \
+            --format '{{.Names}}\t{{.Status}}'"
+      - name: Check OTLP reachability from production to monitoring VM
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          echo "--- 4317(grpc) via App VLAN IP (10.10.10.40) ---"
+          $SSH "timeout 5 bash -c \
+            'cat < /dev/null > /dev/tcp/10.10.10.40/4317' \
+            2>&1 && echo REACHABLE || echo UNREACHABLE"
+          echo "--- 4318(http) via App VLAN IP (10.10.10.40) ---"
+          $SSH "timeout 5 bash -c \
+            'cat < /dev/null > /dev/tcp/10.10.10.40/4318' \
+            2>&1 && echo REACHABLE || echo UNREACHABLE"
+          echo "--- 4317(grpc) via old LAN IP (192.168.0.51) ---"
+          $SSH "timeout 5 bash -c \
+            'cat < /dev/null > /dev/tcp/192.168.0.51/4317' \
+            2>&1 && echo REACHABLE || echo UNREACHABLE"
 
   # 2026-07-19, DB VM 선제 조치 일회성 job. DB VM은 harbor+monitoring VM과
   # 별개 머신이라 production과 똑같이 harbor CA를 신뢰하도록 설정된 적이
@@ -748,6 +901,9 @@ jobs:
       inputs.check_db_vm_harbor_trust
     runs-on: self-hosted
     steps:
+      # cAdvisor 배포 스텝의 scp가 저장소 파일(infra/cadvisor/docker-compose.yml)을
+      # 참조하므로 checkout 필요(실측: 없어서 "No such file or directory"로 실패).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Find working account/password combo
         env:
           PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
@@ -874,6 +1030,36 @@ jobs:
           USR='${{ secrets.HARBOR_ROBOT_USER }}'
           echo "$TOKEN" | $SSH "docker login harbor.hizero.local -u '$USR' \
             --password-stdin"
+      - name: Deploy cAdvisor on DB VM
+        env:
+          PW1: ${{ secrets.DB_VM_SSH_PASSWORD }}
+          PW2: ${{ secrets.DB_VM_SSH_PASSWORD_ALT }}
+        run: |
+          if [ "$DB_PW_SECRET" = "DB_VM_SSH_PASSWORD" ]; then
+            export SSHPASS="$PW1"
+          else
+            export SSHPASS="$PW2"
+          fi
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new"
+          SSH="$SSH $DB_USER@10.10.20.10"
+          SCP="sshpass -e scp -o StrictHostKeyChecking=accept-new"
+          echo "--- docker without sudo? ---"
+          $SSH "docker ps >/dev/null 2>&1 && echo OK || echo NEEDS_SUDO"
+          $SSH "mkdir -p ~/cadvisor"
+          $SCP infra/cadvisor/docker-compose.yml \
+            "$DB_USER@10.10.20.10":~/cadvisor/docker-compose.yml
+          if $SSH "docker ps" >/dev/null 2>&1; then
+            $SSH "cd ~/cadvisor && docker compose up -d"
+          else
+            $SSH "cd ~/cadvisor && sudo -n docker compose up -d" || \
+              echo "sudo -n 실패 - DB VM에 직접 접속해서 " \
+                "'cd ~/cadvisor && sudo docker compose up -d' 실행 필요"
+          fi
+          sleep 5
+          $SSH "docker ps --filter name=cadvisor \
+            --format '{{.Names}}\t{{.Status}}' 2>&1 || \
+            sudo -n docker ps --filter name=cadvisor \
+            --format '{{.Names}}\t{{.Status}}'"
 
   # 2026-07-19, b-gateway production 배포 job. non-root/read-only 전환 검증차
   # 처음 추가했지만(격리 환경에서 기동/resolver/temp 경로 생성 전부 검증 완료 후
@@ -1050,6 +1236,11 @@ jobs:
           registry: harbor.hizero.local
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+          # backend-image-scanning과 동일한 이유(위 주석 참고) - 이 job은
+          # 매트릭스가 아니지만 backend-image-scanning과 같은 워크플로 실행
+          # 안에서 같은 self-hosted 러너를 동시에 쓸 수 있어 동일 레이스에
+          # 노출된다. 일관되게 logout을 끈다.
+          logout: false
       # frontend/compose.production.example.yaml(성애님 작성)는 FRONTEND_IMAGE에
       # 기본값을 안 두고 명시적인 불변 태그를 요구한다("Set FRONTEND_IMAGE to the
       # Harbor image and immutable tag") - 그래서 :latest를 기본 배포 태그로 쓰지

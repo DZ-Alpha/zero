@@ -7,4 +7,5 @@ sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 httpx==0.28.1
 PyJWT==2.13.0
+anthropic==0.69.0
 boto3==1.43.51

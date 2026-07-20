@@ -1,0 +1,47 @@
+# 2026-07-19, well-architected 체크리스트 Observability-4 - "cAdvisor와 Node
+# Exporter를 사용해 개별 도커 컨테이너 레벨의 리소스 점유율을 모니터링" 항목
+# 준수. Node Exporter(호스트 레벨)는 이미 모든 VM에 있었지만 cAdvisor(컨테이너
+# 레벨)가 어디에도 없었다. 공식 문서(github.com/google/cadvisor
+# docs/running.md) 기준 구성 - v0.53.0 이후 이미지 위치가 gcr.io/cadvisor/
+# cadvisor에서 ghcr.io/google/cadvisor로 이전됐다(공식 문서 확인). 컨테이너별
+# CPU/MEM/블록I/O를 읽으려면 호스트의 cgroup/docker 소켓 접근이 구조적으로
+# 필요해서 privileged + 아래 볼륨들이 전부 공식 문서에 명시된 필수 마운트다
+# (추측 아님, README 그대로). 이 파일은 harbor/monitoring/DB/production VM
+# 전부에 동일하게 배포한다 - 각 VM의 기존 스택(Harbor 자체 compose, backend
+# compose 등)과는 완전히 분리된 독립 스택으로 둔다.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.5
+    container_name: cadvisor
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      # Docker Compose 공식 문서(변수 치환) 기준 ${VAR:-default} 사용 - 대부분
+      # VM은 8080이 비어있지만 production VM은 b-gateway가 이미 8080을 쓰고
+      # 있어서(실측, "port is already allocated") 그 VM만 CADVISOR_PORT
+      # 환경변수로 다른 호스트 포트를 지정한다.
+      - "${CADVISOR_PORT:-8080}:8080"
+    # cAdvisor 공식 문서에는 전용 헬스 엔드포인트가 문서화되어 있지 않지만
+    # (UI 루트 "/"만 안내), 이 이미지엔 wget이 있는 것을 확인(docker exec) -
+    # /metrics가 실제로 응답하는지로 헬스를 검증한다.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/metrics"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *default-logging
+    restart: unless-stopped

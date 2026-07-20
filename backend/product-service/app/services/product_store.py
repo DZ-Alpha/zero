@@ -12,7 +12,7 @@ from app.models.tag import Tag
 
 logger = logging.getLogger("product_service.store")
 
-_PAGE_SIZE = 20
+PAGE_SIZE = 20
 
 
 class ProductNotFoundError(Exception):
@@ -23,16 +23,7 @@ class TagNotFoundError(Exception):
     pass
 
 
-async def search_products(
-    db: AsyncSession,
-    query: str | None,
-    category_codes: list[str] | None,
-    warning_codes: list[str] | None,
-    sort: str | None,
-    page: int,
-) -> list[Product]:
-    stmt = select(Product)
-
+def _apply_search_filters(stmt, query: str | None, category_codes: list[str] | None, warning_codes: list[str] | None):
     if query:
         pattern = f"%{query}%"
         stmt = stmt.where(
@@ -71,13 +62,58 @@ async def search_products(
             )
         )
 
+    return stmt
+
+
+async def search_products(
+    db: AsyncSession,
+    query: str | None,
+    category_codes: list[str] | None,
+    warning_codes: list[str] | None,
+    sort: str | None,
+    page: int,
+) -> list[Product]:
+    stmt = _apply_search_filters(select(Product), query, category_codes, warning_codes)
+
     # rank 구현은 Kafka/MongoDB 파이프라인 필요. created_at 컬럼이 데이터팀
     # 재설계로 삭제돼 "최신순" 기본 정렬도 더 이상 불가능 — 두 경우 다 이름순.
     stmt = stmt.order_by(Product.product_name)
 
-    stmt = stmt.offset((page - 1) * _PAGE_SIZE).limit(_PAGE_SIZE)
+    stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def count_search_products(
+    db: AsyncSession,
+    query: str | None,
+    category_codes: list[str] | None,
+    warning_codes: list[str] | None,
+) -> int:
+    """P1-1(PRODUCTION_HANDOFF.md) — search_products와 동일한 필터로 전체 건수를 센다
+    (프론트 total/hasNext 계산용)."""
+    stmt = _apply_search_filters(
+        select(func.count()).select_from(Product), query, category_codes, warning_codes
+    )
+    return (await db.execute(stmt)).scalar_one()
+
+
+async def get_product_tags_bulk(db: AsyncSession, product_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[Tag]]:
+    """P1-1(PRODUCTION_HANDOFF.md) — 검색 결과 카드에 태그를 붙일 때 상품마다 따로
+    조회하는 N+1을 피하려고 페이지 전체를 한 번에 조회한다."""
+    if not product_ids:
+        return {}
+    stmt = (
+        select(ProductTag.product_id, Tag)
+        .join(Tag, Tag.tag_id == ProductTag.tag_id)
+        .where(ProductTag.product_id.in_(product_ids), Tag.active.is_(True))
+        .order_by(Tag.tag_type, Tag.tag_name)
+    )
+    result = await db.execute(stmt)
+    tags_by_product: dict[uuid.UUID, list[Tag]] = {pid: [] for pid in product_ids}
+    for product_id, tag in result.all():
+        tags_by_product[product_id].append(tag)
+    return tags_by_product
 
 
 async def autocomplete_products(db: AsyncSession, query: str) -> list[Product]:

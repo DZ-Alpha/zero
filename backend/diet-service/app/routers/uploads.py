@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from app.core.auth import get_current_user_bearer
+from app.core.auth import get_current_user
 from app.services.storage import StorageNotConfiguredError, StorageUploadError, upload_diet_photo
 
 logger = logging.getLogger("diet_service.uploads")
@@ -15,7 +15,7 @@ _MAX_BYTES = 10 * 1024 * 1024
 @router.post("/diet-photo")
 async def upload_diet_photo_endpoint(
     file: UploadFile = File(...),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, str]:
     """gateway가 받은 식단 사진을 MinIO diet-photos 버킷에 저장하고
     object_key만 돌려준다 — 브라우저는 MinIO를 직접 보지 않는다."""

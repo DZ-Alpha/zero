@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, get_current_user_bearer
+from app.core.auth import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.services.diet_store import (
@@ -37,6 +37,7 @@ from app.services.diet_store import (
     update_record,
 )
 from app.services.storage import StorageUploadError, validate_diet_photo_key
+from app.services.vision_service import analyze_meal_photo
 
 logger = logging.getLogger("diet_service.diet")
 
@@ -98,7 +99,8 @@ def _item_dict(item) -> dict:
 class DietPhotoUploadBody(BaseModel):
     object_key: str
     mealType: str | None = None
-    date: str | None = None
+    mode: str | None = None
+    eatenAt: str | None = None
 
 
 # RC-0101~0102: 식단 사진 업로드 — object_key(POST /uploads/diet-photo가 반환한
@@ -108,8 +110,15 @@ class DietPhotoUploadBody(BaseModel):
 async def upload_diet(
     body: DietPhotoUploadBody,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
+    """RC-0101~0102: object_key(POST /uploads/diet-photo가 반환한 값) 등록 →
+    meal_log(PENDING) 생성. 분석은 GET /diet/photo/{id} 폴링(비동기, zero-db
+    Vision worker 콜백) 또는 GET /diet/ai-analyze(동기, Claude Vision) 둘 중
+    실제로 연결된 경로를 프론트가 사용한다 — PRODUCTION_HANDOFF.md P0-3.
+
+    mode='daily'는 mealType 없을 때만 쓰는 하위호환 폴백이다.
+    """
     user_id: int = payload["user_id"]
 
     try:
@@ -117,8 +126,14 @@ async def upload_diet(
     except StorageUploadError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
-    meal_type = _normalize_meal_type(body.mealType) if body.mealType else "SNACK"
-    eaten_at = _parse_date(body.date) if body.date else None
+    # 실제 DB의 meal_type CHECK 제약엔 'DAILY'가 없다(BREAKFAST/LUNCH/DINNER/
+    # SNACK/OTHER만 허용) — "하루 식단" 업로드는 OTHER로 매핑한다.
+    if body.mealType:
+        meal_type = _normalize_meal_type(body.mealType)
+    else:
+        meal_type = "OTHER" if body.mode == "daily" else "SNACK"
+
+    eaten_at = _parse_date(body.eatenAt) if body.eatenAt else None
 
     log = await create_meal_log(
         db,
@@ -138,7 +153,7 @@ async def upload_diet(
 async def get_diet_photo_status(
     meal_log_id: str,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     user_id: int = payload["user_id"]
     log_id = _to_uuid(meal_log_id, "meal_log ID")
@@ -180,7 +195,7 @@ async def confirm_diet_analysis(
     meal_log_id: str,
     body: DietConfirmBody,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     user_id: int = payload["user_id"]
     log_id = _to_uuid(meal_log_id, "meal_log ID")
@@ -261,26 +276,65 @@ async def ai_analyze(
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
-    """RC-0103: meal_log의 이미지를 AI로 분석해 meal_items 저장.
+    """RC-0103: meal_log의 이미지를 Claude Vision으로 분석해 meal_items 저장.
 
-    실제 Vision AI 파이프라인 미구현 → PREPARING 상태 반환.
-    구현 시: 이미지 URL로 Claude Vision 또는 외부 API 호출,
-    응답 파싱 후 make_meal_item_from_analysis로 items 생성,
-    complete_meal_log(db, id, items) 로 저장.
+    ANTHROPIC_API_KEY가 없으면(app/services/vision_service.py) 기존과 동일하게
+    PREPARING을 반환한다 — 키를 안 넣으면 배포해도 동작이 그대로다.
     """
     user_id: int = payload["user_id"]
     log_id = _to_uuid(id, "meal_log ID")
 
     try:
-        await get_meal_log_for_user(db, log_id, user_id)
+        log = await get_meal_log_for_user(db, log_id, user_id)
     except MealLogNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+    if log.analysis_status == "COMPLETED":
+        items = await get_meal_items(db, log_id)
+        return {
+            "id": str(log_id),
+            "dang": sum(float(i.sugars) for i in items if i.sugars is not None),
+            "calo": sum(float(i.calories) for i in items if i.calories is not None),
+            "list-diet": [_item_dict(i) for i in items],
+        }
+
+    if not log.image_object_key:
+        raise HTTPException(status_code=422, detail="분석할 이미지가 없습니다.")
+
+    try:
+        analyzed = await analyze_meal_photo(log.image_object_key)
+    except Exception:
+        logger.exception("vision: analysis failed meal_log_id=%s", log_id)
+        analyzed = []
+
+    if not analyzed:
+        return {
+            "status": "PREPARING",
+            "message": "AI 식단 분석 기능은 Vision AI 파이프라인 연동 후 활성화됩니다.",
+            "id": str(log_id),
+            "list-diet": [],
+        }
+
+    items = [
+        make_meal_item_from_analysis(
+            log_id,
+            item_name=entry["name"],
+            serving_value=Decimal(str(entry["servingValue"])),
+            serving_unit=entry["servingUnit"],
+            calories=Decimal(str(entry["calories"])),
+            sugars=Decimal(str(entry["sugars"])),
+            carbohydrate=Decimal(str(entry["carbohydrate"])),
+        )
+        for entry in analyzed
+    ]
+    await complete_meal_log(db, log_id, items)
+    logger.info("diet: vision analysis completed meal_log_id=%s items=%d", log_id, len(items))
+
     return {
-        "status": "PREPARING",
-        "message": "AI 식단 분석 기능은 Vision AI 파이프라인 연동 후 활성화됩니다.",
         "id": str(log_id),
-        "list-diet": [],
+        "dang": sum(float(i.sugars) for i in items if i.sugars is not None),
+        "calo": sum(float(i.calories) for i in items if i.calories is not None),
+        "list-diet": [_item_dict(i) for i in items],
     }
 
 
@@ -394,6 +448,9 @@ def _record_item_dict(log, item) -> dict[str, object]:
     else:
         item_id = str(log.meal_log_id)
     return {
+        # 프론트 삭제(RC-0115 DELETE /diet/records/{id})용 — itemId는 상품/레시피
+        # 원본 참조라 삭제 대상 식별에 못 쓴다. recordId가 실제 meal_log_id.
+        "recordId": str(log.meal_log_id),
         "mealType": log.meal_type,
         "itemType": _INPUT_TYPE_TO_ITEM_TYPE.get(log.input_type, "photo"),
         "itemId": item_id,
@@ -408,7 +465,7 @@ def _record_item_dict(log, item) -> dict[str, object]:
 async def create_diet_record(
     body: DietRecordCreateBody,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     user_id: int = payload["user_id"]
     eaten_at = _parse_date(body.date)
@@ -456,7 +513,7 @@ async def update_diet_record(
     id: str,
     body: DietRecordUpdateBody,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     user_id: int = payload["user_id"]
     record_id = _to_uuid(id, "기록 ID")
@@ -478,7 +535,7 @@ async def update_diet_record(
 async def delete_diet_record(
     id: str,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     user_id: int = payload["user_id"]
     record_id = _to_uuid(id, "기록 ID")
@@ -498,34 +555,49 @@ async def list_diet_records(
     year: int | None = Query(None),
     month: int | None = Query(None, ge=1, le=12),
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     user_id: int = payload["user_id"]
 
     if date:
         start = _parse_date(date)
         end = datetime.combine(start.date(), time.max, tzinfo=timezone.utc)
-        response_date = start.strftime("%Y-%m-%d")
-    elif year and month:
+        rows = await get_records_for_range(db, user_id, start, end)
+        sugar_total = sum(float(item.sugars) for _, item in rows if item.sugars is not None)
+        calories_total = sum(float(item.calories) for _, item in rows if item.calories is not None)
+        return {
+            "date": start.strftime("%Y-%m-%d"),
+            "sugar-total": sugar_total,
+            "calories-total": calories_total,
+            "list": [_record_item_dict(log, item) for log, item in rows],
+        }
+
+    if year and month:
+        # PRODUCTION_HANDOFF.md P1-3 — 캘린더 집계: 날짜별 합계 + 음식 목록을 한
+        # 응답에 담아서, 프론트가 날짜마다 /diet/records?date=...를 또 호출하는
+        # N+1 없이 한 번에 월 전체를 그릴 수 있게 한다.
         _, last_day = calendar.monthrange(year, month)
         start = datetime(year, month, 1, tzinfo=timezone.utc)
         end = datetime(year, month, last_day, 23, 59, 59, tzinfo=timezone.utc)
-        # 월 단위 조회는 명세 출력에 날짜별 그룹핑이 없어 date는 비워두고
-        # list에 그 달 전체 기록을 펼쳐서 담는다.
-        response_date = None
-    else:
-        raise HTTPException(status_code=422, detail="date 또는 year+month 파라미터가 필요합니다.")
+        rows = await get_records_for_range(db, user_id, start, end)
 
-    rows = await get_records_for_range(db, user_id, start, end)
-    sugar_total = sum(float(item.sugars) for _, item in rows if item.sugars is not None)
-    calories_total = sum(float(item.calories) for _, item in rows if item.calories is not None)
+        days: dict[str, list] = {}
+        for log, item in rows:
+            days.setdefault(log.eaten_at.strftime("%Y-%m-%d"), []).append((log, item))
 
-    return {
-        "date": response_date,
-        "sugar-total": sugar_total,
-        "calories-total": calories_total,
-        "list": [_record_item_dict(log, item) for log, item in rows],
-    }
+        return {
+            "list": [
+                {
+                    "date": day,
+                    "sugar-total": sum(float(item.sugars) for _, item in day_rows if item.sugars is not None),
+                    "calories-total": sum(float(item.calories) for _, item in day_rows if item.calories is not None),
+                    "list": [_record_item_dict(log, item) for log, item in day_rows],
+                }
+                for day, day_rows in sorted(days.items())
+            ]
+        }
+
+    raise HTTPException(status_code=422, detail="date 또는 year+month 파라미터가 필요합니다.")
 
 
 # RC-0117: 업로드 취소 (확정 전 draft 상태의 사진 업로드만 삭제 가능)
@@ -533,7 +605,7 @@ async def list_diet_records(
 async def cancel_diet_upload(
     id: str,
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user_bearer),
+    payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     user_id: int = payload["user_id"]
     log_id = _to_uuid(id, "업로드 ID")
