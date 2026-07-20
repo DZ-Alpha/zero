@@ -137,7 +137,13 @@ jobs:
       # infra/b-gateway/** 가 바뀌었는지. workflow_dispatch에선 before가 없어
       # 신뢰 불가하지만, cutover의 수동 경로는 inputs.run_bgateway_cutover를
       # 쓰고 이 출력은 push 경로에서만 참조하므로 무방하다.
-      bgateway: ${{ steps.filter.outputs.bgateway }}
+      # PR #61에서 실측한 버그의 교훈으로 별도 스텝(filter-bgateway)으로 분리 -
+      # 처음에 위 filter 스텝에 같이 넣었더니, 그 스텝의 changes 출력(=서비스
+      # 매트릭스)에 "bgateway"가 섞여서 backend-build-test가 존재하지 않는
+      # backend/bgateway/ 디렉터리를 빌드하려다 실패했다. paths-filter의
+      # changes는 "매칭된 모든 필터 이름"이라 서비스 아닌 필터를 같은 스텝에
+      # 두면 안 된다.
+      bgateway: ${{ steps.filter-bgateway.outputs.bgateway }}
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -175,6 +181,14 @@ jobs:
             main-service: 'backend/main-service/**'
             product-service: 'backend/product-service/**'
             recipe-service: 'backend/recipe-service/**'
+      # b-gateway 변경 감지는 반드시 위 서비스 필터와 분리된 스텝이어야 한다
+      # (outputs.bgateway 주석 참고 - 같은 스텝에 넣으면 changes 매트릭스 오염).
+      # backend/ 디렉터리 존재 여부와 무관하게 항상 평가한다(if 없음).
+      # v4
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706
+        id: filter-bgateway
+        with:
+          filters: |
             bgateway: 'infra/b-gateway/**'
       # 2026-07-20, 위 allowlist의 구조적 한계(새 서비스 추가 시 안 고치면 조용히
       # skip) 자체를 없애지는 못하지만(dorny/paths-filter는 디렉터리 자동탐지를
