@@ -30,13 +30,15 @@ class GeneralQAHandler(FeatureHandler):
 
     async def handle(self, data: HandlerInput) -> HandlerResult:
         query = data.msg or ""
+        # ①번 일반 지식질문은 RAG 문서(식약처/WHO/KDRIs)만 근거로 답한다.
+        # 상품 성분 검색은 기능 ②(상품 분석) 영역이라 여기서 호출하지 않는다
+        # (상품벡터 테이블 service.product_embeddings는 컬럼 구조가 달라 별도 처리 필요).
         docs = await self._retriever.search_docs(query)
-        products = await self._retriever.search_products(query)
         user_prompt = build_qa_user_prompt(
             msg=query,
             user_context_block=render_user_context_block(data.context),
             rag_block=blocks_to_text(docs),
-            product_block=blocks_to_text(products),
+            product_block="",
         )
         answer = await self._llm.complete(SYSTEM_PROMPT_QA, user_prompt)
         return HandlerResult(msg=answer, is_img=False)
