@@ -1,50 +1,40 @@
-otelcol.receiver.otlp "default" {
-  grpc {
-    endpoint = "0.0.0.0:4317"
-  }
-  http {
-    endpoint = "0.0.0.0:4318"
-  }
+// 2026-07-20, 설계도(docker 탭)의 🟠 "컨테이너 로그 (Alloy -> Loki)" 레이어 구현.
+// 로그수집 전용 - OTLP 중계 역할은 없음(앱은 Tempo/Loki/Prometheus로 직접 전송).
+// 공식문서 그대로:
+//  - grafana.com/docs/alloy/latest/reference/components/discovery/discovery.docker
+//  - .../discovery/discovery.relabel
+//  - .../loki/loki.source.docker
+//  - .../loki/loki.write
 
-  output {
-    metrics = [otelcol.processor.batch.default.input]
-    logs    = [otelcol.processor.batch.default.input]
-    traces  = [otelcol.processor.batch.default.input]
-  }
+// 1) Docker 데몬에서 실행 중인 컨테이너 목록 발견
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
 }
 
-otelcol.processor.batch "default" {
-  output {
-    metrics = [otelcol.exporter.prometheus.default.input]
-    logs    = [otelcol.exporter.loki.default.input]
-    traces  = [otelcol.exporter.otlp.tempo.input]
-  }
-}
+// 2) 컨테이너명 메타라벨(__meta_docker_container_name, 앞에 / 붙음)을
+//    사람이 읽을 수 있는 container 라벨로 변환. 정규식으로 선행 슬래시 제거.
+discovery.relabel "container_name" {
+  targets = discovery.docker.containers.targets
 
-otelcol.exporter.otlp "tempo" {
-  client {
-    endpoint = "tempo:4317"
-    tls {
-      insecure = true
-    }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+    regex         = "/?(.+)"
+    replacement   = "${1}"
   }
 }
 
-otelcol.exporter.prometheus "default" {
-  forward_to = [prometheus.remote_write.default.receiver]
+// 3) 각 컨테이너 stdout/stderr를 tail해서 Loki로 forward.
+//    vm 라벨을 정적으로 붙여 나중에 여러 VM으로 확장 시 VM별 필터 가능하게 함.
+loki.source.docker "default" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.container_name.output
+  labels     = {"vm" = "monitoring-vm"}
+  forward_to = [loki.write.local.receiver]
 }
 
-prometheus.remote_write "default" {
-  endpoint {
-    url = "http://prometheus:9090/api/v1/write"
-  }
-}
-
-otelcol.exporter.loki "default" {
-  forward_to = [loki.write.default.receiver]
-}
-
-loki.write "default" {
+// 4) Loki push 엔드포인트(같은 compose 네트워크 내부 서비스명 loki:3100).
+loki.write "local" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
   }

@@ -1,0 +1,29 @@
+# 2026-07-20, harbor VM 컨테이너 로그수집(Alloy -> 중앙 Loki) - 설계도 🟠 확장.
+# cadvisor 확장 때와 동일한 독립 스택 패턴(~/alloy/, Harbor 자체 compose와 분리).
+# monitoring VM 파일럿과 동일 구성 - docker.sock 읽기전용, 리소스 제한 동일.
+services:
+  alloy:
+    image: grafana/alloy:v1.17.1
+    container_name: alloy
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    ports:
+      - "12345:12345" # Alloy UI/디버그
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+volumes:
+  alloy_data:

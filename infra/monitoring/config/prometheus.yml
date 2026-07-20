@@ -1,6 +1,10 @@
 global:
   scrape_interval: 15s
 
+# BEGIN DANGDANG P0 RULES
+rule_files:
+  - /prometheus/dangdang-p0-alerts.yml
+# END DANGDANG P0 RULES
 scrape_configs:
   - job_name: prometheus
     static_configs:
@@ -24,6 +28,49 @@ scrape_configs:
   - job_name: monitoring-vm
     static_configs:
       - targets: ["192.168.0.51:9100"]
+
+  # 2026-07-20, production VM(pd VM)은 node_exporter가 아예 없었다(설계도
+  # 문서에도 4개 VM 전부 있어야 한다고 명시돼 있었는데 실측 확인 결과 빠져
+  # 있었음). apt로 신규 설치 후 추가 - 내부 App VLAN IP 사용(다른 3개는
+  # 구 LAN IP를 쓰지만 production VM은 구 LAN에 없음, 10.10.10.30이 유일
+  # 경로).
+  - job_name: production-vm
+    static_configs:
+      - targets: ["10.10.10.30:9100"]
+
+  # 2026-07-19, well-architected 체크리스트 Observability-4 - cAdvisor(컨테이너별
+  # CPU/MEM/블록I/O). monitoring VM 자신은 같은 docker-compose 스택 안이라
+  # 컨테이너명(cadvisor:8080)으로 접근, 기본 /metrics 경로 그대로 사용.
+  - job_name: cadvisor-monitoring-vm
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # harbor VM은 독립 스택(~/cadvisor/, Harbor 자체 compose와 분리)으로 배포.
+  # 학원 LAN IP 대신 Tailscale IP 사용 - blackbox job과 동일한 이유(어디서든
+  # 동일하게 재현 가능한 주소).
+  - job_name: cadvisor-harbor-vm
+    static_configs:
+      - targets: ["100.96.79.73:8080"]
+
+  # DB VM(10.10.20.10, Data 계층)과 production VM(10.10.10.30, App 계층)은
+  # Tailscale에 조인돼 있지 않지만, monitoring VM에서 두 계층 모두로 직접
+  # curl 도달이 실측 확인됐다(3계층 망분리 안에서도 모니터링 목적상 라우팅
+  # 허용된 것으로 보임) - 그대로 내부 IP를 사용한다. production VM은
+  # b-gateway가 이미 8080을 쓰고 있어서 cAdvisor를 8090으로 띄웠다.
+  - job_name: cadvisor-db-vm
+    static_configs:
+      - targets: ["10.10.20.10:8080"]
+
+  # 2026-07-19, well-architected 체크리스트 Observability-3 - kafka-exporter
+  # (danielqsj/kafka_exporter)는 같은 docker-compose 스택 안이라 컨테이너명
+  # (kafka-exporter:9308)으로 접근, 기본 /metrics 경로.
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  - job_name: cadvisor-production-vm
+    static_configs:
+      - targets: ["10.10.10.30:8090"]
 
   # Blackbox 모니터링 - 내부 지표(node_exporter)가 아니라 외부 관점에서 실제 접속 가능
   # 여부를 확인. HTTP 상태코드/응답시간/TLS 인증서 만료를 체크한다.

@@ -165,6 +165,51 @@
         "x": 0,
         "y": 9
       },
+      "id": 400,
+      "panels": [],
+      "title": "🔴 현재 발생 중인 Alert",
+      "type": "row"
+    },
+    {
+      "type": "alertlist",
+      "title": "Firing / Pending Alerts",
+      "description": "이 패널만 보면 지금 무엇이 문제인지 바로 알 수 있습니다 - 비어있으면 전체 정상.",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 401,
+      "options": {
+        "viewMode": "list",
+        "groupMode": "default",
+        "groupBy": [],
+        "maxItems": 20,
+        "dashboardAlerts": false,
+        "alertName": "",
+        "alertInstanceLabelFilter": "",
+        "datasource": null,
+        "folder": null,
+        "showInactiveAlerts": false,
+        "stateFilter": {
+          "firing": true,
+          "pending": true,
+          "recovering": true,
+          "noData": false,
+          "normal": false,
+          "error": true
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
       "id": 105,
       "panels": [],
       "title": "🖥️ 인프라 리소스 (VM)",
@@ -199,7 +244,7 @@
         "h": 6,
         "w": 8,
         "x": 0,
-        "y": 10
+        "y": 17
       },
       "id": 5,
       "options": {
@@ -218,7 +263,7 @@
       },
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+          "expr": "label_replace(label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
           "instant": true,
           "legendFormat": "{{vm}}",
           "refId": "A"
@@ -256,7 +301,7 @@
         "h": 6,
         "w": 8,
         "x": 8,
-        "y": 10
+        "y": 17
       },
       "id": 6,
       "options": {
@@ -275,7 +320,7 @@
       },
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+          "expr": "label_replace(label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
           "instant": true,
           "legendFormat": "{{vm}}",
           "refId": "A"
@@ -317,7 +362,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 10
+        "y": 17
       },
       "id": 7,
       "options": {
@@ -336,7 +381,7 @@
       },
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+          "expr": "label_replace(label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
           "instant": true,
           "legendFormat": "{{vm}}",
           "refId": "A"
@@ -354,134 +399,18 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 23
       },
       "id": 1,
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
+          "expr": "label_replace(label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
           "legendFormat": "{{vm}}",
           "refId": "A"
         }
       ],
       "title": "CPU Usage (%) by VM",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 16
-      },
-      "id": 2,
-      "targets": [
-        {
-          "expr": "label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
-          "legendFormat": "{{vm}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Memory Usage (%) by VM",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 24
-      },
-      "id": 3,
-      "targets": [
-        {
-          "expr": "label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\")",
-          "legendFormat": "{{vm}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Root Disk Usage (%) by VM",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 32
-      },
-      "id": 106,
-      "panels": [],
-      "title": "📈 애플리케이션 - ci_sandbox (RED Method)",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "RED Method: Rate - 초당 요청 수.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 33
-      },
-      "id": 4,
-      "targets": [
-        {
-          "expr": "rate(health_check_requests_total[5m])",
-          "legendFormat": "requests/sec",
-          "refId": "A"
-        }
-      ],
-      "title": "Rate - /health Request Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "RED Method: Duration - 요청의 95번째 백분위 응답시간. OTel FastAPIInstrumentor 계측 히스토그램 기반.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 33
-      },
-      "id": 109,
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_duration_milliseconds_bucket{job=\"ci-sandbox\"}[5m])))",
-          "legendFormat": "p95 latency",
-          "refId": "A"
-        }
-      ],
-      "title": "Duration - p95 Latency",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "RED Method: Errors - 5xx 응답 비율. 5분간 5% 초과 시 Critical 알림(High App Error Rate 규칙).",
+      "type": "timeseries",
       "fieldConfig": {
         "defaults": {
           "thresholds": {
@@ -492,22 +421,171 @@
                 "value": null
               },
               {
+                "color": "orange",
+                "value": 70
+              },
+              {
                 "color": "red",
-                "value": 5
+                "value": 90
               }
             ]
           },
-          "unit": "percent"
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "label_replace(label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
+          "legendFormat": "{{vm}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Memory Usage (%) by VM",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "label_replace(label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
+          "legendFormat": "{{vm}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Root Disk Usage (%) by VM",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "id": 200,
+      "panels": [],
+      "title": "🐳 컨테이너 리소스 (cAdvisor)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "전 VM 통합, 컨테이너별 CPU 사용률 상위 5개",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "gridPos": {
         "h": 6,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 41
+        "y": 40
       },
-      "id": 8,
+      "id": 201,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -518,20 +596,633 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": false
+          "values": true
         },
         "textMode": "value_and_name"
       },
       "targets": [
         {
-          "expr": "(sum(rate(http_server_duration_milliseconds_count{job=\"ci-sandbox\", http_status_code=~\"5..\"}[5m])) OR on() vector(0)) / sum(rate(http_server_duration_milliseconds_count{job=\"ci-sandbox\"}[5m])) * 100",
+          "expr": "label_replace(topk(5, sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[5m])) by (name, job) * 100), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
           "instant": true,
-          "legendFormat": "5xx error rate",
+          "legendFormat": "{{name}} · {{vm}}",
           "refId": "A"
         }
       ],
-      "title": "Errors - ci_sandbox App 5xx Error Rate (%)",
+      "title": "컨테이너 CPU 사용률 (Top 5)",
       "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "전 VM 통합, 컨테이너별 메모리 사용량 상위 5개",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decmbytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 450
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "id": 202,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "label_replace(topk(5, sum(container_memory_usage_bytes{name!=\"\"}) by (name, job) / 1024 / 1024), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
+          "instant": true,
+          "legendFormat": "{{name}} · {{vm}}",
+          "refId": "A"
+        }
+      ],
+      "title": "컨테이너 메모리 사용량 (Top 5, MB)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
+      "id": 203,
+      "targets": [
+        {
+          "expr": "label_replace(topk(10, sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[5m])) by (name, job) * 100), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
+          "legendFormat": "{{name}} · {{vm}}",
+          "refId": "A"
+        }
+      ],
+      "title": "컨테이너별 CPU 사용률 (%) - Top 10",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 46
+      },
+      "id": 204,
+      "targets": [
+        {
+          "expr": "label_replace(topk(10, sum(container_memory_usage_bytes{name!=\"\"}) by (name, job) / 1024 / 1024), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
+          "legendFormat": "{{name}} · {{vm}}",
+          "refId": "A"
+        }
+      ],
+      "title": "컨테이너별 메모리 사용량 (MB) - Top 10",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 450
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "id": 300,
+      "panels": [],
+      "title": "📦 Harbor 레지스트리",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "정상"
+                },
+                "0": {
+                  "text": "장애"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 57
+      },
+      "id": 301,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "harbor_health",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Harbor 헬스 상태",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 57
+      },
+      "id": 302,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "harbor_statistics_total_storage_consumption",
+          "instant": true,
+          "legendFormat": "전체 사용량",
+          "refId": "A"
+        }
+      ],
+      "title": "전체 스토리지 사용량",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 57
+      },
+      "id": 303,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "harbor_statistics_total_repo_amount",
+          "instant": true,
+          "legendFormat": "Repository",
+          "refId": "A"
+        },
+        {
+          "expr": "harbor_statistics_total_project_amount",
+          "instant": true,
+          "legendFormat": "Project",
+          "refId": "B"
+        }
+      ],
+      "title": "전체 Repository / Project 수",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 57
+      },
+      "id": 304,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "sum(harbor_project_quota_usage_byte and on(project_name) (harbor_project_quota_byte > 0)) / sum(harbor_project_quota_byte > 0) * 100",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "쿼터 미설정 (전체 unlimited)"
+        },
+        "overrides": []
+      },
+      "title": "프로젝트 쿼터 사용률",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "이미지 pull 요청 발생률 - CI/CD와 팀원 사용 활동을 함께 보여줌",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "id": 305,
+      "targets": [
+        {
+          "expr": "sum(rate(harbor_artifact_pulled[5m])) by (project)",
+          "legendFormat": "{{project}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Harbor 이미지 Pull 발생률 (project별)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 70
+      },
+      "id": 310,
+      "panels": [],
+      "title": "📨 Kafka (이벤트 파이프라인)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 71
+      },
+      "id": 311,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "kafka_brokers",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "활성 브로커 수",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 71
+      },
+      "id": 312,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(kafka_consumergroup_lag_sum)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "전체 Consumer Lag 합계",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 71
+      },
+      "id": 313,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "count(count by (consumergroup) (kafka_consumergroup_members))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "활성 Consumer Group 수",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "레시피 수집 파이프라인(recipe-main, thumbnail) + Vision 워커 컨슈머 랙 추이",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "id": 314,
+      "targets": [
+        {
+          "expr": "sum(kafka_consumergroup_lag) by (consumergroup, topic)",
+          "legendFormat": "{{consumergroup}} ({{topic}})",
+          "refId": "A"
+        }
+      ],
+      "title": "Consumer Group별 Lag 추이",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
@@ -548,7 +1239,7 @@
         "multi": true,
         "name": "vm",
         "options": [],
-        "query": "monitoring-vm : 192.168.0.51:9100,harbor-vm : 192.168.0.53:9100,db-vm : 192.168.0.54:9100",
+        "query": "monitoring-vm : 192.168.0.51:9100,harbor-vm : 192.168.0.53:9100,db-vm : 192.168.0.54:9100,production-vm : 10.10.10.30:9100",
         "type": "custom"
       }
     ]
