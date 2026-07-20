@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ChatWidget } from "@/components/ChatWidget";
 import { HeaderAuth } from "@/components/HeaderAuth";
 import { SiteNav } from "@/components/SiteNav";
 import { SessionExpiredNotice } from "@/components/SystemFeedback";
@@ -18,6 +19,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <div id="main-content" tabIndex={-1}>{children}</div>
       <footer className="service-footer"><div className="wrap"><span>당당 · 제로·저당 식품 선택 서비스</span><nav aria-label="서비스 정책"><Link href="/terms">이용약관</Link><Link href="/privacy">개인정보처리방침</Link></nav></div></footer>
       <SessionExpiredNotice />
+      <ChatWidget />
     </>
   );
 }
