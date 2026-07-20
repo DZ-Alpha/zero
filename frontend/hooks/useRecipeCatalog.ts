@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { RecipeData } from "@/data/catalog";
 import { getRecipes, type RecipeDetailResponse, type RecipeListItem } from "@/lib/api/zerocheck";
 
@@ -68,23 +68,29 @@ export function useRecipeCatalog(fallback: RecipeData[]) {
   const [items, setItems] = useState<RecipeData[]>([]);
   const [source, setSource] = useState<"mock" | "api">("mock");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    getRecipes()
-      .then(({ recipes }) => {
+    getRecipes(1)
+      .then(({ recipes, hasNext }) => {
         if (!active) return;
         // 목록 응답만으로 카드를 만들고 상세 정보는 상세 페이지에 들어갔을 때만 호출한다.
         // 전체 레시피마다 상세 API를 호출하면 DB 데이터가 늘수록 요청이 폭증한다.
         setItems(recipes.map((recipe) => toRecipeData(recipe, null, fallback)));
         setSource("api");
+        setPage(1);
+        setHasMore(hasNext);
       })
       .catch(() => {
         if (!active) return;
         setItems(fallback);
         setSource("mock");
+        setHasMore(false);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -95,5 +101,27 @@ export function useRecipeCatalog(fallback: RecipeData[]) {
     };
   }, [fallback, revision]);
 
-  return { recipes: items, source, loading, retry: () => setRevision((current) => current + 1) };
+  const loadMore = useCallback(() => {
+    if (source !== "api" || loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    getRecipes(nextPage)
+      .then(({ recipes, hasNext }) => {
+        setItems((current) => [...current, ...recipes.map((recipe) => toRecipeData(recipe, null, fallback))]);
+        setPage(nextPage);
+        setHasMore(hasNext);
+      })
+      .catch(() => setHasMore(false))
+      .finally(() => setLoadingMore(false));
+  }, [source, loadingMore, hasMore, page, fallback]);
+
+  return {
+    recipes: items,
+    source,
+    loading,
+    loadingMore,
+    hasMore,
+    loadMore,
+    retry: () => setRevision((current) => current + 1),
+  };
 }

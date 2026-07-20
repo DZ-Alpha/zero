@@ -1,7 +1,16 @@
 from app.handlers.base import HandlerInput
-from app.handlers.general_qa import GeneralQAHandler, render_user_context_block
+from app.handlers.general_qa import GeneralQAHandler, render_user_context_block, strip_chat_markdown
 from app.rag.retriever import RagChunk, Retriever
 from app.schemas import UserContext
+
+
+def test_strip_chat_markdown_removes_bold_and_headings():
+    raw = "## 제목\n**당류**는 20g이고 *중요*합니다.\n\n\n\n끝."
+    out = strip_chat_markdown(raw)
+    assert "**" not in out
+    assert "##" not in out
+    assert "제목" in out and "당류" in out and "중요" in out
+    assert "\n\n\n" not in out  # 과한 줄바꿈 정리
 
 
 class _FakeLLM:
@@ -38,6 +47,17 @@ def test_context_block_without_consent_uses_general_baseline():
     block = render_user_context_block(_ctx(False, None))
     # 개인 목표값을 지어내지 않는다 — 숫자 목표가 없어야 함
     assert "일반" in block
+
+
+def test_context_block_calculates_from_body_info_when_no_target():
+    # 저장 목표값은 없지만 신체정보가 다 있으면 코드로 계산해 개인화한다(설계 §5.2 2단계).
+    ctx = UserContext(user_id=1, logged_in=True, interests=[], has_allergy=False,
+                      consent=False, daily_sugar_target_g=None, daily_calorie_target=None,
+                      gender="남성", age=27, height_cm=180, weight_kg=70,
+                      activity_level="주로 앉아서 생활해요")
+    block = render_user_context_block(ctx)
+    assert "2090" in block  # 계산된 칼로리
+    assert "추정" in block   # 추정치임을 밝힘
 
 
 async def test_handler_injects_rag_and_context_into_prompt():

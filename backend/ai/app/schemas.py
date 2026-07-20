@@ -44,3 +44,9 @@ class UserContext(BaseModel):
     consent: bool
     daily_sugar_target_g: float | None
     daily_calorie_target: float | None
+    # 신체정보 — 저장된 목표값이 없을 때 코드로 목표를 계산하는 데 쓴다.
+    gender: str | None = None
+    age: int | None = None
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    activity_level: str | None = None

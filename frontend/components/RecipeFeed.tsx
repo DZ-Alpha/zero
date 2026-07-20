@@ -12,7 +12,7 @@ const personalSlugs = new Set(mockRecipes.filter((recipe) => recipe.category ===
 const personalIds = new Set(mockRecipes.filter((recipe) => personalSlugs.has(recipe.slug)).map((recipe) => recipe.databaseId).filter(Boolean));
 
 export function RecipeFeed() {
-  const { recipes, source, loading, retry } = useRecipeCatalog(mockRecipes);
+  const { recipes, source, loading, hasMore, loadMore, retry } = useRecipeCatalog(mockRecipes);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("전체");
   const [sort, setSort] = useState("추천순");
@@ -39,11 +39,16 @@ export function RecipeFeed() {
     const node = sentinel.current;
     if (!node) return;
     const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) setVisible((count) => Math.min(count + 3, filtered.length));
+      if (!entry.isIntersecting) return;
+      setVisible((count) => Math.min(count + 3, filtered.length));
+      // 로드된 recipes 안에서 보여줄 게 거의 떨어져 가면(필터 없는 "전체" 상태
+      // 기준) 서버에서 다음 페이지를 더 받아온다 - 그냥 필터링된 20건 안에서만
+      // 더 보여주면 실제로는 1700여 건 중 20건 이후로 절대 안 보이는 문제가 있었다.
+      if (hasMore && recipes.length - visible <= 6) loadMore();
     }, { rootMargin: "160px" });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [filtered.length]);
+  }, [filtered.length, hasMore, loadMore, recipes.length, visible]);
 
   const personalRecipes = recipes.filter((recipe) => personalSlugs.has(recipe.slug) || personalIds.has(recipe.databaseId)).slice(0, 3);
   const recommendationItems = personalRecipes.length > 0 ? personalRecipes : recipes.length > 0 ? recipes.slice(0, 3) : mockRecipes.slice(0, 3);
@@ -92,8 +97,11 @@ export function RecipeFeed() {
               </article>
             )})}
           </div>
-          {visible < filtered.length && <div ref={sentinel} className="feed-sentinel">다음 레시피를 불러오고 있어요.</div>}
-          {!loading && visible >= filtered.length && filtered.length > 0 && <div className="feed-end">현재 조건의 레시피를 모두 봤어요.</div>}
+          {/* hasMore일 땐 filtered 안에 아직 다 안 보여줬어도, 서버에 더 있는데
+              화면엔 다 보여준 상태(visible >= filtered.length)일 수 있어 sentinel을
+              계속 걸어둬야 loadMore가 트리거된다. */}
+          {(visible < filtered.length || hasMore) && <div ref={sentinel} className="feed-sentinel">다음 레시피를 불러오고 있어요.</div>}
+          {!loading && !hasMore && visible >= filtered.length && filtered.length > 0 && <div className="feed-end">현재 조건의 레시피를 모두 봤어요.</div>}
           {!loading && filtered.length === 0 && <div className="empty-catalog"><b>조건에 맞는 레시피가 없어요.</b><span>검색어를 짧게 바꾸거나 선택한 분류를 지워보세요.</span><button type="button" onClick={resetFilters}>검색 조건 지우기</button></div>}
         </div>
       </section>

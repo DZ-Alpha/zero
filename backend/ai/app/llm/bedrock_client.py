@@ -22,9 +22,13 @@ class BedrockClient(LLMClient):
 
     async def complete(self, system: str, user: str) -> str:
         # boto3는 동기 — 간단하게 호출한다. 부하가 커지면 스레드풀로 옮긴다.
+        # maxTokens로 답변 길이를 제한한다(좁은 채팅창 + 응답 속도). 짧은 답이
+        # 기본이지만 잘리지 않을 여유는 둔다.
         resp = self._client.converse(
             modelId=self._model_id,
             system=[{"text": system}],
             messages=[{"role": "user", "content": [{"text": user}]}],
+            # 답변이 잘리지 않도록 넉넉히. 길이는 프롬프트(3문장 이내)로 조절한다.
+            inferenceConfig={"maxTokens": 500},
         )
         return resp["output"]["message"]["content"][0]["text"]
