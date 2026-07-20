@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # 세션/OAuth state/rate-limit 저장용 (app/services/*_store.py, rate_limiter.py)
     redis_host: str = "localhost"
     redis_port: int = 6379
+    redis_password: str = ""
 
     @property
     def database_url(self) -> str:
