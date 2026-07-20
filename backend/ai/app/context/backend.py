@@ -43,4 +43,11 @@ class BackendUserContextProvider(UserContextProvider):
             consent=bool(profile.get("consent")),
             daily_sugar_target_g=profile.get("dailySugarTargetG"),
             daily_calorie_target=profile.get("dailyCalorieTarget"),
+            # 키·몸무게·나이는 동의 무관하게 mypage.healthStat에 있고,
+            # 성별·활동량은 health-profile에 있다(동의 시에만 채워질 수 있음).
+            gender=profile.get("gender"),
+            age=health.get("age"),
+            height_cm=health.get("tall"),
+            weight_kg=health.get("weight"),
+            activity_level=profile.get("activityLevel"),
         )

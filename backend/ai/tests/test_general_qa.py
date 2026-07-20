@@ -49,6 +49,17 @@ def test_context_block_without_consent_uses_general_baseline():
     assert "일반" in block
 
 
+def test_context_block_calculates_from_body_info_when_no_target():
+    # 저장 목표값은 없지만 신체정보가 다 있으면 코드로 계산해 개인화한다(설계 §5.2 2단계).
+    ctx = UserContext(user_id=1, logged_in=True, interests=[], has_allergy=False,
+                      consent=False, daily_sugar_target_g=None, daily_calorie_target=None,
+                      gender="남성", age=27, height_cm=180, weight_kg=70,
+                      activity_level="주로 앉아서 생활해요")
+    block = render_user_context_block(ctx)
+    assert "2090" in block  # 계산된 칼로리
+    assert "추정" in block   # 추정치임을 밝힘
+
+
 async def test_handler_injects_rag_and_context_into_prompt():
     llm = _FakeLLM()
     handler = GeneralQAHandler(llm=llm, retriever=_FakeRetriever())
