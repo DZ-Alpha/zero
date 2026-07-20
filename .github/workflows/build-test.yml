@@ -812,6 +812,23 @@ jobs:
           sleep 5
           $SSH "docker ps --filter name=cadvisor \
             --format '{{.Names}}\t{{.Status}}'"
+      - name: Check OTLP reachability from production to monitoring VM
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          echo "--- 4317(grpc) via App VLAN IP (10.10.10.40) ---"
+          $SSH "timeout 5 bash -c \
+            'cat < /dev/null > /dev/tcp/10.10.10.40/4317' \
+            2>&1 && echo REACHABLE || echo UNREACHABLE"
+          echo "--- 4318(http) via App VLAN IP (10.10.10.40) ---"
+          $SSH "timeout 5 bash -c \
+            'cat < /dev/null > /dev/tcp/10.10.10.40/4318' \
+            2>&1 && echo REACHABLE || echo UNREACHABLE"
+          echo "--- 4317(grpc) via old LAN IP (192.168.0.51) ---"
+          $SSH "timeout 5 bash -c \
+            'cat < /dev/null > /dev/tcp/192.168.0.51/4317' \
+            2>&1 && echo REACHABLE || echo UNREACHABLE"
 
   # 2026-07-19, DB VM 선제 조치 일회성 job. DB VM은 harbor+monitoring VM과
   # 별개 머신이라 production과 똑같이 harbor CA를 신뢰하도록 설정된 적이
