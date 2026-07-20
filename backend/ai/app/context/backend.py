@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 import httpx
 
@@ -7,6 +8,12 @@ from app.context.provider import UserContextProvider
 from app.schemas import UserContext
 
 logger = logging.getLogger("ai_context")
+
+
+def _age_from_birth_year(birth_year: int | None) -> int | None:
+    if not birth_year:
+        return None
+    return datetime.now(timezone.utc).year - int(birth_year)
 
 _ANONYMOUS = UserContext(user_id=0, logged_in=False, interests=[], has_allergy=False,
                          consent=False, daily_sugar_target_g=None, daily_calorie_target=None)
@@ -43,11 +50,12 @@ class BackendUserContextProvider(UserContextProvider):
             consent=bool(profile.get("consent")),
             daily_sugar_target_g=profile.get("dailySugarTargetG"),
             daily_calorie_target=profile.get("dailyCalorieTarget"),
-            # 키·몸무게·나이는 동의 무관하게 mypage.healthStat에 있고,
-            # 성별·활동량은 health-profile에 있다(동의 시에만 채워질 수 있음).
+            # 목표 계산용 신체정보는 전부 health-profile에서 읽어 출처를 통일한다.
+            # (mypage.healthStat에도 키·몸무게가 있으나 갱신 시점이 달라 값이
+            #  어긋날 수 있어, 성별·활동량과 같은 출처인 health-profile로 맞춘다.)
             gender=profile.get("gender"),
-            age=health.get("age"),
-            height_cm=health.get("tall"),
-            weight_kg=health.get("weight"),
+            age=_age_from_birth_year(profile.get("birthYear")),
+            height_cm=profile.get("heightCm"),
+            weight_kg=profile.get("weightKg"),
             activity_level=profile.get("activityLevel"),
         )
