@@ -1,3 +1,4 @@
+import demo_missing_dependency  # 시연 리허설: 의존성 누락 - 임포트 체크가 잡아야 함
 import logging
 import time
 

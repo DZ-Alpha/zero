@@ -14,7 +14,3 @@ def test_rag_settings_defaults():
     from app.core.config import settings
     assert settings.rag_enabled is False
     assert settings.embed_region  # 비어있지 않음
-
-
-def test_demo_pipeline_gate():
-    assert 1 == 2, "시연용 실패 테스트 - 오류 차단 검증"
