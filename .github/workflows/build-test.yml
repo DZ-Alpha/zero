@@ -281,6 +281,20 @@ jobs:
       - name: Import smoke check
         working-directory: backend/${{ matrix.service }}
         run: python -c "import app.main"
+      # 2026-07-21, pytest opt-in 게이트 - tests/ 디렉터리가 있는 서비스만 pytest를
+      # 실행한다. 전 서비스에 일괄 강제하면 테스트 부재로 전부 빨간불이 되어 진짜
+      # 실패 신호가 묻히므로(위 주석의 원래 판단 유지), 서비스별로 테스트가 생기는
+      # 즉시 게이트가 자동으로 켜지는 방식을 택한다. 7/21 드라이런에서 "실패하는
+      # 테스트를 넣어도 CI가 통과"하는 걸 실측한 데 대한 보강. 첫 적용: login-service.
+      - name: Pytest (opt-in, tests/ 있는 서비스만)
+        working-directory: backend/${{ matrix.service }}
+        run: |
+          if [ -d tests ]; then
+            pip install pytest
+            python -m pytest tests -q
+          else
+            echo "tests/ 없음 - pytest 건너뜀 (opt-in)"
+          fi
 
   # 아래부터는 내부 SonarQube/Harbor에 접근해야 하므로 self-hosted(harbor VM) 러너에서 실행
   code-scanning:
