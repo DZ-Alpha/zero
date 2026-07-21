@@ -179,7 +179,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
 
       <section className="similar-section wrap">
         <header className="section-line-heading"><div><p className="eyebrow">비슷한 저당 레시피</p><h2>다음 메뉴도 이어서 살펴보세요</h2></div></header>
-        <div className="similar-grid">{similar.map((recipe) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><RecipeCover recipe={recipe} /><small>{recipe.category} · {recipe.time}</small><h3>{recipe.title}</h3><p>등록 재료 당류 {recipe.estimatedSugar}g</p></Link>)}</div>
+        <div className="similar-grid">{similar.map((recipe) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><RecipeCover recipe={recipe} /><small>{recipe.category}</small><h3>{recipe.title}</h3><p>등록 재료 당류 {recipe.estimatedSugar}g</p></Link>)}</div>
       </section>
     </main>
   );
