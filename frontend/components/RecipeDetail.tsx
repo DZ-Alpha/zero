@@ -94,7 +94,13 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
       estimatedCalories: nutrition?.totalKcal ?? fallbackDetail.estimatedCalories,
       comparisonSugar: nutrition?.baseSugarG ?? fallbackDetail.comparisonSugar,
       comparisonCalories: nutrition?.baseKcal ?? fallbackDetail.comparisonCalories,
-      comparisonStatus: nutrition?.comparisonStatus === "completed" ? "completed" as const : fallbackDetail.comparisonStatus,
+      // 백엔드/DB는 "ready"를 쓴다 — "completed"로 비교하고 있어서 재료 합산이
+      // 끝난 레시피도 항상 "준비 중" 패널만 떴다. RecipeData 내부 표현은 그대로
+      // "completed" 리터럴을 쓰되(catalog.ts 타입과 맞춤), API 값 체크만 고친다.
+      comparisonStatus: nutrition?.comparisonStatus === "ready" ? "completed" as const : fallbackDetail.comparisonStatus,
+      // useRecipeCatalog.ts와 같은 규칙: API가 nutrition을 내려주면(재료 합산 완료)
+      // 100%로 본다 — 여기서 한 번도 안 채워져서 fallback의 0이 항상 남아있었다.
+      nutritionCoverage: nutrition ? 100 : fallbackDetail.nutritionCoverage,
       ingredients: live.ingredients?.length
         ? live.ingredients.map((item) => `${item.name}${item.amount ? ` ${item.amount}` : ""}`)
         : fallbackDetail.ingredients,
