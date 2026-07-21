@@ -188,6 +188,7 @@ scrape_configs:
           - http://10.10.10.30:8080/ # production b-gateway (openresty, API 백본)
         labels:
           probe_name: "3. API 게이트웨이 (b-gateway)"
+
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -195,3 +196,12 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox-exporter:9115
+
+  # 2026-07-21, 관측 스택 자기관측(철저감사에서 공백 발견) - discard율/인제스트율/
+  # 컴팩션 등 내부 지표. 컨테이너명은 compose 네트워크 내부 DNS.
+  - job_name: loki-self
+    static_configs: [{targets: ["loki:3100"], labels: {vm: "monitoring-vm"}}]
+  - job_name: tempo-self
+    static_configs: [{targets: ["tempo:3200"], labels: {vm: "monitoring-vm"}}]
+  - job_name: grafana-self
+    static_configs: [{targets: ["grafana:3000"], labels: {vm: "monitoring-vm"}}]

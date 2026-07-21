@@ -22,7 +22,7 @@
       },
       "id": 101,
       "options": {
-        "content": "**ZeroCheck 인프라 & 앱 모니터링 개요** — VM 4대(harbor/db/monitoring/production)의 White-box 지표(node_exporter)와 Harbor의 Black-box 외부 가용성 체크, 사용자 접점(192.168.0.56:3001)의 Black-box 가용성를 함께 봅니다. 임계치: CPU 85%(경고, 10분 지속) · Memory 90%(경고) · Disk 85%(경고)/95%(위험). 색상 기준: 초록=정상, 주황=경고, 빨강=즉시 조치 필요.",
+        "content": "**ZeroCheck 인프라 & 앱 모니터링 개요** — VM 4대(harbor/db/monitoring/production)의 White-box 지표(node_exporter)와 Harbor의 Black-box 외부 가용성 체크, 사용자 접점(192.168.0.56:3001)의 Black-box 가용성을 함께 봅니다. 임계치: CPU 85%(경고, 10분 지속) · Memory 90%(경고) · Disk 85%(경고)/95%(위험). 색상 기준: 초록=정상, 주황=경고, 빨강=즉시 조치 필요.",
         "mode": "markdown"
       },
       "title": "",
@@ -146,7 +146,7 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": true
+          "values": false
         },
         "textMode": "value_and_name",
         "text": {
@@ -159,43 +159,50 @@
           "datasource": null,
           "refId": "G",
           "legendFormat": "{{probe_name}}",
-          "expr": "probe_success{probe_name=~\"0[.].*\"}"
+          "expr": "probe_success{probe_name=~\"0[.].*\"}",
+          "instant": true
         },
         {
           "datasource": null,
           "refId": "A",
           "legendFormat": "{{probe_name}}",
-          "expr": "probe_success{probe_name=~\"1[.].*\"}"
+          "expr": "probe_success{probe_name=~\"1[.].*\"}",
+          "instant": true
         },
         {
           "datasource": null,
           "refId": "B",
           "legendFormat": "{{probe_name}}",
-          "expr": "probe_success{probe_name=~\"2[.].*\"}"
+          "expr": "probe_success{probe_name=~\"2[.].*\"}",
+          "instant": true
         },
         {
           "datasource": null,
           "refId": "C",
           "legendFormat": "{{probe_name}}",
-          "expr": "probe_success{probe_name=~\"3[.].*\"}"
+          "expr": "probe_success{probe_name=~\"3[.].*\"}",
+          "instant": true
         },
         {
           "datasource": null,
           "refId": "D",
           "legendFormat": "{{probe_name}}",
-          "expr": "probe_success{probe_name=~\"4[.].*\"}"
+          "expr": "probe_success{probe_name=~\"4[.].*\"}",
+          "instant": true
         },
         {
           "datasource": null,
           "refId": "E",
           "legendFormat": "{{probe_name}}",
-          "expr": "probe_success{probe_name=~\"5[.].*\"}"
+          "expr": "probe_success{probe_name=~\"5[.].*\"}",
+          "instant": true
         },
         {
           "datasource": null,
           "refId": "F",
           "legendFormat": "{{probe_name}}",
-          "expr": "probe_success{probe_name=~\"6[.].*\"}"
+          "expr": "probe_success{probe_name=~\"6[.].*\"}",
+          "instant": true
         }
       ],
       "title": "외부 서비스 가용성 (Blackbox)",
@@ -1329,6 +1336,268 @@
           "expr": "sum(increase(kafka_topic_partition_current_offset{topic!=\"__consumer_offsets\"}[5m])) by (topic)"
         }
       ]
+    },
+    {
+      "id": 412,
+      "type": "row",
+      "title": "📜 로그 & 트레이스 (LGTM 통합)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 106
+      },
+      "collapsed": false
+    },
+    {
+      "id": 413,
+      "type": "logs",
+      "title": "Production 에러 로그 (최근)",
+      "description": "production VM 컨테이너 로그 중 error 매칭 스트림. 로그 상세의 TraceID를 클릭하면 Tempo 트레이스로 원클릭 이동(derivedFields) - 이 패널이 곧 트레이스 입구.",
+      "gridPos": {
+        "h": 10,
+        "w": 14,
+        "x": 0,
+        "y": 107
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{vm=\"production-vm\"} |~ \"(?i)error\"",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          }
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    },
+    {
+      "id": 414,
+      "type": "timeseries",
+      "title": "로그 유입량 (VM별, lines/s)",
+      "description": "Alloy->Loki 유입 속도. 특정 VM이 튀면 로그 폭주 신호.",
+      "gridPos": {
+        "h": 10,
+        "w": 10,
+        "x": 14,
+        "y": 107
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (vm) (rate({vm=~\".+\"}[5m]))",
+          "legendFormat": "{{vm}}",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 415,
+      "type": "row",
+      "title": "🔬 관측 스택 자기상태 (Self-metrics)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 117
+      },
+      "collapsed": false
+    },
+    {
+      "id": 416,
+      "type": "stat",
+      "title": "Self-scrape 상태",
+      "description": "Loki/Tempo/Grafana 자체 /metrics 수집(7/21 신설). 1=정상.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 118
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=~\".+-self\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "legendFormat": "{{job}}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 417,
+      "type": "timeseries",
+      "title": "Loki 유입 vs 버림 (samples/s)",
+      "description": "버림이 0 위로 지속되면 한도/타임스탬프 문제(7/21 백필 버스트 사례).",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 6,
+        "y": 118
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(loki_distributor_lines_received_total[5m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "legendFormat": "유입 lines/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(loki_discarded_samples_total[5m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "legendFormat": "버림 samples/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 418,
+      "type": "stat",
+      "title": "Prometheus 활성 시리즈",
+      "description": "급증 시 라벨 카디널리티 오염 의심(buildx 사례).",
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 14,
+        "y": 118
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "prometheus_tsdb_head_series",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 419,
+      "type": "timeseries",
+      "title": "Tempo 트레이스 유입 (bytes/s)",
+      "description": "OTel 9개 서비스 스팬 유입. 0이면 계측/엔드포인트 점검.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 118
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(tempo_distributor_bytes_received_total[5m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "legendFormat": "bytes/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      }
     }
   ],
   "refresh": "30s",
