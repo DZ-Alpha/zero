@@ -19,6 +19,8 @@ class ChatbotRequest(BaseModel):
     msg: str | None = None
     template: str | None = None
     img: str | None = None
+    # 비로그인 사용자 대화방 식별자(프론트가 localStorage로 관리). 로그인 시 무시.
+    session_id: str | None = None
 
     @model_validator(mode="after")
     def _require_msg_or_img(self) -> "ChatbotRequest":

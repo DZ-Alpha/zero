@@ -22,6 +22,8 @@ from app.rag.retriever import RagChunk, Retriever  # noqa: E402
 from app.router.dispatcher import Dispatcher  # noqa: E402
 from app.router.intent import IntentClassifier  # noqa: E402
 from app.schemas import Intent  # noqa: E402
+from app.core.redis_client import redis_client  # noqa: E402
+from app.memory.conversation_store import ConversationStore  # noqa: E402
 
 logger = logging.getLogger("ai_service")
 
@@ -95,8 +97,14 @@ def build_dependencies() -> chatbot_api.Dependencies:
     if llm is not None:
         qa = GeneralQAHandler(llm=llm, retriever=retriever)
         handlers[Intent.GENERAL_QA] = qa
+    store = ConversationStore(
+        redis_client,
+        max_turns=20,
+        ttl_seconds=settings.conversation_ttl_seconds,
+    )
     return chatbot_api.Dependencies(provider=provider, classifier=classifier,
-                                    dispatcher=Dispatcher(handlers), qa_handler=qa)
+                                    dispatcher=Dispatcher(handlers), qa_handler=qa,
+                                    store=store)
 
 
 app.include_router(chatbot_api.router)
