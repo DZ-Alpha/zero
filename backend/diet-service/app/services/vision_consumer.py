@@ -103,7 +103,7 @@ async def _handle_failed(payload: dict) -> None:
         )
 
 
-async def _consume_loop(consumer: AIOKafkaConsumer) -> None:
+async def _consume_once(consumer: AIOKafkaConsumer) -> None:
     async for msg in consumer:
         try:
             payload = json.loads(msg.value)
@@ -120,6 +120,25 @@ async def _consume_loop(consumer: AIOKafkaConsumer) -> None:
             )
             continue
         await consumer.commit()
+
+
+async def _consume_loop(consumer: AIOKafkaConsumer) -> None:
+    # `async for msg in consumer` 바깥에서 터지는 예외(브로커 연결 끊김, 리밸런스
+    # 오류, 역직렬화 실패 등)는 이 태스크를 조용히 죽여서 이후 아무도 메시지를
+    # 소비하지 않게 만든다 — 인프라팀 경고(2026-07-21, snappy 미지원으로 컨슈머가
+    # 소리 없이 죽은 사고와 같은 계열). 최상위 try/except로 감싸 지수 백오프로
+    # 재시작한다. 종료(stop_consumer)는 CancelledError로 오므로 그대로 전파한다.
+    backoff = 1
+    while True:
+        try:
+            await _consume_once(consumer)
+            return  # consumer가 정상 종료되면 루프도 끝낸다
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("vision consumer: consume loop crashed, restarting in %ss", backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
 
 
 async def start_consumer() -> None:

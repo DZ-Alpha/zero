@@ -53,8 +53,12 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     },
   });
 
+  // response.ok일 때만 저장한다 — 백엔드가 토큰 디코드 성공 시 유저 존재 여부를
+  // 확인하기 전에 X-Refreshed-Token부터 세팅해서, 탈퇴(404)/그 외 실패 응답에도
+  // 이 헤더가 실려온다. 여기서 무조건 저장하면 회원탈퇴 직후에도 이미 삭제된
+  // 유저의 토큰이 계속 갱신·저장되며 세션이 되살아나는 버그가 있었다.
   const refreshedToken = response.headers.get("x-refreshed-token");
-  if (refreshedToken && typeof window !== "undefined") saveAccessToken(refreshedToken);
+  if (response.ok && refreshedToken && typeof window !== "undefined") saveAccessToken(refreshedToken);
 
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json")
