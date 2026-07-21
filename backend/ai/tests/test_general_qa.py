@@ -18,9 +18,9 @@ class _FakeLLM:
         self.last_user = None
         self.last_system = None
 
-    async def complete(self, system: str, user: str) -> str:
+    async def complete(self, system: str, messages: list[dict]) -> str:
         self.last_system = system
-        self.last_user = user
+        self.last_user = messages[-1]["text"]
         return "대화체 답변입니다"
 
 
