@@ -64,3 +64,17 @@ class GeneralQAHandler(FeatureHandler):
         )
         answer = await self._llm.complete(SYSTEM_PROMPT_QA, user_prompt)
         return HandlerResult(msg=strip_chat_markdown(answer), is_img=False)
+
+    async def handle_stream(self, data: HandlerInput):
+        # 스트리밍 경로 — 인증·RAG·프롬프트 조립은 handle과 동일, LLM만 스트리밍.
+        # 마크다운 후처리는 하지 않는다(프론트가 렌더링).
+        query = data.msg or ""
+        docs = await self._retriever.search_docs(query)
+        user_prompt = build_qa_user_prompt(
+            msg=query,
+            user_context_block=render_user_context_block(data.context),
+            rag_block=blocks_to_text(docs),
+            product_block="",
+        )
+        async for delta in self._llm.complete_stream(SYSTEM_PROMPT_QA, user_prompt):
+            yield delta

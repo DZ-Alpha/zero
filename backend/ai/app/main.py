@@ -91,10 +91,12 @@ def build_dependencies() -> chatbot_api.Dependencies:
         Intent.RECIPE_SUBSTITUTE: RecipeSubstituteHandler(),
         Intent.ADMIN_ANALYTICS: AdminAnalyticsHandler(),
     }
+    qa = None
     if llm is not None:
-        handlers[Intent.GENERAL_QA] = GeneralQAHandler(llm=llm, retriever=retriever)
+        qa = GeneralQAHandler(llm=llm, retriever=retriever)
+        handlers[Intent.GENERAL_QA] = qa
     return chatbot_api.Dependencies(provider=provider, classifier=classifier,
-                                    dispatcher=Dispatcher(handlers))
+                                    dispatcher=Dispatcher(handlers), qa_handler=qa)
 
 
 app.include_router(chatbot_api.router)
