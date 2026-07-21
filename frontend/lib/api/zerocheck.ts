@@ -307,6 +307,9 @@ export function getDietOtherFoods(token: string, id: string) {
 // 기존 getDietCalendar + 로그마다 getDietOtherFoods 호출하던 N+1이 필요 없다.
 export type DietRecordApiItem = {
   recordId: string;
+  // meal_item PK — 사진 기록 하나에서 음식이 여러 개 인식되면 recordId(meal_log_id)가
+  // 행마다 동일해서 리스트 렌더링/삭제 대상 식별에 못 쓴다. entryId는 행마다 유일하다.
+  entryId: string;
   mealType: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK" | "OTHER";
   itemType: "recipe" | "product" | "photo";
   itemId: string;

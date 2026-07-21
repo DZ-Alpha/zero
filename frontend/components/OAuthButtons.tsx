@@ -16,11 +16,11 @@ export function OAuthButtons({ mode }: { mode: "login" | "signup" }) {
           href={`/b/social-access/${provider.id}/login?fallback=${encodeURIComponent(returnPath)}`}
           key={provider.id}
         >
-          <span>{provider.mark}</span><b>{provider.label}로 {mode === "signup" ? "가입하기" : "계속하기"}</b><i>→</i>
+          <span>{provider.mark}</span><b>{provider.label}로 {mode === "signup" ? "가입하기" : "계속하기"}</b><i className="oauth-arrow">→</i>
         </a>
       ) : (
         <button className={`oauth-button is-${provider.className} is-disabled`} type="button" disabled key={provider.id}>
-          <span>{provider.mark}</span><b>{provider.label} 로그인</b><i>준비 중</i>
+          <span>{provider.mark}</span><b>{provider.label} 로그인</b><i className="oauth-soon">준비중</i>
         </button>
       ))}
     </div>
