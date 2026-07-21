@@ -827,14 +827,15 @@ jobs:
       # 2026-07-21, registry 캐시(Harbor) 사용을 위한 per-job 빌더 설정.
       # - network=host: 빌더 컨테이너가 host의 이름 해석을 쓰게 함
       #   (bridge 빌더는 harbor.hizero.local 해석 불가 - PR#98 1차 실패 실측)
-      # - insecure=true: Harbor 사설 CA를 빌더가 모르는 문제 우회
-      #   (PR#98 2차 x509 실패 실측. LAN 내부 사설 레지스트리 한정 허용)
+      # - image=buildkit-harbor:v1: Harbor CA를 신뢰 저장소에 구운 buildkit
+      #   이미지(harbor VM ~/buildkit-harbor에서 빌드). insecure 우회는 buildkit이
+      #   토큰 요청에 적용하지 않아 실패함(실측) - CA 정식 신뢰가 정공법.
+      #   이미지 pull은 host dockerd가 하므로 certs.d 신뢰로 동작.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
         with:
-          driver-opts: network=host
-          buildkitd-config-inline: |
-            [registry."harbor.hizero.local"]
-              insecure = true
+          driver-opts: |
+            network=host
+            image=harbor.hizero.local/dangdang/buildkit-harbor:v1
       # registry 캐시 push(cache-to)에 빌드 시점 인증 필요 - 로그인을 빌드
       # 앞에 배치. PR 실행에서도 로그인하지만 이미지 push는 여전히 아래
       # main 가드 스텝에서만 한다(캐시 blob만 push됨).
