@@ -1,3 +1,4 @@
+import demo_missing_dependency  # demo: 일부러 없는 의존성 (오류 차단 시연용)
 import logging
 import time
 
