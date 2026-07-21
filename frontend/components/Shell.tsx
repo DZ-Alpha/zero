@@ -11,7 +11,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <header className="site-header">
         <Link href="/" className="brand" aria-label="당당 홈">
           <span className="brand-mark"><i /></span>
-          <span className="brand-copy"><b>당당</b></span>
+          <span className="brand-copy"><b>상상</b></span>
         </Link>
         <SiteNav />
         <HeaderAuth />
