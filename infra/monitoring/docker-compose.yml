@@ -220,6 +220,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       # 알림에 포함되는 쿼리/Silence 링크가 노트북에서도 열리도록 Tailscale IP 기준으로 설정
       GF_SERVER_ROOT_URL: http://100.110.81.51:3000/
+      GF_PUBLIC_DASHBOARDS_ENABLED: "false"
     ports:
       - "3000:3000"
     depends_on:

@@ -1,15 +1,19 @@
+import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from app.context.provider import UserContextProvider
 from app.handlers.base import HandlerInput
+from app.handlers.general_qa import GeneralQAHandler
 from app.core.security import get_current_user_from_token
 from app.router.dispatcher import Dispatcher
 from app.router.intent import IntentClassifier
-from app.schemas import ChatbotRequest, ChatbotResponse, UserContext
+from app.schemas import ChatbotRequest, ChatbotResponse, Intent, UserContext
 
 _ANONYMOUS_CONTEXT = UserContext(
     user_id=0, logged_in=False, interests=[], has_allergy=False,
@@ -28,6 +32,7 @@ class Dependencies(BaseModel):
     provider: UserContextProvider
     classifier: IntentClassifier
     dispatcher: Dispatcher
+    qa_handler: GeneralQAHandler | None = None
 
 
 def get_dependencies() -> Dependencies:
@@ -69,4 +74,50 @@ async def chatbot(
         time=datetime.now(timezone.utc).isoformat(),
         msg=result.msg,
         is_img=result.is_img,
+    )
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chatbot/stream")
+async def chatbot_stream(
+    payload: ChatbotRequest,
+    response: Response,
+    deps: Dependencies = Depends(get_dependencies),
+) -> StreamingResponse:
+    # JWT 검증은 스트림 시작 전(실패 시 401을 일반 응답으로).
+    if payload.usr:
+        identity = get_current_user_from_token(payload.usr, response)
+        logger.info("stream request: user_id=%s msg=%r", identity.user_id, payload.msg)
+        context = await deps.provider.load(payload.usr)
+    else:
+        logger.info("stream request(anonymous): msg=%r", payload.msg)
+        context = _ANONYMOUS_CONTEXT
+
+    intent = await deps.classifier.classify(msg=payload.msg, has_image=bool(payload.img))
+    data = HandlerInput(msg=payload.msg, img=payload.img, template=payload.template, context=context)
+
+    async def events() -> AsyncIterator[str]:
+        try:
+            if intent is Intent.GENERAL_QA and deps.qa_handler is not None:
+                async for delta in deps.qa_handler.handle_stream(data):
+                    yield _sse({"delta": delta})
+            else:
+                # stub 등 비스트리밍 의도는 한 번에 보낸다.
+                result = await deps.dispatcher.dispatch(intent, data)
+                yield _sse({"delta": result.msg})
+        except Exception:
+            logger.exception("stream error")
+            yield _sse({"error": "일시적인 오류가 발생했습니다.", "state": "error"})
+            return
+        yield _sse({
+            "done": True, "cs-partner": CS_PARTNER,
+            "time": datetime.now(timezone.utc).isoformat(), "is-img": False,
+        })
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
