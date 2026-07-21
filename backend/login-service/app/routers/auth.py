@@ -136,7 +136,7 @@ async def callback(
             )
             return _frontend_redirect(error=str(link_error))
 
-        token = jwt_service.create_access_token(user.id, provider, profile.nickname)
+        token = jwt_service.create_access_token(user.id, provider, user.display_name or profile.nickname)
         await session_store.set_active_token(token)
         logger.info(
             "social link success: provider=%s user_id=%s newly_linked=%s", provider, user.id, newly_linked
@@ -171,7 +171,7 @@ async def callback(
             error=f"이미 {existing_label} 계정으로 가입되어 있어요. 해당 계정으로 로그인해주세요."
         )
 
-    token = jwt_service.create_access_token(user.id, provider, profile.nickname)
+    token = jwt_service.create_access_token(user.id, provider, user.display_name or profile.nickname)
     await session_store.set_active_token(token)
     user_id = user.id  # 커밋된 ORM 객체 — 실패 시 로그에서 다시 접근하면 lazy reload를 시도한다.
     logger.info("social login success: provider=%s user_id=%s is_new=%s", provider, user_id, is_new)

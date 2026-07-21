@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 # Explicit UTC timestamps in every log line (ASVS V16.2.2).
 logging.Formatter.converter = time.gmtime
@@ -17,10 +18,19 @@ from app.routers import admin_auth, auth, health, items, user, webhooks
 logger = logging.getLogger("app.main")
 
 
+# create_all은 이미 있는 테이블은 ALTER하지 않는다 — users에 새 컬럼을 추가할 때마다
+# 여기 직접 추가해야 운영 DB에도 반영된다 (meal_logs에서 겪은 것과 같은 패턴).
+_USER_COLUMN_MIGRATIONS = [
+    "ALTER TABLE service.users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100)",
+]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        for statement in _USER_COLUMN_MIGRATIONS:
+            await conn.execute(text(statement))
     yield
 
 
