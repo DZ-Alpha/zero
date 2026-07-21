@@ -92,6 +92,8 @@ scrape_configs:
     static_configs:
       - targets:
           - http://100.110.81.51:3000/login # Grafana (monitoring VM, Tailscale)
+        labels:
+          probe_name: "6. Grafana (모니터링 자체)"
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -111,6 +113,8 @@ scrape_configs:
     static_configs:
       - targets:
           - http://100.96.79.73:9000 # SonarQube (harbor VM, Tailscale) - CI 의존성 헬스체크
+        labels:
+          probe_name: "5. SonarQube (CI 게이트)"
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -129,6 +133,61 @@ scrape_configs:
           # 개별 체크해준다. 루트 경로보다 CI가 실제 쓰는 Registry까지 포함해 더 정확하다.
           # harbor_health_check 모듈이 상태코드뿐 아니라 응답 바디의 status 필드까지 검증한다.
           - https://100.96.79.73/api/v2.0/health # Harbor (harbor VM, Tailscale, 자체 서명 인증서)
+        labels:
+          probe_name: "4. Harbor 레지스트리"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # 2026-07-20, 사용자 접점(user-facing) 가용성 probe. SRE 관점의 블랙박스는
+  # 사용자가 실제 접속하는 주소를 재야 한다(Google SRE Book ch.6). 실제 서비스
+  # 접속 주소는 192.168.0.56:3001 - 구LAN NAT를 거쳐 production frontend
+  # (10.10.10.30:3001, Next.js)로 포워딩되는 구조(2026-07-20 실측: 두 주소 모두
+  # 동일 Next.js 응답). 처음엔 b-gateway(:8080) 루트를 진입점으로 추정해 달았다가
+  # 실제 사용자 주소로 정정함. 주의: 구LAN 주소라 VLAN 전환 완료 시 접속 주소가
+  # 바뀔 수 있음 - 그때 이 타겟도 따라 변경할 것.
+  - job_name: blackbox-http-user-facing
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://zerodang.org/ # 최종 공개 도메인 (Cloudflare 경유, 2026-07-21 확정)
+        labels:
+          probe_name: "0. 공개 도메인 (zerodang.org)"
+      - targets:
+          - http://192.168.0.56:3001/ # 실제 사용자 접속 주소 (NAT -> production frontend)
+        labels:
+          probe_name: "1. 사용자 서비스 (NAT 경유)"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # 앱 내부 관측점 2개 - 사용자 probe(위)와 조합해 장애 지점을 구분한다:
+  # 사용자 X + frontend 직접 O => NAT 계층 문제(성애님 소관),
+  # 사용자 X + frontend 직접 X => frontend 다운,
+  # 사용자 O + gateway X => 페이지는 뜨지만 모든 API(/b/*) 죽음.
+  - job_name: blackbox-http-app-internal
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://10.10.10.30:3001/ # production frontend 직접 (Next.js)
+        labels:
+          probe_name: "2. Frontend 직접 (production)"
+      - targets:
+          - http://10.10.10.30:8080/ # production b-gateway (openresty, API 백본)
+        labels:
+          probe_name: "3. API 게이트웨이 (b-gateway)"
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

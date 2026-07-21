@@ -22,7 +22,7 @@
       },
       "id": 101,
       "options": {
-        "content": "**ZeroCheck 인프라 & 앱 모니터링 개요** — VM 3대(harbor/db/monitoring)의 White-box 지표(node_exporter)와 Harbor의 Black-box 외부 가용성 체크, ci_sandbox 앱의 RED(Rate/Errors/Duration) 지표를 함께 봅니다. 임계치: CPU 85%(경고, 10분 지속) · Memory 90%(경고) · Disk 85%(경고)/95%(위험) · 앱 5xx 에러율 5%(위험). 색상 기준: 초록=정상, 주황=경고, 빨강=즉시 조치 필요.",
+        "content": "**ZeroCheck 인프라 & 앱 모니터링 개요** — VM 4대(harbor/db/monitoring/production)의 White-box 지표(node_exporter)와 Harbor의 Black-box 외부 가용성 체크, 사용자 접점(192.168.0.56:3001)의 Black-box 가용성를 함께 봅니다. 임계치: CPU 85%(경고, 10분 지속) · Memory 90%(경고) · Disk 85%(경고)/95%(위험). 색상 기준: 초록=정상, 주황=경고, 빨강=즉시 조치 필요.",
         "mode": "markdown"
       },
       "title": "",
@@ -69,7 +69,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 5
       },
@@ -86,11 +86,15 @@
           "fields": "",
           "values": true
         },
-        "textMode": "value_and_name"
+        "textMode": "value_and_name",
+        "text": {
+          "titleSize": 18,
+          "valueSize": 48
+        }
       },
       "targets": [
         {
-          "expr": "up{job=~\"harbor-vm|db-vm|monitoring-vm\"}",
+          "expr": "up{job=~\"harbor-vm|db-vm|monitoring-vm|production-vm\"}",
           "instant": true,
           "legendFormat": "{{job}}",
           "refId": "A"
@@ -104,7 +108,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Black-box 체크 - 실제 HTTP 요청으로 확인한 외부 접속 가능 여부. Harbor(공식 헬스체크 API), SonarQube, Grafana, ci_sandbox 대상.",
+      "description": "번호 = 관리 우선순위. 1 사용자 서비스(최우선-사용자 직접 영향) / 2 Frontend 직접(1과 조합해 NAT 문제 구분) / 3 API 게이트웨이(/b/* 전체) / 4 Harbor(배포 불가) / 5 SonarQube(CI 게이트) / 6 Grafana(모니터링 자체). 타일은 우선순위 순으로 정렬됨.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
@@ -126,10 +130,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 12,
-        "x": 12,
-        "y": 5
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 9
       },
       "id": 104,
       "options": {
@@ -144,14 +148,54 @@
           "fields": "",
           "values": true
         },
-        "textMode": "value_and_name"
+        "textMode": "value_and_name",
+        "text": {
+          "titleSize": 16,
+          "valueSize": 44
+        }
       },
       "targets": [
         {
-          "expr": "probe_success",
-          "instant": true,
-          "legendFormat": "{{instance}}",
-          "refId": "A"
+          "datasource": null,
+          "refId": "G",
+          "legendFormat": "{{probe_name}}",
+          "expr": "probe_success{probe_name=~\"0[.].*\"}"
+        },
+        {
+          "datasource": null,
+          "refId": "A",
+          "legendFormat": "{{probe_name}}",
+          "expr": "probe_success{probe_name=~\"1[.].*\"}"
+        },
+        {
+          "datasource": null,
+          "refId": "B",
+          "legendFormat": "{{probe_name}}",
+          "expr": "probe_success{probe_name=~\"2[.].*\"}"
+        },
+        {
+          "datasource": null,
+          "refId": "C",
+          "legendFormat": "{{probe_name}}",
+          "expr": "probe_success{probe_name=~\"3[.].*\"}"
+        },
+        {
+          "datasource": null,
+          "refId": "D",
+          "legendFormat": "{{probe_name}}",
+          "expr": "probe_success{probe_name=~\"4[.].*\"}"
+        },
+        {
+          "datasource": null,
+          "refId": "E",
+          "legendFormat": "{{probe_name}}",
+          "expr": "probe_success{probe_name=~\"5[.].*\"}"
+        },
+        {
+          "datasource": null,
+          "refId": "F",
+          "legendFormat": "{{probe_name}}",
+          "expr": "probe_success{probe_name=~\"6[.].*\"}"
         }
       ],
       "title": "외부 서비스 가용성 (Blackbox)",
@@ -163,7 +207,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 14
       },
       "id": 400,
       "panels": [],
@@ -178,7 +222,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 15
       },
       "id": 401,
       "options": {
@@ -208,7 +252,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 21
       },
       "id": 105,
       "panels": [],
@@ -244,7 +288,7 @@
         "h": 6,
         "w": 8,
         "x": 0,
-        "y": 17
+        "y": 22
       },
       "id": 5,
       "options": {
@@ -263,9 +307,9 @@
       },
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
+          "expr": "100 - (avg by (job) (rate(node_cpu_seconds_total{mode=\"idle\", job=~\"$vm\"}[5m])) * 100)",
           "instant": true,
-          "legendFormat": "{{vm}}",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
@@ -301,7 +345,7 @@
         "h": 6,
         "w": 8,
         "x": 8,
-        "y": 17
+        "y": 22
       },
       "id": 6,
       "options": {
@@ -320,9 +364,9 @@
       },
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
+          "expr": "(1 - (node_memory_MemAvailable_bytes{job=~\"$vm\"} / node_memory_MemTotal_bytes{job=~\"$vm\"})) * 100",
           "instant": true,
-          "legendFormat": "{{vm}}",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
@@ -362,7 +406,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 17
+        "y": 22
       },
       "id": 7,
       "options": {
@@ -381,9 +425,9 @@
       },
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
+          "expr": "(1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",job=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",job=~\"$vm\"}) * 100",
           "instant": true,
-          "legendFormat": "{{vm}}",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
@@ -399,13 +443,13 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 23
+        "y": 28
       },
       "id": 1,
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace(label_replace(100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$vm\"}[5m])) * 100), \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
-          "legendFormat": "{{vm}}",
+          "expr": "100 - (avg by (job) (rate(node_cpu_seconds_total{mode=\"idle\", job=~\"$vm\"}[5m])) * 100)",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
@@ -448,13 +492,13 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 28
       },
       "id": 2,
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace(label_replace((1 - (node_memory_MemAvailable_bytes{instance=~\"$vm\"} / node_memory_MemTotal_bytes{instance=~\"$vm\"})) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
-          "legendFormat": "{{vm}}",
+          "expr": "(1 - (node_memory_MemAvailable_bytes{job=~\"$vm\"} / node_memory_MemTotal_bytes{job=~\"$vm\"})) * 100",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
@@ -497,13 +541,13 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 36
       },
       "id": 3,
       "targets": [
         {
-          "expr": "label_replace(label_replace(label_replace(label_replace((1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",instance=~\"$vm\"}) * 100, \"vm\", \"harbor-vm\", \"instance\", \"192[.]168[.]0[.]53:9100\"), \"vm\", \"db-vm\", \"instance\", \"192[.]168[.]0[.]54:9100\"), \"vm\", \"monitoring-vm\", \"instance\", \"192[.]168[.]0[.]51:9100\"), \"vm\", \"production-vm\", \"instance\", \"10[.]10[.]10[.]30:9100\")",
-          "legendFormat": "{{vm}}",
+          "expr": "(1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",job=~\"$vm\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\",job=~\"$vm\"}) * 100",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ],
@@ -543,7 +587,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 44
       },
       "id": 200,
       "panels": [],
@@ -581,9 +625,9 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 12,
+        "w": 24,
         "x": 0,
-        "y": 40
+        "y": 45
       },
       "id": 201,
       "options": {
@@ -598,11 +642,15 @@
           "fields": "",
           "values": true
         },
-        "textMode": "value_and_name"
+        "textMode": "value_and_name",
+        "text": {
+          "titleSize": 15,
+          "valueSize": 38
+        }
       },
       "targets": [
         {
-          "expr": "label_replace(topk(5, sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[5m])) by (name, job) * 100), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
+          "expr": "label_replace(topk(5, sum(rate(container_cpu_usage_seconds_total{name!=\"\", job=~\"cadvisor-$vm\"}[5m])) by (name, job) * 100), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
           "instant": true,
           "legendFormat": "{{name}} · {{vm}}",
           "refId": "A"
@@ -642,9 +690,9 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 12,
-        "x": 12,
-        "y": 40
+        "w": 24,
+        "x": 0,
+        "y": 51
       },
       "id": 202,
       "options": {
@@ -659,11 +707,15 @@
           "fields": "",
           "values": true
         },
-        "textMode": "value_and_name"
+        "textMode": "value_and_name",
+        "text": {
+          "titleSize": 15,
+          "valueSize": 38
+        }
       },
       "targets": [
         {
-          "expr": "label_replace(topk(5, sum(container_memory_usage_bytes{name!=\"\"}) by (name, job) / 1024 / 1024), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
+          "expr": "label_replace(topk(5, sum(container_memory_usage_bytes{name!=\"\", job=~\"cadvisor-$vm\"}) by (name, job) / 1024 / 1024), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
           "instant": true,
           "legendFormat": "{{name}} · {{vm}}",
           "refId": "A"
@@ -679,14 +731,14 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 12,
+        "w": 24,
         "x": 0,
-        "y": 46
+        "y": 57
       },
       "id": 203,
       "targets": [
         {
-          "expr": "label_replace(topk(10, sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[5m])) by (name, job) * 100), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
+          "expr": "label_replace(topk(10, sum(rate(container_cpu_usage_seconds_total{name!=\"\", job=~\"cadvisor-$vm\"}[5m])) by (name, job) * 100), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
           "legendFormat": "{{name}} · {{vm}}",
           "refId": "A"
         }
@@ -738,14 +790,14 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 12,
-        "x": 12,
-        "y": 46
+        "w": 24,
+        "x": 0,
+        "y": 67
       },
       "id": 204,
       "targets": [
         {
-          "expr": "label_replace(topk(10, sum(container_memory_usage_bytes{name!=\"\"}) by (name, job) / 1024 / 1024), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
+          "expr": "label_replace(topk(10, sum(container_memory_usage_bytes{name!=\"\", job=~\"cadvisor-$vm\"}) by (name, job) / 1024 / 1024), \"vm\", \"$1\", \"job\", \"cadvisor-(.*)\")",
           "legendFormat": "{{name}} · {{vm}}",
           "refId": "A"
         }
@@ -796,7 +848,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 77
       },
       "id": 300,
       "panels": [],
@@ -843,7 +895,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 57
+        "y": 78
       },
       "id": 301,
       "options": {
@@ -885,7 +937,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 57
+        "y": 78
       },
       "id": 302,
       "options": {
@@ -922,7 +974,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 57
+        "y": 78
       },
       "id": 303,
       "options": {
@@ -965,7 +1017,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 57
+        "y": 78
       },
       "id": 304,
       "options": {
@@ -980,7 +1032,7 @@
           "fields": "",
           "values": true
         },
-        "textMode": "value_and_name"
+        "textMode": "value"
       },
       "targets": [
         {
@@ -997,7 +1049,8 @@
         "overrides": []
       },
       "title": "프로젝트 쿼터 사용률",
-      "type": "stat"
+      "type": "stat",
+      "description": "Harbor 전체 프로젝트 합산 - 설정된 쿼터 대비 사용률(%). 쿼터 미설정(unlimited) 프로젝트는 계산에서 제외. 2026-07-20 기준 쿼터: backend 10GiB / dangdang 8GiB / library 2GiB / test 1GiB."
     },
     {
       "datasource": {
@@ -1009,13 +1062,13 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 63
+        "y": 84
       },
       "id": 305,
       "targets": [
         {
-          "expr": "sum(rate(harbor_artifact_pulled[5m])) by (project)",
-          "legendFormat": "{{project}}",
+          "expr": "sum(rate(harbor_artifact_pulled[5m])) by (project_name)",
+          "legendFormat": "{{project_name}}",
           "refId": "A"
         }
       ],
@@ -1028,7 +1081,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 70
+        "y": 91
       },
       "id": 310,
       "panels": [],
@@ -1044,7 +1097,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 71
+        "y": 92
       },
       "id": 311,
       "options": {
@@ -1059,13 +1112,14 @@
           "fields": "",
           "values": true
         },
-        "textMode": "value_and_name"
+        "textMode": "value"
       },
       "targets": [
         {
           "expr": "kafka_brokers",
           "instant": true,
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "브로커 수"
         }
       ],
       "title": "활성 브로커 수",
@@ -1120,7 +1174,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 71
+        "y": 92
       },
       "id": 312,
       "options": {
@@ -1139,7 +1193,7 @@
       },
       "targets": [
         {
-          "expr": "sum(kafka_consumergroup_lag_sum)",
+          "expr": "sum(clamp_min(kafka_consumergroup_lag, 0))",
           "instant": true,
           "refId": "A"
         }
@@ -1156,7 +1210,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 71
+        "y": 92
       },
       "id": 313,
       "options": {
@@ -1171,13 +1225,14 @@
           "fields": "",
           "values": true
         },
-        "textMode": "value_and_name"
+        "textMode": "value"
       },
       "targets": [
         {
           "expr": "count(count by (consumergroup) (kafka_consumergroup_members))",
           "instant": true,
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Consumer Group 수"
         }
       ],
       "title": "활성 Consumer Group 수",
@@ -1209,20 +1264,71 @@
       "description": "레시피 수집 파이프라인(recipe-main, thumbnail) + Vision 워커 컨슈머 랙 추이",
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 77
+        "y": 98
       },
       "id": 314,
       "targets": [
         {
-          "expr": "sum(kafka_consumergroup_lag) by (consumergroup, topic)",
+          "expr": "sum(clamp_min(kafka_consumergroup_lag, 0)) by (consumergroup, topic)",
           "legendFormat": "{{consumergroup}} ({{topic}})",
           "refId": "A"
         }
       ],
       "title": "Consumer Group별 Lag 추이",
-      "type": "timeseries"
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0,
+          "custom": {
+            "axisSoftMax": 10
+          }
+        }
+      }
+    },
+    {
+      "id": 402,
+      "type": "timeseries",
+      "title": "토픽별 유입 (최근 5분 누적)",
+      "description": "이벤트 파이프라인 토픽별 최근 5분 유입 메시지 수. 저트래픽 환경에서 이벤트 흐름 확인용 - lag 0 + 유입 존재 = 정상 소비 중",
+      "gridPos": {
+        "x": 12,
+        "y": 98,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0,
+          "custom": {
+            "axisSoftMax": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": null,
+          "refId": "A",
+          "legendFormat": "{{topic}}",
+          "expr": "sum(increase(kafka_topic_partition_current_offset{topic!=\"__consumer_offsets\"}[5m])) by (topic)"
+        }
+      ]
     }
   ],
   "refresh": "30s",
@@ -1231,15 +1337,20 @@
     "list": [
       {
         "current": {
-          "text": "All",
-          "value": "$__all"
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ],
+          "selected": true
         },
         "includeAll": true,
         "label": "VM",
         "multi": true,
         "name": "vm",
         "options": [],
-        "query": "monitoring-vm : 192.168.0.51:9100,harbor-vm : 192.168.0.53:9100,db-vm : 192.168.0.54:9100,production-vm : 10.10.10.30:9100",
+        "query": "harbor-vm,db-vm,monitoring-vm,production-vm",
         "type": "custom"
       }
     ]
