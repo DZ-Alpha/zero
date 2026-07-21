@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.7
+# cache-validation: registry cache v2 (2026-07-21)
 FROM node:22.15.0-bookworm-slim@sha256:557e52a0fcb928ee113df7e1fb5d4f60c1341dbda53f55e3d815ca10807efdce AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
