@@ -62,9 +62,13 @@ export function ChatPanel() {
       });
     }
 
+    // AI팀 리포트(streaming-frontend-spec.md §3) — delta만 처리하고 done/error를
+    // 무시해서 "답변을 준비하고 있어요" 로딩이 안 꺼지는 버그가 있었다. 스트림이
+    // 끝나길 기다리지 않고 done/error를 받는 즉시 로딩을 꺼준다.
     try {
       await streamChatbotMessage(question, getAccessToken(), (event) => {
         if (event.type === "delta") appendAnswer(event.text);
+        else if (event.type === "done" || event.type === "error") setPending(false);
       });
     } catch {
       // 스트리밍 자체가 실패 — 아래에서 messageStarted 여부로 폴백 처리

@@ -413,6 +413,35 @@ export async function streamChatbotMessage(
   const decoder = new TextDecoder();
   let buffer = "";
 
+  function emitLine(line: string) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return;
+    const jsonText = trimmed.slice(5).trim();
+    if (!jsonText) return;
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(jsonText);
+    } catch {
+      return;
+    }
+
+    if (typeof payload.delta === "string") {
+      onEvent({ type: "delta", text: payload.delta });
+    } else if (payload.error) {
+      onEvent({ type: "error", message: String(payload.error) });
+    } else if (payload.done) {
+      onEvent({
+        type: "done",
+        meta: {
+          "cs-partner": payload["cs-partner"] as string | null | undefined,
+          time: payload.time as string | null | undefined,
+          "is-img": payload["is-img"] as boolean | undefined,
+        },
+      });
+    }
+  }
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -420,36 +449,14 @@ export async function streamChatbotMessage(
 
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? ""; // 마지막 조각은 아직 줄이 안 끝났을 수 있어 버퍼에 남긴다
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const jsonText = trimmed.slice(5).trim();
-      if (!jsonText) continue;
-
-      let payload: Record<string, unknown>;
-      try {
-        payload = JSON.parse(jsonText);
-      } catch {
-        continue;
-      }
-
-      if (typeof payload.delta === "string") {
-        onEvent({ type: "delta", text: payload.delta });
-      } else if (payload.error) {
-        onEvent({ type: "error", message: String(payload.error) });
-      } else if (payload.done) {
-        onEvent({
-          type: "done",
-          meta: {
-            "cs-partner": payload["cs-partner"] as string | null | undefined,
-            time: payload.time as string | null | undefined,
-            "is-img": payload["is-img"] as boolean | undefined,
-          },
-        });
-      }
-    }
+    for (const line of lines) emitLine(line);
   }
+
+  // 스트림이 끝나는 마지막 청크가 개행 없이 끝나면(서버가 트레일링 "\n" 없이
+  // done 이벤트로 연결을 바로 닫는 경우), 그 줄이 buffer에 남은 채로 위 루프가
+  // 끝나버려서 done/마지막 delta가 통째로 유실됐다 — 프론트가 done을 못 받아
+  // "답변을 준비하고 있어요" 로딩이 안 꺼지는 버그의 원인. 남은 버퍼도 마저 처리한다.
+  if (buffer.trim()) emitLine(buffer);
 }
 
 export function unlinkSocialAccount(token: string, provider: string) {
