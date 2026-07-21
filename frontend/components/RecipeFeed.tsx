@@ -50,7 +50,9 @@ export function RecipeFeed() {
       return queryMatch && categoryMatch && (!personalOnly || personalSlugs.has(recipe.slug) || personalIds.has(recipe.databaseId));
     });
     if (sort === "인기순") list = [...list].sort((a, b) => b.savedDemo - a.savedDemo);
-    if (sort === "빠른 조리순") list = [...list].sort((a, b) => Number.parseInt(a.time.replace(/\D/g, "")) - Number.parseInt(b.time.replace(/\D/g, "")));
+    // "빠른 조리순"은 조리 시간 숨김(RecipeCover.tsx 참고)과 함께 잠시 뺐다 —
+    // DB 레시피 대부분 time이 "조리 시간 준비 중"이라 파싱이 NaN이 돼 정렬이
+    // 사실상 동작하지 않았다. 시간 데이터가 채워지면 옵션과 함께 되돌린다.
     if (sort === "등록 당류 낮은순") list = [...list].sort((a, b) => a.estimatedSugar - b.estimatedSugar);
     return list;
   }, [category, personalOnly, query, recipes, sort]);
@@ -102,7 +104,7 @@ export function RecipeFeed() {
         <div className="catalog-list wrap">
           <header className="catalog-tools">
           <div className="filter-chips">{categories.map((item) => <button type="button" className={category === item ? "is-active" : ""} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div>
-          <div className="catalog-sort"><label><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} />추천 메뉴만</label><select value={sort} onChange={(event) => setSort(event.target.value)}><option>추천순</option><option>인기순</option><option>빠른 조리순</option><option>등록 당류 낮은순</option></select></div>
+          <div className="catalog-sort"><label><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} />추천 메뉴만</label><select value={sort} onChange={(event) => setSort(event.target.value)}><option>추천순</option><option>인기순</option><option>등록 당류 낮은순</option></select></div>
           </header>
           {activeFilters.length > 0 && <div className="active-filter-summary" aria-label="적용된 필터"><span>적용한 조건</span>{activeFilters.map((item) => <b key={item}>{item}</b>)}<button type="button" onClick={resetFilters}>모두 지우기</button></div>}
           {source === "mock" && !loading && <div className="inline-service-notice" role="status"><div><b>서버에서 레시피를 불러오지 못했어요.</b><span>지금은 준비된 레시피 목록을 보여드려요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
