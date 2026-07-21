@@ -20,8 +20,12 @@ logger = logging.getLogger("app.main")
 
 # create_all은 이미 있는 테이블은 ALTER하지 않는다 — users에 새 컬럼을 추가할 때마다
 # 여기 직접 추가해야 운영 DB에도 반영된다 (meal_logs에서 겪은 것과 같은 패턴).
+# 주의: diet-service/recipe-service 모델은 __table_args__로 schema="service"를 명시하지만
+# login-service의 User/SocialAccount/AdminAccount는 스키마를 명시한 적이 없다 — 연결의
+# 기본 search_path를 그대로 따른다. 여기 스키마 접두사를 붙이면 실제 테이블 위치와
+# 어긋나 "relation does not exist"로 기동이 통째로 실패한다 (2026-07-21 장애 원인).
 _USER_COLUMN_MIGRATIONS = [
-    "ALTER TABLE service.users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100)",
 ]
 
 
@@ -29,8 +33,15 @@ _USER_COLUMN_MIGRATIONS = [
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for statement in _USER_COLUMN_MIGRATIONS:
-            await conn.execute(text(statement))
+    # 컬럼 마이그레이션은 create_all과 별도 트랜잭션으로 분리 — 여기서 하나라도 실패해도
+    # 로그인 자체(가장 중요한 기능)는 계속 뜨게 한다. 2026-07-21 장애: 스키마 접두사
+    # 오류로 이 블록이 죽으면서 로그인 서비스 전체가 기동 불가 상태가 됐었다.
+    try:
+        async with engine.begin() as conn:
+            for statement in _USER_COLUMN_MIGRATIONS:
+                await conn.execute(text(statement))
+    except Exception:
+        logger.exception("user column migration failed — continuing startup without it")
     yield
 
 
