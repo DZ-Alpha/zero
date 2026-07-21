@@ -32,7 +32,7 @@ function toRankingItems(items: HomeProductItem[], personalized: boolean): Rankin
 }
 
 const readingList = [
-  { category: "성분 읽기", title: "제로슈거인데 당류가 0g이 아닐 수 있나요?", copy: "표시 문구와 영양성분표를 함께 봐야 하는 이유를 알아봐요!", time: "3분" },
+  { category: "성분 읽기", title: "제로슈거인데 당류가 0g이 아닐 수 있나요?", copy: "표시 문구와 영양성분표를 함께 봐야 하는 이유를 알아봐요.", time: "3분" },
   { category: "감미료", title: "알룰로스와 에리스리톨은 무엇이 다를까요?", copy: "자주 쓰이는 대체 감미료의 특징을 쉬운 말로 정리했어요.", time: "4분" },
   { category: "식단 기록", title: "간식을 끊지 않고 당류를 줄이는 방법", copy: "먹는 시간을 바꾸고 양을 기록하는 작은 습관부터 시작해요.", time: "3분" },
   { category: "처음 읽기", title: "영양성분표는 이 세 줄부터 보면 쉬워요", copy: "열량, 당류, 1회 제공량을 순서대로 확인해보세요.", time: "2분" },
