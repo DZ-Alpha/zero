@@ -103,9 +103,39 @@ services:
     image: 192.168.0.53/dangdang-backend/admin-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: admin-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=admin-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "8008:8008"
-    <<: *hardening
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # 2026-07-20, PR #52(MN-0111)로 추가된 AI 챗봇 서비스. 필요 env는
   # backend/ai/.env.example 참고(JWT_SECRET/BEDROCK_*/POSTGRES_* 등) -
@@ -140,41 +170,191 @@ services:
     image: 192.168.0.53/dangdang-backend/main-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: main-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=main-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "8010:8010"
-    <<: *hardening
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   community-service:
     image: 192.168.0.53/dangdang-backend/community-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: community-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=community-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "8012:8012"
-    <<: *hardening
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   recipe-service:
     image: 192.168.0.53/dangdang-backend/recipe-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: recipe-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=recipe-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "8014:8014"
-    <<: *hardening
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   product-service:
     image: 192.168.0.53/dangdang-backend/product-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: product-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=product-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "8016:8016"
-    <<: *hardening
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   ingredients-service:
     image: 192.168.0.53/dangdang-backend/ingredients-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: ingredients-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=ingredients-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "8018:8018"
-    <<: *hardening
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   diet-service:
     image: 192.168.0.53/dangdang-backend/diet-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
@@ -182,9 +362,22 @@ services:
     env_file: ./.env
     # .env의 PRODUCT_SERVICE_URL은 로컬 단독 실행 기준(localhost:8016)이라,
     # 같은 compose 네트워크 안에서는 컨테이너명으로 덮어써야 한다.
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PRODUCT_SERVICE_URL=http://product-service:8016
+      - OTEL_SERVICE_NAME=diet-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     depends_on:
       product-service:
         condition: service_healthy

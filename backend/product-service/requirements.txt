@@ -7,3 +7,5 @@ sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 httpx==0.28.1
 PyJWT==2.13.0
+opentelemetry-distro==0.65b0
+opentelemetry-exporter-otlp==1.44.0

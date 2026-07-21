@@ -388,12 +388,40 @@ export type ChatbotResponse = {
   "is-img"?: boolean;
 };
 
+const GUEST_CHAT_SESSION_KEY = "chat_session_id";
+
+// conversation-memory-frontend-spec.md — 비로그인 사용자의 대화방 식별자. 한 번
+// 발급하면 localStorage에 저장해두고 매 요청에 실어 보내야, 페이지 이동·새로고침
+// 후에도 서버가 같은 대화로 이어서 기억한다(session_id가 없으면 매번 새 대화로 취급).
+export function getGuestSessionId() {
+  if (typeof window === "undefined") return "";
+  let id = window.localStorage.getItem(GUEST_CHAT_SESSION_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    window.localStorage.setItem(GUEST_CHAT_SESSION_KEY, id);
+  }
+  return id;
+}
+
+// 로그인 사용자는 usr(JWT)로 계정 기준 대화방을, 비로그인 사용자는 session_id로
+// 게스트 대화방을 식별한다 — 둘을 같이 보내지 않는다(스펙 §1).
+function chatSessionParams(token?: string | null) {
+  return token ? { usr: token } : { session_id: getGuestSessionId() };
+}
+
 // MN-0111: 요청 키는 명세대로 msg/template, 응답은 cs-partner/time/msg/is-img.
 export function sendChatbotMessage(msg: string, token?: string | null, template?: string) {
   return apiRequest<ChatbotResponse>("/ai/chatbot", {
     method: "POST",
-    body: JSON.stringify({ msg, ...(token ? { usr: token } : {}), ...(template ? { template } : {}) }),
+    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}) }),
   });
+}
+
+export type ChatHistoryMessage = { role: "user" | "assistant"; text: string };
+
+// conversation-memory-frontend-spec.md §2 — 채팅창을 열 때 이전 대화를 복원한다.
+export function getChatHistory(token?: string | null) {
+  return apiRequest<{ messages: ChatHistoryMessage[] }>(query("/ai/chatbot/history", chatSessionParams(token)));
 }
 
 export type ChatbotStreamEvent =
@@ -414,7 +442,7 @@ export async function streamChatbotMessage(
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ msg, ...(token ? { usr: token } : {}), ...(template ? { template } : {}) }),
+    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}) }),
   });
 
   if (!response.ok || !response.body) {
