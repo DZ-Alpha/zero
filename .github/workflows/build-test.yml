@@ -847,8 +847,8 @@ jobs:
           load: true
           # 2026-07-21, gha 캐시(GitHub 왕복·repo 10GB 한도) → Harbor registry
           # 캐시(LAN). image-manifest/oci-mediatypes는 Harbor OCI 호환 옵션.
-          cache-from: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache
-          cache-to: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache,mode=max,image-manifest=true,oci-mediatypes=true
+          cache-from: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache  # yamllint disable-line rule:line-length
+          cache-to: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache,mode=max,image-manifest=true,oci-mediatypes=true  # yamllint disable-line rule:line-length
       # backend-image-scanning과 같은 이유(setup-trivy 기본 설치 경로가
       # $HOME/.local/bin/trivy-bin 고정이라 harbor-runner/harbor-runner-2가 동시에
       # 돌면 "Text file busy"로 충돌 - 실제로 2번 재현/확인함) - 러너별 경로에 직접 설치.
