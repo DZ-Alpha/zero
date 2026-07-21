@@ -1,4 +1,5 @@
 # 멀티 스테이지 빌드(Docker 공식 권장 패턴) - 의존성 설치 산출물을 최종 이미지에서 제외한다.
+# cache: registry 캐시 검증 트리거 (2026-07-21)
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28 AS builder
 
 WORKDIR /app

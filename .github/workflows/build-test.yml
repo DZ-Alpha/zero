@@ -376,7 +376,25 @@ jobs:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       # v4
+      # 2026-07-21, frontend와 동일한 registry 캐시 구성(PR#101에서 검증,
+      # 첫 main 가동 실측 130초→12초): per-job 빌더에 host 네트워크(DNS)
+      # + Harbor CA 구운 buildkit 이미지(TLS) 지정.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
+        with:
+          driver-opts: |
+            network=host
+            image=harbor.hizero.local/dangdang/buildkit-harbor:v1
+      # registry 캐시 push(cache-to)에 빌드 시점 인증 필요 - 로그인을 빌드
+      # 앞으로 이동. PR 실행에서도 로그인하지만 이미지 push는 여전히 아래
+      # main 가드 스텝에서만 한다(캐시 blob만 push됨).
+      - name: Log in to Harbor
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+          logout: false
       - name: Build image
         # v7
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
@@ -385,8 +403,8 @@ jobs:
           pull: true
           tags: backend-${{ matrix.service }}:${{ github.sha }}
           load: true
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          cache-from: type=registry,ref=harbor.hizero.local/dangdang-backend/buildcache-${{ matrix.service }}:cache  # yamllint disable-line rule:line-length
+          cache-to: type=registry,ref=harbor.hizero.local/dangdang-backend/buildcache-${{ matrix.service }}:cache,mode=max,image-manifest=true,oci-mediatypes=true  # yamllint disable-line rule:line-length
       # setup-trivy 기본 설치 경로가 $HOME/.local/bin/trivy-bin로 고정돼 있어
       # harbor-runner/harbor-runner-2가 동시에 스캔을 돌리면 "Text file busy"로
       # 충돌한다(실제로 재현함). 러너별 경로에 직접 설치하고 trivy-action의 재설치는
@@ -405,25 +423,10 @@ jobs:
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
           skip-setup-trivy: true
-      - name: Log in to Harbor
-        # v3
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: harbor.hizero.local
-          username: ${{ secrets.HARBOR_ROBOT_USER }}
-          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
-          # 2026-07-19, PR #49에서 실측 - docker/login-action은 기본적으로
-          # (logout: true) job 종료 시 post-step에서 자동 docker logout을
-          # 실행한다(공식 문서 확인). 이 job은 8개 backend 서비스가 매트릭스로
-          # self-hosted 러너 2대에서 병렬 실행되는데, 전부 같은
-          # $HOME/.docker/config.json을 공유한다 - 먼저 끝난 서비스의 자동
-          # logout이 아직 push 중인 다른 서비스의 인증정보까지 지워버려서
-          # "no basic auth credentials"로 push가 실패했다(community-service
-          # 실측, job 88208374622). logout을 꺼서 각 job이 알아서 지우지
-          # 않게 한다 - 러너는 CI 전용이라 인증정보가 남아있어도 위험 증가가
-          # 없다(harbor.hizero.local은 완료 후에도 robot 계정만 접근 가능한
-          # 내부 레지스트리).
-          logout: false
+      # (2026-07-21) Harbor 로그인은 registry 캐시 때문에 Build image 앞으로
+      # 이동됨. logout:false 유지 이유(2026-07-19, PR#49 실측): 매트릭스 병렬
+      # job들이 같은 $HOME/.docker/config.json을 공유해, 먼저 끝난 job의 자동
+      # logout이 다른 job의 push를 "no basic auth credentials"로 깨뜨렸음.
       # 재헌님이 이미 만들어 운영 중인 production VM(10.10.10.30)의
       # ~/backend/docker-compose.yaml이 기대하는 이미지 경로/태그 컨벤션을 그대로
       # 따른다(harbor VM 자체 대상으로 별도 경로/포트를 새로 만들었다가, 이미 잘
