@@ -1,4 +1,4 @@
-const providers = [
+export const OAUTH_PROVIDERS = [
   { id: "google", label: "Google", mark: "G", className: "google", enabled: false },
   { id: "kakao", label: "카카오", mark: "K", className: "kakao", enabled: true },
   { id: "naver", label: "NAVER", mark: "N", className: "naver", enabled: true },
@@ -10,17 +10,17 @@ export function OAuthButtons({ mode }: { mode: "login" | "signup" }) {
 
   return (
     <div className="oauth-list">
-      {providers.map((provider) => provider.enabled ? (
+      {OAUTH_PROVIDERS.map((provider) => provider.enabled ? (
         <a
           className={`oauth-button is-${provider.className}`}
           href={`/b/social-access/${provider.id}/login?fallback=${encodeURIComponent(returnPath)}`}
           key={provider.id}
         >
-          <span>{provider.mark}</span><b>{provider.label}로 {mode === "signup" ? "가입하기" : "계속하기"}</b><i>→</i>
+          <span>{provider.mark}</span><b>{provider.label}로 {mode === "signup" ? "가입하기" : "계속하기"}</b><i className="oauth-arrow">→</i>
         </a>
       ) : (
         <button className={`oauth-button is-${provider.className} is-disabled`} type="button" disabled key={provider.id}>
-          <span>{provider.mark}</span><b>{provider.label} 로그인</b><i>준비 중</i>
+          <span>{provider.mark}</span><b>{provider.label} 로그인</b><i className="oauth-soon">준비중</i>
         </button>
       ))}
     </div>

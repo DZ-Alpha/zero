@@ -9,12 +9,12 @@ class _StreamLLM:
         self.last_user = None
         self.last_system = None
 
-    async def complete(self, system, user):
+    async def complete(self, system, messages):
         return "x"
 
-    async def complete_stream(self, system, user):
+    async def complete_stream(self, system, messages):
         self.last_system = system
-        self.last_user = user
+        self.last_user = messages[-1]["text"]
         for part in ["탄수화물은", " 에너지원", "이에요"]:
             yield part
 

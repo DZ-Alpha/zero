@@ -177,12 +177,21 @@ export function deleteAccount(token: string) {
   return apiRequest<{ status: string }>(query("/user/mypage", { usr: token, exituser: "EXIT" }), { method: "DELETE" });
 }
 
-export function getHealthProfile(token: string) {
-  return apiRequest<HealthProfileResponse>(query("/home/health-profile", { usr: token }));
+// DB의 ck_health_gender 체크 제약은 영문 코드(MALE/FEMALE)만 허용하는데, 프론트는
+// 어디서나 한글 라벨(남성/여성)로 gender를 다룬다 — 회원가입 목표 저장 때 한글을
+// 그대로 보내서 IntegrityError로 계속 실패하던 버그(2026-07-21). API 경계에서만
+// 변환해서 나머지 코드는 한글 표기를 그대로 쓸 수 있게 한다.
+const GENDER_TO_CODE: Record<string, string> = { "여성": "FEMALE", "남성": "MALE" };
+const GENDER_FROM_CODE: Record<string, string> = { FEMALE: "여성", MALE: "남성" };
+
+export async function getHealthProfile(token: string) {
+  const profile = await apiRequest<HealthProfileResponse>(query("/home/health-profile", { usr: token }));
+  return { ...profile, gender: profile.gender ? GENDER_FROM_CODE[profile.gender] ?? profile.gender : profile.gender };
 }
 
 export function updateFirstSet(token: string, payload: {
   nickname?: string;
+  email?: string;
   favoriteCategory?: string[];
   isAllergic?: boolean;
   optionalAgree?: boolean;
@@ -203,7 +212,7 @@ export function updateHealthProfile(token: string, payload: HealthProfileRespons
       usr: token,
       consent: payload.consent ?? false,
       birthYear: payload.birthYear,
-      gender: payload.gender,
+      gender: payload.gender ? GENDER_TO_CODE[payload.gender] ?? payload.gender : payload.gender,
       heightCm: payload.heightCm,
       weightKg: payload.weightKg,
       activityLevel: payload.activityLevel,
@@ -299,6 +308,9 @@ export function getDietOtherFoods(token: string, id: string) {
 // 기존 getDietCalendar + 로그마다 getDietOtherFoods 호출하던 N+1이 필요 없다.
 export type DietRecordApiItem = {
   recordId: string;
+  // meal_item PK — 사진 기록 하나에서 음식이 여러 개 인식되면 recordId(meal_log_id)가
+  // 행마다 동일해서 리스트 렌더링/삭제 대상 식별에 못 쓴다. entryId는 행마다 유일하다.
+  entryId: string;
   mealType: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK" | "OTHER";
   itemType: "recipe" | "product" | "photo";
   itemId: string;

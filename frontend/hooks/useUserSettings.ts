@@ -102,6 +102,7 @@ export async function saveUserSettingsToServer(
   if (scope === "profile" || scope === "interests") {
     requests.push(updateFirstSet(token, {
       nickname: scope === "profile" ? profile.name?.trim() || undefined : undefined,
+      email: scope === "profile" ? profile.email?.trim() || undefined : undefined,
       favoriteCategory: scope === "interests" ? profile.interests ?? [] : undefined,
       optionalAgree: profile.healthConsent,
       tall: scope === "profile" && profile.height ? Math.round(profile.height) : undefined,

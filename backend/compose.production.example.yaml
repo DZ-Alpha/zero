@@ -116,6 +116,22 @@ services:
     env_file: ./.env
     volumes:
       - ${HOME}/.aws:/home/appuser/.aws:ro   # Bedrock 자격증명(non-root 유저 appuser의 홈)
+    # 2026-07-21, OTel 계측(윤경님 담당분 대행 - login-service와 동일 패턴).
+    # environment를 로컬로 두면 anchor의 environment가 통째로 덮이므로
+    # PYTHONDONTWRITEBYTECODE도 함께 명시한다(login/diet와 같은 방식).
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=ai
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "8022:8022"
     <<: *hardening

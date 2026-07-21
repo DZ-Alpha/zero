@@ -18,6 +18,9 @@ export type DietRecord = {
   note?: string;
   href?: string;
   source?: "local" | "server";
+  // source === "server"일 때 실제 삭제 API 대상(meal_log_id). id는 화면
+  // key/구분용이라 사진 기록처럼 한 meal_log에 항목이 여럿이면 id와 다를 수 있다.
+  recordId?: string;
 };
 
 export type DietRecordsByDate = Record<string, DietRecord[]>;
@@ -210,7 +213,7 @@ export function useDietRecords() {
   const deleteRecord = useCallback(async (dateKey: string, record: DietRecord) => {
     if (record.source === "server") {
       const token = getAccessToken();
-      const recordId = record.id.replace(/^server-/, "");
+      const recordId = record.recordId ?? record.id.replace(/^server-/, "");
       if (token) {
         try {
           await deleteDietRecord(token, recordId);
@@ -269,6 +272,7 @@ export function useDietRecords() {
       note: values.note,
       href: values.href,
       source: "server",
+      recordId: created.id,
     };
     setServerRecordsByDate((current) => ({
       ...current,
@@ -300,7 +304,10 @@ export function useDietRecords() {
       const next: DietRecordsByDate = {};
       monthData.list.forEach((day) => {
         next[day.date] = day.list.map((item) => ({
-          id: `server-${item.recordId}`,
+          // entryId(meal_item PK)로 고유해야 한다 — recordId(meal_log_id)는 사진 한 장에서
+          // 음식이 여럿 인식되면 항목마다 동일해서, 이걸 id로 쓰면 목록 key가 겹쳐 삭제가
+          // 엉뚱한 항목에 걸리거나 안 먹히는 버그가 있었다.
+          id: `server-${item.entryId}`,
           meal: mealTypeToKorean[item.mealType] ?? "간식",
           name: item.name,
           sugar: Number(item.sugar ?? 0),
@@ -308,6 +315,7 @@ export function useDietRecords() {
           kind: item.itemType === "recipe" ? "레시피" : item.itemType === "product" ? "식품" : "사진 분석",
           note: item.itemType === "photo" ? "서버에 저장된 사진 분석 결과예요." : undefined,
           source: "server" as const,
+          recordId: item.recordId,
         }));
       });
 

@@ -50,31 +50,35 @@ class GeneralQAHandler(FeatureHandler):
         self._llm = llm
         self._retriever = retriever
 
-    async def handle(self, data: HandlerInput) -> HandlerResult:
+    def _build_messages(self, history: list[dict] | None, current_user_text: str) -> list[dict]:
+        # 과거 대화(history) 뒤에 현재 질문(개인화·RAG 포함 프롬프트)을 붙인다.
+        msgs: list[dict] = list(history or [])
+        msgs.append({"role": "user", "text": current_user_text})
+        return msgs
+
+    async def _current_prompt(self, data: HandlerInput) -> str:
         query = data.msg or ""
         # ①번 일반 지식질문은 RAG 문서(식약처/WHO/KDRIs)만 근거로 답한다.
         # 상품 성분 검색은 기능 ②(상품 분석) 영역이라 여기서 호출하지 않는다
         # (상품벡터 테이블 service.product_embeddings는 컬럼 구조가 달라 별도 처리 필요).
         docs = await self._retriever.search_docs(query)
-        user_prompt = build_qa_user_prompt(
+        return build_qa_user_prompt(
             msg=query,
             user_context_block=render_user_context_block(data.context),
             rag_block=blocks_to_text(docs),
             product_block="",
         )
-        answer = await self._llm.complete(SYSTEM_PROMPT_QA, user_prompt)
+
+    async def handle(self, data: HandlerInput, history: list[dict] | None = None) -> HandlerResult:
+        prompt = await self._current_prompt(data)
+        messages = self._build_messages(history, prompt)
+        answer = await self._llm.complete(SYSTEM_PROMPT_QA, messages)
         return HandlerResult(msg=strip_chat_markdown(answer), is_img=False)
 
-    async def handle_stream(self, data: HandlerInput):
+    async def handle_stream(self, data: HandlerInput, history: list[dict] | None = None):
         # 스트리밍 경로 — 인증·RAG·프롬프트 조립은 handle과 동일, LLM만 스트리밍.
         # 마크다운 후처리는 하지 않는다(프론트가 렌더링).
-        query = data.msg or ""
-        docs = await self._retriever.search_docs(query)
-        user_prompt = build_qa_user_prompt(
-            msg=query,
-            user_context_block=render_user_context_block(data.context),
-            rag_block=blocks_to_text(docs),
-            product_block="",
-        )
-        async for delta in self._llm.complete_stream(SYSTEM_PROMPT_QA, user_prompt):
+        prompt = await self._current_prompt(data)
+        messages = self._build_messages(history, prompt)
+        async for delta in self._llm.complete_stream(SYSTEM_PROMPT_QA, messages):
             yield delta

@@ -148,7 +148,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
           <h1>{detail.title}</h1>
           <p>{detail.summary}</p>
           <div className="detail-metrics"><div><span>등록 재료 당류</span><strong>{detail.estimatedSugar}g</strong></div><div><span>등록 재료 열량</span><strong>{detail.estimatedCalories}kcal</strong></div><div><span>영양 계산률</span><strong>{detail.nutritionCoverage ?? 100}%</strong></div></div>
-          <FavoriteButton label={detail.title} id={recipeId} kind="recipe" />
+          <FavoriteButton label={detail.title} id={recipeId} kind="recipe" checkInitial />
           {detail.sourceUrl && <a className="source-link" href={detail.sourceUrl} target="_blank" rel="noreferrer">원본 레시피 보기 ↗</a>}
         </div>
       </section>

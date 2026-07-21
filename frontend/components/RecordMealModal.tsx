@@ -5,7 +5,7 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { RecordDateNavigator } from "@/components/RecordDateNavigator";
 import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
-import { products, recipes } from "@/data/catalog";
+import { recipes } from "@/data/catalog";
 import { PRODUCT_CATEGORIES } from "@/data/taxonomy";
 import { DietRecord, DietRecordsByDate, getTodayKey, MealType, useDietRecords } from "@/hooks/useDietRecords";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
@@ -19,7 +19,9 @@ import {
   DietPhotoStatusResponse,
   getDietPhotoStatus,
   getProductDetail,
+  getProductFavorites,
   getRecipeDetail,
+  getRecipeFavorites,
   uploadDietPhoto,
   uploadDietPhotoFile,
 } from "@/lib/api/zerocheck";
@@ -66,8 +68,6 @@ const sourceTabs: { id: Source; label: string }[] = [
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxImageBytes = 10 * 1024 * 1024;
 
-const favoriteRecipeIds = new Set(recipes.filter((_, index) => index === 0 || index === 4).map((recipe) => recipe.databaseId ?? recipe.slug));
-const favoriteProductIds = new Set(products.filter((_, index) => index === 0 || index === 3 || index === 5).map((product) => product.backendId ?? product.slug));
 function percent(value: number, max: number) {
   return Math.min(100, Math.round((value / max) * 100));
 }
@@ -120,6 +120,8 @@ export function RecordMealModal({
   const [loginPrompt, setLoginPrompt] = useState(false);
   const [resolvingItemId, setResolvingItemId] = useState<string | null>(null);
   const [selectionError, setSelectionError] = useState("");
+  const [favoriteRecipeIds, setFavoriteRecipeIds] = useState<Set<string>>(new Set());
+  const [favoriteProductIds, setFavoriteProductIds] = useState<Set<string>>(new Set());
   const photoInput = useRef<HTMLInputElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const recipeCatalog = useRecipeCatalog(recipes);
@@ -147,7 +149,7 @@ export function RecordMealModal({
         favorite: favoriteRecipeIds.has(id),
         nutritionAvailable: Number(recipe.nutritionCoverage ?? 0) > 0,
       };
-    }), [recipeCatalog.recipes]);
+    }), [recipeCatalog.recipes, favoriteRecipeIds]);
 
   const productLibrary = useMemo<FoodItem[]>(() => productCatalog.products.map((product) => {
     const id = product.backendId ?? product.slug;
@@ -164,9 +166,31 @@ export function RecordMealModal({
       favorite: favoriteProductIds.has(id),
       nutritionAvailable: product.nutritionAvailable !== false,
     };
-  }), [productCatalog.products]);
+  }), [productCatalog.products, favoriteProductIds]);
 
   const library = useMemo(() => [...recipeLibrary, ...productLibrary], [productLibrary, recipeLibrary]);
+
+  // "즐겨찾기" 탭이 실제 찜 목록이 아니라 하드코딩된 샘플(레시피 0/4번, 식품 0/3/5번
+  // 인덱스)만 계속 보여주던 버그 — 하트로 찜해도 여기 절대 안 뜬다. 실제 서버 찜
+  // 목록(RC-0111/0112)을 불러오도록 고친다.
+  useEffect(() => {
+    if (!authReady || !signedIn) return;
+    const token = getAccessToken();
+    if (!token) return;
+    let active = true;
+    Promise.allSettled([getRecipeFavorites(token), getProductFavorites(token)]).then(([recipeResult, productResult]) => {
+      if (!active) return;
+      if (recipeResult.status === "fulfilled") {
+        setFavoriteRecipeIds(new Set(recipeResult.value["list-receipe"].map((item) => String(item.id))));
+      }
+      if (productResult.status === "fulfilled") {
+        setFavoriteProductIds(new Set(productResult.value["list-products"].map((item) => item.id)));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [authReady, signedIn]);
 
   useEffect(() => {
     closeButton.current?.focus();

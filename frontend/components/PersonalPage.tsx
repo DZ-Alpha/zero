@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { OAUTH_PROVIDERS } from "@/components/OAuthButtons";
 import { ConfirmDialog } from "@/components/SystemFeedback";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { AUTH_CHANGE_EVENT, AUTH_KEY, LEGACY_AUTH_KEY } from "@/hooks/useAuthSession";
 import { saveUserSettingsToServer, UserGoals, UserProfile, useUserSettings } from "@/hooks/useUserSettings";
 import { ApiError, clearAccessToken } from "@/lib/api/client";
 import { deleteAccount, unlinkSocialAccount } from "@/lib/api/zerocheck";
+
+const LINK_RESULT_KEY = "dangdang-link-result";
 
 type Editor = "profile" | "goals" | "interests" | "allergens" | "notifications";
 
@@ -63,6 +66,21 @@ export function PersonalPage() {
   const [unlinkTarget, setUnlinkTarget] = useState<string | null>(null);
   const [unlinking, setUnlinking] = useState(false);
 
+  // /social-access/{provider}/link 콜백(auth/callback/page.tsx)이 결과를 여기 남겨두고
+  // 이 페이지로 돌려보낸다 — 마운트 시 한 번 읽어서 토스트로 보여주고 지운다.
+  useEffect(() => {
+    const raw = window.localStorage.getItem(LINK_RESULT_KEY);
+    if (!raw) return;
+    window.localStorage.removeItem(LINK_RESULT_KEY);
+    try {
+      const { social, alreadyLinked } = JSON.parse(raw) as { social?: string; alreadyLinked?: boolean };
+      const label = (social && snsByCode[social]?.label) || "소셜 계정";
+      setMessage(alreadyLinked ? `이미 연결되어 있는 ${label} 계정이에요.` : `${label} 계정을 연결했어요.`);
+    } catch {
+      // 잘못된 값이면 그냥 무시
+    }
+  }, []);
+
   if (!authReady || !settingsReady) {
     return <main className="personal-page page-wrap"><div className="mypage-auth-loading wrap" aria-label="계정 확인 중" /></main>;
   }
@@ -113,6 +131,7 @@ export function PersonalPage() {
       if (editor === "profile") {
         const patch: Partial<UserProfile> = {
         name: profileDraft.name?.trim() || profile.name,
+        email: profileDraft.email?.trim() || profile.email,
         birthDate: digits(profileDraft.birthDate),
         birthYear: digits(profileDraft.birthDate || profileDraft.birthYear).slice(0, 4),
         gender: profileDraft.gender,
@@ -149,8 +168,10 @@ export function PersonalPage() {
         setMessage("알림 설정은 이 기기에 저장했어요. 서버 저장 기능은 준비 중이에요.");
       }
       setEditor(null);
-    } catch {
-      setMessage("서버에 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요.");
+    } catch (error) {
+      setMessage(error instanceof ApiError && error.status === 409
+        ? "이미 다른 계정에서 쓰고 있는 이메일이에요. 다른 이메일을 입력해 주세요."
+        : "서버에 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요.");
       setSaveFailed(true);
     } finally {
       setSaving(false);
@@ -161,6 +182,8 @@ export function PersonalPage() {
   const connectedSns = (profile.enabledSns ?? [])
     .map((code) => ({ code, ...snsByCode[code] }))
     .filter((item): item is { code: string; provider: string; label: string } => Boolean(item.provider) && item.provider !== "admin");
+  const linkableProviders = OAUTH_PROVIDERS.filter((provider) => provider.enabled
+    && !connectedSns.some((item) => item.provider === provider.id));
 
   async function unlinkSns() {
     if (!token || !unlinkTarget) return;
@@ -223,7 +246,9 @@ export function PersonalPage() {
         <article><header><div><span>01</span><h2>신체와 활동 정보</h2></div><button type="button" onClick={() => openEditor("profile")}>정보 바꾸기</button></header><dl><div><dt>나이</dt><dd>{age === null ? "미입력" : `${age}세`}</dd></div><div><dt>성별</dt><dd>{profile.gender || "미입력"}</dd></div><div><dt>키</dt><dd>{profile.height ? `${profile.height}cm` : "미입력"}</dd></div><div><dt>몸무게</dt><dd>{profile.weight ? `${profile.weight}kg` : "미입력"}</dd></div><div><dt>활동량</dt><dd>{profile.activity || "미입력"}</dd></div></dl></article>
         <article><header><div><span>02</span><h2>관심 있는 기준</h2></div><button type="button" onClick={() => openEditor("interests")}>기준 바꾸기</button></header>{interests.length > 0 ? <div className="setting-tags">{interests.map((item) => <span key={item}>{item}</span>)}</div> : <p className="setting-empty">아직 고른 기준이 없어요.</p>}<p>식품과 레시피를 추천할 때 이 기준을 먼저 살펴봐요.</p></article>
         <article><header><div><span>03</span><h2>주의할 성분</h2></div><button type="button" onClick={() => openEditor("allergens")}>성분 바꾸기</button></header>{allergens.length > 0 ? <div className="setting-tags warning">{allergens.map((item) => <span key={item}>{item}</span>)}</div> : <p className="setting-empty">등록한 주의 성분이 없어요.</p>}<p>식품과 사진 분석 결과에 이 성분이 있으면 먼저 알려드려요.</p></article>
-        <article><header><div><span>04</span><h2>계정과 알림</h2></div><button type="button" onClick={() => openEditor("notifications")}>알림 바꾸기</button></header><dl><div><dt>연결 계정</dt><dd>{connectedSns.length > 0 ? connectedSns.map((item) => item.label).join(", ") : providerName}</dd></div><div><dt>신제품 알림</dt><dd>{notifications.newProducts ? "받기" : "받지 않기"}</dd></div><div><dt>주간 리포트</dt><dd>{notifications.weeklyReport ? "일요일에 받기" : "받지 않기"}</dd></div></dl>{connectedSns.length > 0 && <div className="sns-manage">{connectedSns.map((item) => <span key={item.code}>{item.label}<button type="button" onClick={() => setUnlinkTarget(item.code)} disabled={unlinking || connectedSns.length === 1}>해제</button></span>)}<small>{connectedSns.length === 1 ? "마지막 로그인 수단은 해제할 수 없어요." : "연결을 해제해도 계정 정보는 유지돼요."}</small></div>}</article>
+        <article><header><div><span>04</span><h2>계정과 알림</h2></div><button type="button" onClick={() => openEditor("notifications")}>알림 바꾸기</button></header><dl><div><dt>연결 계정</dt><dd>{connectedSns.length > 0 ? connectedSns.map((item) => item.label).join(", ") : providerName}</dd></div><div><dt>신제품 알림</dt><dd>{notifications.newProducts ? "받기" : "받지 않기"}</dd></div><div><dt>주간 리포트</dt><dd>{notifications.weeklyReport ? "일요일에 받기" : "받지 않기"}</dd></div></dl>{connectedSns.length > 0 && <div className="sns-manage">{connectedSns.map((item) => <span key={item.code}>{item.label}<button type="button" onClick={() => setUnlinkTarget(item.code)} disabled={unlinking || connectedSns.length === 1}>해제</button></span>)}<small>{connectedSns.length === 1 ? "마지막 로그인 수단은 해제할 수 없어요." : "연결을 해제해도 계정 정보는 유지돼요."}</small></div>}
+        {token && linkableProviders.length > 0 && <div className="sns-link-more"><small>다른 소셜 계정 연동하기</small><div>{linkableProviders.map((provider) => <a key={provider.id} className={`oauth-button is-${provider.className}`} href={`/b/social-access/${provider.id}/link?token=${encodeURIComponent(token)}`}><span>{provider.mark}</span><b>{provider.label} 연동하기</b><i className="oauth-arrow">→</i></a>)}</div></div>}
+        </article>
       </section>
 
       <section className="profile-links wrap"><Link href="/diet"><span>내 월간 리포트</span><b>캘린더에서 보기 →</b></Link><Link href="/recipes"><span>저장한 레시피와 식품</span><b>즐겨찾기 보기 →</b></Link></section>
@@ -237,6 +262,7 @@ export function PersonalPage() {
             {editor === "profile" && (
               <div className="settings-editor-fields">
                 <label><span>이름 또는 닉네임</span><input value={profileDraft.name ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, name: event.target.value }))} /><small>마이페이지에서 언제든 바꿀 수 있어요.</small></label>
+                <label className="full"><span>이메일</span><input type="email" value={profileDraft.email ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, email: event.target.value }))} /><small>중요한 안내를 받을 이메일이에요.</small></label>
                 <label><span>생년월일</span><input value={formatBirthDate(profileDraft.birthDate || profileDraft.birthYear)} onChange={(event) => setProfileDraft((current) => ({ ...current, birthDate: digits(event.target.value) }))} inputMode="numeric" placeholder="예: 20001006" readOnly={profile.birthDateLocked} />{profile.birthDateLocked && <small>소셜 계정에서 불러온 생년월일이에요.</small>}</label>
                 <label><span>성별</span><select value={profileDraft.gender ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, gender: event.target.value }))}><option value="">골라주세요</option><option>여성</option><option>남성</option></select></label>
                 <label><span>키</span><div className="unit-input"><input value={profileDraft.height ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, height: Number(event.target.value) }))} inputMode="decimal" /><b>cm</b></div></label>

@@ -55,8 +55,8 @@ while (true) {
     if (!m) continue;
     const evt = JSON.parse(m[1]);
     if (evt.delta) { answer += evt.delta; render(answer); }
-    if (evt.done)  { /* 메타 반영, 종료 */ }
-    if (evt.error) { /* 에러 표시 */ }
+    if (evt.done)  { setLoading(false); /* "답변 준비 중" 로딩 끄기 + 메타(cs-partner 등) 반영, 종료 */ }
+    if (evt.error) { setLoading(false); /* 에러 표시 */ }
   }
 }
 ```

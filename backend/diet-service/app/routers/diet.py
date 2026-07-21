@@ -409,6 +409,12 @@ def _record_item_dict(log, item) -> dict[str, object]:
         # 프론트 삭제(RC-0115 DELETE /diet/records/{id})용 — itemId는 상품/레시피
         # 원본 참조라 삭제 대상 식별에 못 쓴다. recordId가 실제 meal_log_id.
         "recordId": str(log.meal_log_id),
+        # 사진 기록 하나(meal_log 1개)에서 음식이 여러 개 인식되면 meal_item이
+        # 여러 행이라 recordId(meal_log_id)가 그 행들 전부 동일하다 — 프론트가
+        # 이 값을 리스트 렌더링 key/삭제 대상 식별자로 같이 쓰면 항목별로 구분이
+        # 안 돼서 삭제가 엉뚱하게 동작(또는 안 먹힘)하는 문제가 있었다. entryId는
+        # meal_item 고유 PK라 항상 유일하다 — 삭제 API 호출에는 여전히 recordId를 쓴다.
+        "entryId": str(item.meal_item_id),
         "mealType": log.meal_type,
         "itemType": _INPUT_TYPE_TO_ITEM_TYPE.get(log.input_type, "photo"),
         "itemId": item_id,

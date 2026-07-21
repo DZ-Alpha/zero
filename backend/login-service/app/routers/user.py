@@ -14,7 +14,7 @@ from app.models.admin_account import AdminAccount
 from app.models.social_account import SocialAccount
 from app.models.user import User
 from app.services import jwt_service, user_store
-from app.services.user_store import LastSocialAccountError, SocialAccountNotFoundError
+from app.services.user_store import DuplicateEmailError, LastSocialAccountError, SocialAccountNotFoundError
 
 logger = logging.getLogger("app.user")
 
@@ -56,6 +56,7 @@ class FirstSetRequest(BaseModel):
 
     usr: str | None = None
     nickname: str | None = None
+    email: str | None = None
     favorite_category: Annotated[list[str] | None, Field(alias="favoriteCategory")] = None
     is_allergic: Annotated[bool | None, Field(alias="isAllergic")] = None
     optional_agree: Annotated[bool | None, Field(alias="optionalAgree")] = None
@@ -81,6 +82,16 @@ async def first_set(
         stripped = payload.nickname.strip()
         if stripped:
             user.display_name = stripped
+    if payload.email is not None:
+        stripped_email = payload.email.strip()
+        if stripped_email:
+            if "@" not in stripped_email:
+                raise HTTPException(status_code=422, detail="올바른 이메일 형식이 아니에요.")
+            try:
+                await user_store.ensure_email_available(db, user_id, stripped_email)
+            except DuplicateEmailError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            user.email = stripped_email
     if payload.favorite_category is not None:
         user.favorite_categories = payload.favorite_category
     if payload.is_allergic is not None:

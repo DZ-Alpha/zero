@@ -21,7 +21,7 @@ async def test_complete_stream_yields_text_deltas_in_order():
     fake = _FakeStreamClient(["탄수화물은", " 에너지원", "이에요"])
     client = BedrockClient(model_id="m", client=fake)
     out = []
-    async for delta in client.complete_stream("시스템", "질문"):
+    async for delta in client.complete_stream("시스템", [{"role": "user", "text": "질문"}]):
         out.append(delta)
     assert out == ["탄수화물은", " 에너지원", "이에요"]
 
@@ -29,7 +29,7 @@ async def test_complete_stream_yields_text_deltas_in_order():
 async def test_complete_stream_sends_system_and_user():
     fake = _FakeStreamClient(["ok"])
     client = BedrockClient(model_id="m", client=fake)
-    async for _ in client.complete_stream("SYS", "USR"):
+    async for _ in client.complete_stream("SYS", [{"role": "user", "text": "USR"}]):
         pass
     assert fake.last_kwargs["system"] == [{"text": "SYS"}]
     assert fake.last_kwargs["messages"] == [{"role": "user", "content": [{"text": "USR"}]}]

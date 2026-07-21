@@ -3,11 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { readUserProfile, saveUserGoals } from "@/hooks/useUserSettings";
-import { getAccessToken } from "@/lib/api/client";
+import { ApiError, getAccessToken } from "@/lib/api/client";
 import { updateFirstSet, updateHealthProfile } from "@/lib/api/zerocheck";
 
 type Profile = {
   name: string;
+  email?: string;
   birthDate?: string;
   birthYear?: string;
   gender: "여성" | "남성";
@@ -114,6 +115,7 @@ export function SignupTargetForm({ provider }: { provider: string }) {
         ? `${profile.birthDate.slice(0, 4)}-${profile.birthDate.slice(4, 6)}-${profile.birthDate.slice(6)}`
         : undefined;
       const baseRequest = updateFirstSet(token, {
+        email: profile.email?.trim() || undefined,
         favoriteCategory: profile.interests,
         isAllergic: Boolean(profile.allergens?.length && !profile.allergens.includes("해당 없음")),
         optionalAgree: Boolean(profile.healthConsent),
@@ -142,8 +144,10 @@ export function SignupTargetForm({ provider }: { provider: string }) {
         bmr: estimates.bmr,
       });
       router.push(`/signup/success?provider=${provider}`);
-    } catch {
-      setSaveError("정보를 서버에 저장하지 못했어요. 연결을 확인한 뒤 다시 저장해 주세요.");
+    } catch (error) {
+      setSaveError(error instanceof ApiError && error.status === 409
+        ? "이미 다른 계정에서 쓰고 있는 이메일이에요. 이전 화면에서 다른 이메일을 입력해 주세요."
+        : "정보를 서버에 저장하지 못했어요. 연결을 확인한 뒤 다시 저장해 주세요.");
       setSaving(false);
     }
   }
