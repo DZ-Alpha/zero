@@ -54,6 +54,10 @@ export function ChatPanel() {
       // 항상 최신 값을 보게 하기 위함.
       const isFirstChunk = !messageStarted;
       messageStarted = true;
+      // 첫 delta가 도착하면(=답변이 실제로 시작되면) 그 즉시 "답변을 준비하고
+      // 있어요" 로딩을 끈다. 예전엔 done/error를 받을 때까지 켜져 있어서, 답변이
+      // 다 스트리밍된 뒤에도 로딩 문구가 말풍선과 함께 계속 떠 있었다.
+      if (isFirstChunk) setPending(false);
       setMessages((items) => {
         if (isFirstChunk) return [...items, { role: "answer", text: streamedText }];
         const next = [...items];
