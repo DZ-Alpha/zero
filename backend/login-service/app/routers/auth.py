@@ -148,17 +148,29 @@ async def callback(
             token=token,
         )
 
-    user, is_new = await user_store.get_or_create_user(
-        db,
-        provider=provider,
-        provider_user_id=profile.provider_user_id,
-        nickname=profile.nickname,
-        email=profile.email,
-        profile_image_url=profile.profile_image_url,
-        gender=profile.gender,
-        birthday=profile.birthday,
-        birthyear=profile.birthyear,
-    )
+    try:
+        user, is_new = await user_store.get_or_create_user(
+            db,
+            provider=provider,
+            provider_user_id=profile.provider_user_id,
+            nickname=profile.nickname,
+            email=profile.email,
+            profile_image_url=profile.profile_image_url,
+            gender=profile.gender,
+            birthday=profile.birthday,
+            birthyear=profile.birthyear,
+        )
+    except user_store.DuplicateEmailError as dup_error:
+        logger.warning(
+            "social login denied: provider=%s reason=duplicate_email existing_providers=%s",
+            provider,
+            dup_error.existing_providers,
+        )
+        existing_label = ", ".join(dup_error.existing_providers)
+        return _frontend_redirect(
+            error=f"이미 {existing_label} 계정으로 가입되어 있어요. 해당 계정으로 로그인해주세요."
+        )
+
     token = jwt_service.create_access_token(user.id, provider, profile.nickname)
     await session_store.set_active_token(token)
     user_id = user.id  # 커밋된 ORM 객체 — 실패 시 로그에서 다시 접근하면 lazy reload를 시도한다.
