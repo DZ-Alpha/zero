@@ -40,12 +40,21 @@ function dateKeyFor(monthIndex: number, day: number) {
   return `2026-${String(monthIndex + 6).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+// 캘린더 데모 데이터가 2026년 6~8월(monthIndex 0~2)만 다루므로, 실제 오늘 날짜가
+// 그 범위 밖이면(개발 환경 등) 예전 하드코딩값(7월 16일)으로 되돌아간다.
+function defaultMonthAndDay() {
+  const [year, monthNum, day] = getTodayKey().split("-").map(Number);
+  const monthIndex = monthNum - 6;
+  if (year === 2026 && monthIndex >= 0 && monthIndex < monthNames.length) return { month: monthIndex, day };
+  return { month: 1, day: 16 };
+}
+
 export function CalendarDashboard() {
   const { recordsByDate, deleteRecord: removeRecord, loadServerMonth, serverLoading, serverError } = useDietRecords();
   const { goals } = useUserSettings();
   const todayKey = useMemo(() => getTodayKey(), []);
-  const [month, setMonth] = useState(1);
-  const [selectedDay, setSelectedDay] = useState(16);
+  const [month, setMonth] = useState(() => defaultMonthAndDay().month);
+  const [selectedDay, setSelectedDay] = useState(() => defaultMonthAndDay().day);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
   const [entryMeal, setEntryMeal] = useState<MealType | null>(null);

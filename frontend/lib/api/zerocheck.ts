@@ -191,6 +191,7 @@ export async function getHealthProfile(token: string) {
 
 export function updateFirstSet(token: string, payload: {
   nickname?: string;
+  email?: string;
   favoriteCategory?: string[];
   isAllergic?: boolean;
   optionalAgree?: boolean;

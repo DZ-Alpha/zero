@@ -46,6 +46,15 @@ async def _find_user_by_email(db: AsyncSession, email: str) -> User | None:
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
+async def ensure_email_available(db: AsyncSession, user_id: int, email: str) -> None:
+    """가입/마이페이지에서 이메일을 설정·변경할 때 다른 계정이 이미 쓰고
+    있는지 확인한다(본인 계정은 제외 — 자기 이메일을 그대로 다시 보내는 경우가
+    충돌로 취급되면 안 된다)."""
+    other_user = await _find_user_by_email(db, email)
+    if other_user is not None and other_user.id != user_id:
+        raise DuplicateEmailError([account.provider for account in other_user.social_accounts])
+
+
 async def get_or_create_user(
     db: AsyncSession,
     provider: str,

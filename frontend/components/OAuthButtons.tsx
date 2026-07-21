@@ -1,4 +1,4 @@
-const providers = [
+export const OAUTH_PROVIDERS = [
   { id: "google", label: "Google", mark: "G", className: "google", enabled: false },
   { id: "kakao", label: "카카오", mark: "K", className: "kakao", enabled: true },
   { id: "naver", label: "NAVER", mark: "N", className: "naver", enabled: true },
@@ -10,7 +10,7 @@ export function OAuthButtons({ mode }: { mode: "login" | "signup" }) {
 
   return (
     <div className="oauth-list">
-      {providers.map((provider) => provider.enabled ? (
+      {OAUTH_PROVIDERS.map((provider) => provider.enabled ? (
         <a
           className={`oauth-button is-${provider.className}`}
           href={`/b/social-access/${provider.id}/login?fallback=${encodeURIComponent(returnPath)}`}
