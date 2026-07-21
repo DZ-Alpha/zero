@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AUTH_CHANGE_EVENT } from "@/hooks/useAuthSession";
 import { getAccessToken, readJwtPayload } from "@/lib/api/client";
 import { createDietRecord, deleteDietRecord, getDietRecordsByMonth } from "@/lib/api/zerocheck";
@@ -28,6 +28,16 @@ export type DietRecordsByDate = Record<string, DietRecord[]>;
 export const DIET_RECORDS_KEY = "dangdang-diet-records-v1";
 const LEGACY_CALENDAR_KEY = "dangdang-calendar-records";
 const RECORDS_CHANGED_EVENT = "dangdang-diet-records-change";
+// 저장/삭제가 서버에 실제로 반영된 뒤 쏘는 신호 — Home/캘린더처럼 각자 별도
+// useDietRecords() 인스턴스를 쓰는 화면들이, 서로의 addServerRecord/deleteRecord
+// 호출을 모른 채 "마지막으로 불러온 달"을 다시 불러오도록 한다(useDailyGauge도
+// 같은 이벤트로 오늘 합계를 다시 가져온다). RECORDS_CHANGED_EVENT는 로컬(local)
+// 항목 동기화용이라 서버 합계 갱신 신호로는 못 쓴다.
+export const DIET_SAVE_EVENT = "dangdang-diet-save";
+
+function broadcastSave() {
+  window.dispatchEvent(new Event(DIET_SAVE_EVENT));
+}
 
 const mealSets = [
   ["그릭요거트와 그래놀라", "닭가슴살 곡물 샐러드", "두부 곤약 비빔면", "제로 초코바"],
@@ -206,6 +216,7 @@ export function useDietRecords() {
       ...current,
       [dateKey]: [...(current[dateKey] ?? []), record],
     }));
+    broadcastSave();
   }, [updateRecords]);
 
   // record.source === "server"인 항목은 실제 백엔드 기록(RC-0113~0117)이라
@@ -234,12 +245,14 @@ export function useDietRecords() {
         ...current,
         [dateKey]: (current[dateKey] ?? []).filter((item) => item.id !== record.id),
       }));
+      broadcastSave();
       return;
     }
     updateRecords((current) => ({
       ...current,
       [dateKey]: (current[dateKey] ?? []).filter((item) => item.id !== record.id),
     }));
+    broadcastSave();
   }, [updateRecords]);
 
   // 레시피/상품 기록을 실제 서버에 저장한다(RC-0113). 사진 기록은 /diet/upload +
@@ -286,6 +299,7 @@ export function useDietRecords() {
       ...current,
       [dateKey]: [...(current[dateKey] ?? []), record],
     }));
+    broadcastSave();
     return record;
   }, []);
 
@@ -297,7 +311,10 @@ export function useDietRecords() {
     OTHER: "간식",
   };
 
+  const lastMonthRef = useRef<{ year: number; month: number } | null>(null);
+
   const loadServerMonth = useCallback(async (year: number, month: number) => {
+    lastMonthRef.current = { year, month };
     const token = getAccessToken();
     if (!token) return;
     setServerLoading(true);
@@ -358,6 +375,19 @@ export function useDietRecords() {
       setServerLoading(false);
     }
   }, [updateRecords]);
+
+  // 다른 useDietRecords() 인스턴스(RecordMealModal 등)가 저장/삭제에 성공하면
+  // DIET_SAVE_EVENT를 쏜다 — 이 인스턴스가 이미 불러온 적 있는 달이 있으면
+  // (Home/캘린더는 마운트 시 loadServerMonth를 호출해둔다) 그 달을 다시 불러와
+  // 새로고침 없이도 최신 합계로 갱신한다.
+  useEffect(() => {
+    function reloadOnSave() {
+      const target = lastMonthRef.current;
+      if (target) void loadServerMonth(target.year, target.month);
+    }
+    window.addEventListener(DIET_SAVE_EVENT, reloadOnSave);
+    return () => window.removeEventListener(DIET_SAVE_EVENT, reloadOnSave);
+  }, [loadServerMonth]);
 
   const recordsByDate = useMemo(() => {
     const merged: DietRecordsByDate = { ...localRecordsByDate };

@@ -1138,6 +1138,13 @@ body{font-size:16px}
   background:#fff;
   box-shadow:0 9px 26px rgba(29,58,39,.055);
 }
+.detail-page .similar-grid .recipe-data-cover{
+  /* recipe-data-cover{height:100%}이 CSS grid의 기본 align-items:stretch로
+     생긴 <a>의 늘어난 높이(제일 긴 카드 기준)를 그대로 채워버려서, 그 아래
+     small/h3/p(카테고리·시간/제목/당류)가 들어갈 자리가 없어 overflow:hidden에
+     잘려 보이던 문제 — 기존 .feed-image(230px)처럼 고정 높이로 자리를 만든다. */
+  height:210px;
+}
 .detail-page .similar-grid small,
 .detail-page .similar-grid h3,
 .detail-page .similar-grid p{margin-left:16px;margin-right:16px}
