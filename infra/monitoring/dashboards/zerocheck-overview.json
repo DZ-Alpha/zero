@@ -203,6 +203,26 @@
           "legendFormat": "{{probe_name}}",
           "expr": "probe_success{probe_name=~\"6[.].*\"}",
           "instant": true
+        },
+        {
+          "refId": "H",
+          "expr": "probe_success{probe_name=~\"7[.].*\"}",
+          "legendFormat": "{{probe_name}}",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          }
+        },
+        {
+          "refId": "I",
+          "expr": "probe_success{probe_name=~\"8[.].*\"}",
+          "legendFormat": "{{probe_name}}",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          }
         }
       ],
       "title": "외부 서비스 가용성 (Blackbox)",
