@@ -27,6 +27,15 @@ COPY app ./app
 # setuid/setgid 비트 제거 (CIS Docker Benchmark 4.8 - 방어 심층화)
 RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
 
+# perl-base 제거 (CIS 4.3 - 불필요 패키지 제거): 베이스 이미지에 딸려오는
+# Essential 패키지지만 런타임(파이썬/uvicorn)은 perl을 전혀 안 쓴다.
+# CVE-2026-57433(CRITICAL)이 perl-base에 떠 있는데 Debian 수정판이 아직 없어
+# (Trivy Fixed Version 공란) 버전 업그레이드로는 해결이 불가능하다 — 취약
+# 패키지 자체를 최종 이미지에서 없애 이미지 스캔 게이트를 통과시킨다.
+# --force-depends: debconf 등이 perl-base에 의존하지만 전부 apt 실행시에만
+# 쓰이고, 최종 이미지에서는 apt를 다시 쓸 일이 없다.
+RUN dpkg --purge --force-remove-essential --force-depends perl-base
+
 RUN chown -R appuser:appuser /app
 USER appuser
 
