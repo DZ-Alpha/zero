@@ -825,6 +825,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       # v4
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
+      # 2026-07-21, registry 캐시(cache-to) push에 빌드 시점 인증이 필요해
+      # 로그인 스텝을 빌드 앞으로 이동. PR 실행에서도 로그인하지만 이미지
+      # push는 여전히 아래 main 가드 스텝에서만 한다(캐시 blob만 push됨).
+      - name: Log in to Harbor
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+          logout: false
       - name: Build image
         # v7
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
@@ -834,8 +845,10 @@ jobs:
           pull: true
           tags: frontend:${{ github.sha }}
           load: true
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
+          # 2026-07-21, gha 캐시(GitHub 왕복·repo 10GB 한도) → Harbor registry
+          # 캐시(LAN). image-manifest/oci-mediatypes는 Harbor OCI 호환 옵션.
+          cache-from: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache
+          cache-to: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache,mode=max,image-manifest=true,oci-mediatypes=true
       # backend-image-scanning과 같은 이유(setup-trivy 기본 설치 경로가
       # $HOME/.local/bin/trivy-bin 고정이라 harbor-runner/harbor-runner-2가 동시에
       # 돌면 "Text file busy"로 충돌 - 실제로 2번 재현/확인함) - 러너별 경로에 직접 설치.
@@ -853,18 +866,7 @@ jobs:
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
           skip-setup-trivy: true
-      - name: Log in to Harbor
-        # v3
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: harbor.hizero.local
-          username: ${{ secrets.HARBOR_ROBOT_USER }}
-          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
-          # backend-image-scanning과 동일한 이유(위 주석 참고) - 이 job은
-          # 매트릭스가 아니지만 backend-image-scanning과 같은 워크플로 실행
-          # 안에서 같은 self-hosted 러너를 동시에 쓸 수 있어 동일 레이스에
-          # 노출된다. 일관되게 logout을 끈다.
-          logout: false
+      # (2026-07-21) Harbor 로그인은 registry 캐시 때문에 Build image 앞으로 이동됨
       # frontend/compose.production.example.yaml(성애님 작성)는 FRONTEND_IMAGE에
       # 기본값을 안 두고 명시적인 불변 태그를 요구한다("Set FRONTEND_IMAGE to the
       # Harbor image and immutable tag") - 그래서 :latest를 기본 배포 태그로 쓰지
