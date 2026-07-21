@@ -101,6 +101,7 @@ export async function saveUserSettingsToServer(
 
   if (scope === "profile" || scope === "interests") {
     requests.push(updateFirstSet(token, {
+      nickname: scope === "profile" ? profile.name?.trim() || undefined : undefined,
       favoriteCategory: scope === "interests" ? profile.interests ?? [] : undefined,
       optionalAgree: profile.healthConsent,
       tall: scope === "profile" && profile.height ? Math.round(profile.height) : undefined,
@@ -171,7 +172,9 @@ export function useUserSettings() {
 
       const nextProfile: UserProfile = {
         ...currentProfile,
-        name: nickname || currentProfile.name,
+        // 마이페이지에서 직접 바꾼 이름(myPage.nickname)이 있으면 그게 우선 —
+        // 그렇지 않으면 로그인 시점 소셜 프로필 이름(JWT nickname)을 쓴다.
+        name: myPage?.nickname || nickname || currentProfile.name,
         email: myPage?.email ?? currentProfile.email,
         enabledSns: myPage?.enabledSns ?? currentProfile.enabledSns,
         provider: myPage?.enabledSns?.[0]?.toLowerCase() ?? currentProfile.provider,

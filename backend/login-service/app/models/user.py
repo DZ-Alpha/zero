@@ -12,6 +12,8 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 마이페이지에서 직접 바꾼 이름. 없으면 소셜 로그인 시점의 provider nickname을 그대로 쓴다.
+    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
     favorite_categories: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
     is_allergic: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

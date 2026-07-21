@@ -55,6 +55,7 @@ class FirstSetRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     usr: str | None = None
+    nickname: str | None = None
     favorite_category: Annotated[list[str] | None, Field(alias="favoriteCategory")] = None
     is_allergic: Annotated[bool | None, Field(alias="isAllergic")] = None
     optional_agree: Annotated[bool | None, Field(alias="optionalAgree")] = None
@@ -76,6 +77,10 @@ async def first_set(
     if user is None:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 
+    if payload.nickname is not None:
+        stripped = payload.nickname.strip()
+        if stripped:
+            user.display_name = stripped
     if payload.favorite_category is not None:
         user.favorite_categories = payload.favorite_category
     if payload.is_allergic is not None:
@@ -117,6 +122,7 @@ async def get_mypage(
 
     return {
         "enabledSns": enabled_sns,
+        "nickname": user.display_name or (social_accounts[0].nickname if social_accounts else None),
         "email": user.email,
         "optionalAgree": user.optional_agree,
         "favorite": user.favorite_categories,
