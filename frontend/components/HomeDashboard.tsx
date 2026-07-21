@@ -1,3 +1,4 @@
+// cache-warm verification 2026-07-21 (시연 전 웜캐시 실측용 - merge하지 않음)
 "use client";
 
 import Link from "next/link";
