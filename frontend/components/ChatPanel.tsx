@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { getAccessToken } from "@/lib/api/client";
-import { sendChatbotMessage, streamChatbotMessage } from "@/lib/api/zerocheck";
+import { getChatHistory, sendChatbotMessage, streamChatbotMessage } from "@/lib/api/zerocheck";
 
 type ChatMessage = { role: "question" | "answer"; text: string };
 
@@ -32,6 +32,22 @@ export function ChatPanel() {
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, pending]);
+
+  // conversation-memory-frontend-spec.md §2 — 채팅창을 열 때 서버가 기억하는
+  // 이전 대화(로그인=계정 기준, 비로그인=session_id 기준)를 복원한다. 대화가
+  // 없으면(신규/24시간 만료) 위 예시 대화를 그대로 둔다.
+  useEffect(() => {
+    let active = true;
+    getChatHistory(getAccessToken()).then(({ messages: history }) => {
+      if (!active || history.length === 0) return;
+      setMessages(history.map((item) => ({ role: item.role === "user" ? "question" : "answer", text: item.text })));
+    }).catch(() => {
+      // 히스토리 복원 실패 — 위 예시 대화를 그대로 둔다.
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function send() {
     const question = value.trim();
