@@ -455,7 +455,12 @@ async def get_product_ref(db: AsyncSession, product_id: uuid.UUID) -> ProductRef
 # ── 홈 당/칼로리 게이지 (MN-0106~0108) ────────────────────────────────────────
 
 async def get_today_totals(db: AsyncSession, user_id: int) -> dict:
-    """오늘 날짜 칼로리/당 합계 — v_meal_totals 뷰 기반."""
+    """오늘 날짜 칼로리/당 합계 — v_meal_totals 뷰 기반.
+
+    "오늘"은 Asia/Seoul 기준이다 — 프론트가 날짜를 KST로 매기고(getTodayKey)
+    그 날짜의 00:00Z로 eaten_at을 저장하기 때문에, UTC로 자르면 KST 자정~오전
+    9시 사이에 "오늘" 기록이 어제로 밀려 홈 게이지에 안 잡히는 문제가 있었다.
+    """
     row = await db.execute(
         text("""
             SELECT
@@ -464,8 +469,8 @@ async def get_today_totals(db: AsyncSession, user_id: int) -> dict:
             FROM service.meal_logs ml
             JOIN service.v_meal_totals vt ON vt.meal_log_id = ml.meal_log_id
             WHERE ml.user_id = :uid
-              AND date_trunc('day', ml.eaten_at AT TIME ZONE 'UTC') =
-                  date_trunc('day', now() AT TIME ZONE 'UTC')
+              AND date_trunc('day', ml.eaten_at AT TIME ZONE 'Asia/Seoul') =
+                  date_trunc('day', now() AT TIME ZONE 'Asia/Seoul')
         """),
         {"uid": user_id},
     )
