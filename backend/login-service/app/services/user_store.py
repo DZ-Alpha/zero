@@ -18,12 +18,31 @@ class SocialAccountNotFoundError(Exception):
     pass
 
 
+class DuplicateEmailError(Exception):
+    """다른 provider로 이미 가입된 이메일로 새 provider 최초 로그인을 시도한 경우.
+
+    같은 사람이 네이버로 가입한 뒤 카카오로 로그인하면 provider_user_id 기준으로는
+    "신규"지만, 이메일 기준으로는 이미 회원이다 — 여기서 걸러서 중복 계정 생성을 막는다.
+    자동 연동은 하지 않는다: 이미 있는 /{provider}/link 플로우가 로그인된 세션에서만
+    연동을 허용하는 동의 기반 설계라, 이메일 일치만으로 계정을 합치면 그 전제가 깨진다.
+    """
+
+    def __init__(self, existing_providers: list[str]):
+        self.existing_providers = existing_providers
+        super().__init__(f"이미 다른 소셜 계정으로 가입된 이메일입니다: {existing_providers}")
+
+
 async def _find_social_account(db: AsyncSession, provider: str, provider_user_id: str) -> SocialAccount | None:
     stmt = (
         select(SocialAccount)
         .where(SocialAccount.provider == provider, SocialAccount.provider_user_id == provider_user_id)
         .options(selectinload(SocialAccount.user))
     )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _find_user_by_email(db: AsyncSession, email: str) -> User | None:
+    stmt = select(User).where(User.email == email).options(selectinload(User.social_accounts))
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
@@ -42,6 +61,11 @@ async def get_or_create_user(
 
     if existing is not None:
         return existing.user, False
+
+    if email is not None:
+        other_user = await _find_user_by_email(db, email)
+        if other_user is not None:
+            raise DuplicateEmailError([account.provider for account in other_user.social_accounts])
 
     user = User(email=email)
     social_account = SocialAccount(

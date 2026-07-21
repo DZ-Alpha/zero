@@ -44,7 +44,7 @@ x-hardening: &hardening
     - no-new-privileges:true
   read_only: true
   tmpfs:
-    - /tmp
+    - /tmp:rw,noexec,nosuid
   environment:
     - PYTHONDONTWRITEBYTECODE=1
   mem_limit: 256m
@@ -89,7 +89,7 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:rw,noexec,nosuid
     mem_limit: 256m
     cpus: 0.5
     pids_limit: 100
@@ -181,7 +181,7 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:rw,noexec,nosuid
     mem_limit: 256m
     cpus: 0.5
     pids_limit: 100
@@ -232,14 +232,14 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp
-      - /var/run/openresty
-      - /usr/local/openresty/nginx/logs
-      - /usr/local/openresty/nginx/client_body_temp
-      - /usr/local/openresty/nginx/proxy_temp
-      - /usr/local/openresty/nginx/fastcgi_temp
-      - /usr/local/openresty/nginx/uwsgi_temp
-      - /usr/local/openresty/nginx/scgi_temp
+      - /tmp:rw,noexec,nosuid
+      - /var/run/openresty:rw,noexec,nosuid
+      - /usr/local/openresty/nginx/logs:rw,noexec,nosuid
+      - /usr/local/openresty/nginx/client_body_temp:rw,noexec,nosuid
+      - /usr/local/openresty/nginx/proxy_temp:rw,noexec,nosuid
+      - /usr/local/openresty/nginx/fastcgi_temp:rw,noexec,nosuid
+      - /usr/local/openresty/nginx/uwsgi_temp:rw,noexec,nosuid
+      - /usr/local/openresty/nginx/scgi_temp:rw,noexec,nosuid
     mem_limit: 128m
     cpus: 0.3
     pids_limit: 50

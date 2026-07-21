@@ -29,6 +29,8 @@ async def get_recipe_substitutes(recipe_id: int, db: AsyncSession = Depends(get_
                         "brand": product.brand_name,
                         "image": product.image_url,
                         "url": product.purchase_url,
+                        "sugar": float(product.sugars),
+                        "calories": float(product.calories),
                         "matchScore": float(match.match_score) if match.match_score is not None else None,
                         "isPrimary": match.is_primary,
                     }

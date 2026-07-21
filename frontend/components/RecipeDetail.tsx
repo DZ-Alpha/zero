@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { RecipeCover } from "@/components/RecipeCover";
 import { SafeImage } from "@/components/SafeImage";
-import { productBySlug, products, recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
+import { recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
 import { getRecipeDetail, getRecipeSubstitutes, RecipeDetailResponse, RecipeSubstituteResponse } from "@/lib/api/zerocheck";
 
 function normalizeSteps(value: unknown, fallback: { title: string; description: string }[]) {
@@ -94,7 +94,13 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
       estimatedCalories: nutrition?.totalKcal ?? fallbackDetail.estimatedCalories,
       comparisonSugar: nutrition?.baseSugarG ?? fallbackDetail.comparisonSugar,
       comparisonCalories: nutrition?.baseKcal ?? fallbackDetail.comparisonCalories,
-      comparisonStatus: nutrition?.comparisonStatus === "completed" ? "completed" as const : fallbackDetail.comparisonStatus,
+      // 백엔드/DB는 "ready"를 쓴다 — "completed"로 비교하고 있어서 재료 합산이
+      // 끝난 레시피도 항상 "준비 중" 패널만 떴다. RecipeData 내부 표현은 그대로
+      // "completed" 리터럴을 쓰되(catalog.ts 타입과 맞춤), API 값 체크만 고친다.
+      comparisonStatus: nutrition?.comparisonStatus === "ready" ? "completed" as const : fallbackDetail.comparisonStatus,
+      // useRecipeCatalog.ts와 같은 규칙: API가 nutrition을 내려주면(재료 합산 완료)
+      // 100%로 본다 — 여기서 한 번도 안 채워져서 fallback의 0이 항상 남아있었다.
+      nutritionCoverage: nutrition ? 100 : fallbackDetail.nutritionCoverage,
       ingredients: live.ingredients?.length
         ? live.ingredients.map((item) => `${item.name}${item.amount ? ` ${item.amount}` : ""}`)
         : fallbackDetail.ingredients,
@@ -102,17 +108,26 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
     };
   }, [fallbackDetail, live]);
   const relatedProducts = useMemo(() => {
-    const fallback = [
-      productBySlug["nuts-green-low-sugar-gochujang"],
-      productBySlug["low-sugar-oyster-sauce"],
-      productBySlug["fermented-konjac-rice"],
-    ];
-    const matched = (liveSubstitutes?.substitutes ?? [])
+    // liveSubstitutes는 이 레시피 재료에 실제로 매칭된 상품(DB pgvector 매칭 결과)이라
+    // 정적 카탈로그(products)에 없는 상품도 많다 — backendId로 카탈로그를 역참조하면
+    // 대부분 매칭에 실패해서 늘 하드코딩 3개만 뜨는 버그가 있었다. API가 이미 카드에
+    // 필요한 필드(image/sugar/calories)를 다 주므로 카탈로그 조회 없이 바로 쓰고,
+    // 매칭이 진짜 없으면(재료 자체에 대체 상품이 없는 레시피) 빈 상태를 그대로 보여준다
+    // — 무관한 고정 상품 3개를 계속 채워 넣는 게 오히려 혼란을 줬다.
+    return (liveSubstitutes?.substitutes ?? [])
       .flatMap((group) => group.products)
-      .map((item) => products.find((product) => product.backendId === item.productId))
-      .filter((product): product is NonNullable<typeof product> => Boolean(product));
-    return [...matched, ...fallback].filter((product, index, list) => list.findIndex((item) => item.slug === product.slug) === index).slice(0, 3);
+      .filter((item, index, list) => list.findIndex((other) => other.productId === item.productId) === index)
+      .map((item) => ({
+        id: item.productId,
+        title: item.name,
+        image: item.image ?? "",
+        serving: "100g",
+        sugar: item.sugar ?? 0,
+        calories: item.calories ?? 0,
+      }))
+      .slice(0, 3);
   }, [liveSubstitutes]);
+  const substitutesLoaded = liveSubstitutes !== null;
   const similar = recipes.filter((recipe) => recipe.slug !== detail.slug).slice(0, 3);
   const comparisonReady = detail.comparisonStatus === "completed" && detail.comparisonSugar > 0 && detail.comparisonCalories > 0;
 
@@ -157,7 +172,8 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
       <section className="detail-products-band">
         <div className="used-products wrap">
           <header className="section-line-heading"><div><p className="eyebrow">이 요리에 활용할 수 있는 제품</p><h2>재료를 바꿀 때 함께 살펴보세요</h2></div><Link href="/search">식품 전체 보기 →</Link></header>
-          <div className="compact-recommendations">{relatedProducts.map((product) => <Link href={`/product/${product.backendId ?? product.slug}`} key={product.backendId ?? product.slug}><div className="compact-product-photo"><SafeImage src={product.image} alt={`${product.title} 제품`} /></div><h3>{product.title}</h3><p>{product.serving} 기준 당류 {product.sugar}g · {product.calories}kcal</p><b>♥</b></Link>)}</div>
+          {relatedProducts.length > 0 && <div className="compact-recommendations">{relatedProducts.map((product) => <Link href={`/product/${product.id}`} key={product.id}><div className="compact-product-photo"><SafeImage src={product.image} alt={`${product.title} 제품`} /></div><h3>{product.title}</h3><p>{product.serving} 기준 당류 {product.sugar}g · {product.calories}kcal</p><b>♥</b></Link>)}</div>}
+          {substitutesLoaded && relatedProducts.length === 0 && <p className="used-products-empty">아직 매칭된 상품이 없어요.</p>}
         </div>
       </section>
 

@@ -236,7 +236,7 @@ export function PersonalPage() {
 
             {editor === "profile" && (
               <div className="settings-editor-fields">
-                <label><span>이름 또는 닉네임</span><input value={profileDraft.name ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, name: event.target.value }))} readOnly={profile.nameLocked} />{profile.nameLocked && <small>소셜 계정에서 불러온 이름이에요.</small>}</label>
+                <label><span>이름 또는 닉네임</span><input value={profileDraft.name ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, name: event.target.value }))} /><small>마이페이지에서 언제든 바꿀 수 있어요.</small></label>
                 <label><span>생년월일</span><input value={formatBirthDate(profileDraft.birthDate || profileDraft.birthYear)} onChange={(event) => setProfileDraft((current) => ({ ...current, birthDate: digits(event.target.value) }))} inputMode="numeric" placeholder="예: 20001006" readOnly={profile.birthDateLocked} />{profile.birthDateLocked && <small>소셜 계정에서 불러온 생년월일이에요.</small>}</label>
                 <label><span>성별</span><select value={profileDraft.gender ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, gender: event.target.value }))}><option value="">골라주세요</option><option>여성</option><option>남성</option></select></label>
                 <label><span>키</span><div className="unit-input"><input value={profileDraft.height ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, height: Number(event.target.value) }))} inputMode="decimal" /><b>cm</b></div></label>
