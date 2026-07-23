@@ -1,5 +1,4 @@
 # syntax=docker/dockerfile:1.7
-# build-once 파이프라인 canary(2026-07-22): CI 검증용 무해 변경(런타임 동작 동일).
 FROM node:22.15.0-bookworm-slim@sha256:557e52a0fcb928ee113df7e1fb5d4f60c1341dbda53f55e3d815ca10807efdce AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./

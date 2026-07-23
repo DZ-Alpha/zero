@@ -864,20 +864,32 @@ jobs:
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
           logout: false
       # ---- main run: 승격 소스(PR head sha) 조회 ----
-      # commit->PR API는 pull-requests: read(위 permissions)로 동작. gh/네트워크
-      # 실패나 소스 부재 시 found=false로 떨어져 아래 fallback 빌드로 안전하게 degrade.
-      - name: Resolve promote source (main only)
+      # 공식 GitHub REST API(list PRs associated with a commit)로 병합된 PR의
+      # head sha(=staging 태그)를 얻는다. merge/squash/rebase 모두 커버. 호출은
+      # 공식 actions/github-script(액션 Node 런타임)로 해 러너의 gh/jq/curl 설치
+      # 의존을 없앤다(1차 canary에서 gh 부재로 빈 값->fallback 실측 후 교체).
+      # 소스 부재 시 found=false로 아래 fallback 빌드로 안전 degrade.
+      - name: Resolve PR head sha (main only)
+        id: prhead
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          result-encoding: string
+          script: |
+            const { data: prs } =
+              await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+            return prs.length ? prs[0].head.sha : '';
+      - name: Check staging source (main only)
         id: src
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          REPO="${{ github.repository }}"
-          SHA="${{ github.sha }}"
           STAGING="harbor.hizero.local/dangdang/frontend-staging"
-          HEAD_SHA="$(gh api \
-            "repos/$REPO/commits/$SHA/pulls" \
-            --jq '.[0].head.sha // empty' 2>/dev/null || true)"
+          HEAD_SHA="${{ steps.prhead.outputs.result }}"
           FOUND="false"
           if [ -n "$HEAD_SHA" ] && \
              docker buildx imagetools inspect \
