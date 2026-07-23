@@ -910,16 +910,24 @@ jobs:
           HEAD_SHA="${{ steps.src.outputs.head_sha }}"
           IMAGE="harbor.hizero.local/dangdang/frontend"
           SHA="${{ github.sha }}"
+          # 소스(스캔된) 매니페스트 digest를 승격 전에 확보
+          SRC="sha256:$(docker buildx imagetools inspect --raw \
+            "$STAGING:$HEAD_SHA" | sha256sum | cut -d' ' -f1)"
           docker buildx imagetools create \
             -t "$IMAGE:$SHA" -t "$IMAGE:latest" "$STAGING:$HEAD_SHA"
-          SRC="$(docker buildx imagetools inspect --raw \
-            "$STAGING:$HEAD_SHA" | sha256sum)"
-          DST="$(docker buildx imagetools inspect --raw \
-            "$IMAGE:$SHA" | sha256sum)"
-          echo "staging manifest=$SRC"
-          echo "prod    manifest=$DST"
-          if [ "$SRC" != "$DST" ]; then
-            echo "::error::promote manifest mismatch: $SRC != $DST"
+          # 무결성: imagetools create는 단일 소스를 OCI index로 감싸 top-level
+          # digest가 달라진다(1차 실측 2f13..->cc28..) -> raw 바이트 동등 비교는
+          # 틀림. prod가 스캔된 소스 매니페스트를 "참조(index)" 또는 "동등(직접
+          # 복사)"하는지로 검증한다.
+          DST_RAW="$(docker buildx imagetools inspect --raw "$IMAGE:$SHA")"
+          DST="sha256:$(printf '%s' "$DST_RAW" | sha256sum | cut -d' ' -f1)"
+          MATCH=false
+          if [ "$DST" = "$SRC" ]; then MATCH=true; fi
+          if printf '%s' "$DST_RAW" | grep -q "$SRC"; then MATCH=true; fi
+          if [ "$MATCH" = true ]; then
+            echo "integrity OK: prod=$DST references/equals scanned $SRC"
+          else
+            echo "::error::promoted image does not match scanned $SRC"
             exit 1
           fi
       # ---- PR run, 또는 main fallback(소스 없음): 빌드 ----
