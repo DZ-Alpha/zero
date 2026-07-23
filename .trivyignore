@@ -21,17 +21,3 @@ CVE-2026-53615
 CVE-2026-54369
 CVE-2026-8376
 CVE-2026-9538
-
-# sharp (npm, transitive via Next.js image optimization) - libvips inherited HIGH.
-# GHSA-f88m-g3jw-g9cj / CVE-2026-33327, -33328, -35590, -35591.
-# 2026-07-22: a Trivy DB update newly flagged this - the same image passed the scan
-# hours earlier, i.e. a real new disclosure (the gate is working). A fix EXISTS
-# (sharp 0.35.0). Temporarily accepted to unblock the 7/22 demo because regenerating
-# package-lock.json (Dockerfile uses `npm ci`) requires npm, unavailable in the
-# current environment. TRACKED: proper bump to sharp 0.35.0 in 재정비 (P1).
-# Risk: transitive image-processing lib, not on a user-upload path. Re-remove after bump.
-GHSA-f88m-g3jw-g9cj
-CVE-2026-33327
-CVE-2026-33328
-CVE-2026-35590
-CVE-2026-35591
