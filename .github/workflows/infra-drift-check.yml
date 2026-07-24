@@ -1,0 +1,122 @@
+# 2026-07-24, 수동 배포 스택의 설정 드리프트 감시.
+#
+# 배경: infra/ 아래 스택 중 b-gateway만 CI 배포 경로(bgateway-cutover)가 있고,
+# cadvisor/alloy-logs/sonarqube/monitoring은 사람이 VM에서 직접 `docker compose
+# up -d`로 올린다. 저장소와 실제 배포본을 맞춰주는 장치가 없어서, 둘이 갈라져도
+# 아무도 모른다.
+#
+# 실제로 이날 갈라졌다: cAdvisor du 스캔 폭주(production 루트 디스크 포화)
+# 대응으로 4개 VM에 수정이 먼저 배포됐는데 PR(#155)은 열린 채로 남아, 약 1시간
+# 동안 "누가 main 기준으로 재배포하면 그 사고가 재현되는" 상태였다. 점검 중
+# 우연히 발견했을 뿐, 알려주는 장치가 없었다.
+#
+# 이 워크플로는 그 상태를 매일 한 번 자동으로 확인한다. 비교는 주석/공백을
+# 제외한 "실질 설정"만 본다 - 주석 문구 차이로 알람이 울리면 금방 무시하게 되고,
+# 실제로 위 사건에서도 20줄짜리 diff의 실질 차이는 한 줄뿐이었다.
+#
+# 한계(의도적으로 남김): self-hosted 러너가 harbor VM에 있어 그 VM의 스택만
+# 검사한다. monitoring VM은 harbor에서 SSH 키 인증이 안 되고(실측: publickey
+# denied), 그걸 뚫으려면 VM 간 신뢰 경로를 새로 만들어야 해서 별도 결정이 필요하다.
+# 근본 해결은 이 스택들도 b-gateway처럼 CI 배포로 돌리는 것이고, 쿠버네티스
+# 이관 때 함께 정리하는 게 맞다.
+name: Infra Drift Check
+
+on:
+  schedule:
+    # 매일 23:00 UTC = 08:00 KST. 업무 시작 시점에 결과가 나와 있게 한다.
+    # (공식 문서상 schedule은 정확 보장이 아니라 최선 노력 - 일 1회 점검엔 충분)
+    - cron: '0 23 * * *'
+  workflow_dispatch: {}
+
+# 저장소 파일을 읽기만 한다.
+permissions:
+  contents: read
+
+jobs:
+  drift-check:
+    runs-on: self-hosted
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      # 검사 대상을 손으로 나열하지 않는다. 이 저장소에서 반복된 사고 원인이
+      # "하드코딩 목록에 새 항목을 안 넣어서 조용히 누락"이라, 실행 중인
+      # 컨테이너의 compose 라벨에서 배포 위치를 직접 읽어온다.
+      # 그 위치를 저장소 경로로 매핑하는 표만 유지하면 되고, 표에 없는 스택이
+      # 발견되면 "관리 밖"으로 보고한다(조용히 빠지지 않게).
+      - name: Compare deployed stacks against repo
+        id: drift
+        run: |
+          # 배포위치|저장소경로
+          MAP="/home/bruce/cadvisor|infra/cadvisor/docker-compose.yml
+          /home/bruce/alloy|infra/alloy-logs/docker-compose.yml
+          /home/bruce/zero/infra/sonarqube|infra/sonarqube/docker-compose.yml"
+          # Harbor 제품 자체 설치본은 이 저장소가 소유하지 않는다(./prepare가 생성).
+          EXTERNAL="/home/bruce/harbor"
+
+          strip() { grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$1"; }
+
+          REPORT=""
+          add() { REPORT="${REPORT}${1}"$'\n'; }
+
+          LBL='com.docker.compose.project.working_dir'
+          DEPLOYED=$(docker ps --format '{{.Names}}' | while read -r c; do
+            docker inspect "$c" --format "{{index .Config.Labels \"$LBL\"}}"
+          done | grep -v '^$' | sort -u)
+
+          for dir in $DEPLOYED; do
+            case "$EXTERNAL" in *"$dir"*) continue ;; esac
+            repo=$(printf '%s\n' "$MAP" | sed 's/^[[:space:]]*//' \
+              | awk -F'|' -v d="$dir" '$1==d {print $2}')
+            if [ -z "$repo" ]; then
+              add "UNMANAGED: $dir (저장소 매핑 없음 - 표에 추가 필요)"
+              continue
+            fi
+            if [ ! -f "$repo" ]; then
+              add "MISSING: $repo 가 저장소에 없음 (배포: $dir)"
+              continue
+            fi
+            live="$dir/docker-compose.yml"
+            if [ ! -f "$live" ]; then
+              add "MISSING: $live 를 읽을 수 없음"
+              continue
+            fi
+            if ! diff -q <(strip "$live") <(strip "$repo") >/dev/null; then
+              n=$(diff <(strip "$live") <(strip "$repo") | grep -c '^[<>]')
+              add "DRIFT: $live vs $repo (실질 차이 ${n}줄)"
+            fi
+          done
+
+          if [ -n "$REPORT" ]; then
+            printf '%s\n' "$REPORT"
+            {
+              echo "found=true"
+              echo "report<<EOF"
+              printf '%s\n' "$REPORT"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "모든 배포 스택이 저장소와 일치"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify Slack on drift
+        if: steps.drift.outputs.found == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          REPORT: ${{ steps.drift.outputs.report }}
+        run: |
+          RUN_URL="$SERVER_URL/$REPOSITORY/actions/runs/$RUN_ID"
+          TEXT=":warning: *인프라 드리프트* - harbor VM 배포본이 main과 다릅니다"
+          TEXT="$TEXT"$'\n'"$REPORT"
+          TEXT="$TEXT"$'\n'"배포된 변경이 아직 머지 안 됐거나,"
+          TEXT="$TEXT 저장소 변경이 아직 배포 안 된 상태입니다."
+          TEXT="$TEXT"$'\n'"<$RUN_URL|실행 보기>"
+          # 문자열 결합 대신 jq로 JSON을 만든다(build-test.yml의 알람과 동일 이유 -
+          # 본문에 따옴표류가 섞이면 payload가 깨져 알람이 통째로 안 나간다).
+          jq -nc --arg t "$TEXT" '{text: $t}' > slack-payload.json
+          curl -sf -X POST -H 'Content-type: application/json' \
+            --data @slack-payload.json "$SLACK_WEBHOOK_URL"
