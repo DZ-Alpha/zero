@@ -1,3 +1,32 @@
+# 2026-07-24, 이 스택만 최소 하드닝이 전혀 없었다(로그 로테이션/리소스 제한/
+# 헬스체크 전무). 다른 스택(backend, monitoring, cadvisor, alloy-logs)은 전부
+# 갖추고 있어서 기준이 여기만 어긋나 있었다.
+#
+# 로그 로테이션이 특히 급했다 - harbor VM 루트 디스크가 같은 날 오전 82%에서
+# 오후 86%(9.2G 여유)로 올랐고, json-file 드라이버는 기본값이 무제한이라
+# (Docker 공식 문서: max-size 미지정 시 로그가 무한히 커짐) 컨테이너 로그가
+# 디스크를 채우는 경로가 열려 있었다. 디스크가 차면 Harbor push가 실패해
+# 파이프라인 전체가 멈춘다.
+#
+# 리소스 제한은 추측이 아니라 실측 기반이다(docker stats, 2026-07-24):
+#   sonarqube    1.567GiB / 7.755GiB   CPU 0.70%
+#   sonarqube-db 172.4MiB / 7.755GiB   CPU 0.00%
+# 컨테이너 내부 JVM 힙은 -Xmx512m(web) + -Xmx512m(CE) + -Xmx64m 구성.
+# 분석 중 피크를 감안해 실측의 약 2.5배인 4g로 잡는다 - SonarQube는 CI의
+# 하드게이트라 OOM kill이 나면 전 PR이 막히므로 넉넉하게 두되, 무제한으로
+# 두면 7.7GiB 호스트에서 Harbor 쪽을 굶길 수 있어 상한 자체는 필요하다.
+#
+# 헬스체크 엔드포인트는 공식 문서 기준(/api/system/status, UP/DOWN/STARTING
+# 반환). depends_on의 condition에는 아직 걸지 않는다 - 기동 순서 동작을
+# 바꾸면 이번 변경의 범위를 넘고, 지금 목적은 상태 가시성 확보다.
+# start_period가 180s인 이유: SonarQube는 Elasticsearch까지 올라와야 UP이라
+# 콜드 스타트가 1~2분 걸린다(짧게 잡으면 기동 중에 unhealthy로 뜬다).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   sonarqube-db:
     image: postgres:16
@@ -8,6 +37,15 @@ services:
       POSTGRES_DB: sonarqube
     volumes:
       - sonarqube_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonarqube -d sonarqube"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    mem_limit: 1g
+    cpus: 1.0
+    logging: *default-logging
     restart: unless-stopped
 
   sonarqube:
@@ -25,6 +63,23 @@ services:
       - sonarqube_data:/opt/sonarqube/data
       - sonarqube_extensions:/opt/sonarqube/extensions
       - sonarqube_logs:/opt/sonarqube/logs
+    healthcheck:
+      # wget이 아니라 curl을 쓴다 - sonarqube:community 이미지에는 wget이
+      # 없다(monitoring 스택의 다른 도구들은 busybox wget이 있어서 그 패턴을
+      # 그대로 복사하면 컨테이너가 영구 unhealthy가 된다. 2026-07-24 적용 전
+      # `docker exec sonarqube command -v` 로 실측 확인: curl 있음, wget 없음).
+      test:
+        - CMD-SHELL
+        - >-
+          curl -sf http://localhost:9000/api/system/status
+          | grep -q '"status":"UP"'
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 5
+    mem_limit: 4g
+    cpus: 2.0
+    logging: *default-logging
     restart: unless-stopped
 
 volumes:

@@ -20,6 +20,35 @@ services:
     image: ghcr.io/google/cadvisor:v0.60.5
     container_name: cadvisor
     privileged: true
+    # 2026-07-24 production VM 장애 대응. backend 배포(9개 서비스 컨테이너
+    # 재생성) 직후 cAdvisor의 컨테이너별 파일시스템 사용량 수집(fsHandler)이
+    # /var/lib/docker/rootfs/overlayfs/* 를 du 방식으로 재귀 스캔하면서 루트
+    # 디스크를 121MB/s 읽기로 포화시켰다(io_time 94%, iowait 81%, CPU 96%).
+    # cAdvisor 자신의 로그에 한 번의 스캔이 4.9s -> 20s -> 1m18s -> 3m58s로
+    # 계단식 악화되는 게 그대로 찍혀 있었고, 그 여파로 :8090 HTTP 응답이 끊겨
+    # "Instance Down"(critical)과 "High CPU"(warning) 알람이 함께 울렸다.
+    # 서비스는 무영향이었고(blackbox 프로브 7개 전부 정상) 약 20분 뒤 자체
+    # 회복했지만, 배포마다 컨테이너가 재생성되므로 구조적으로 재발한다.
+    # 아래 플래그는 전부 공식 문서(github.com/google/cadvisor
+    # docs/runtime_options.md)에 있는 것으로, 원인 자체를 제거한다.
+    #
+    # - --disable_metrics=disk: du 스캔의 출처인 파일시스템 "사용량" 지표
+    #   그룹만 끈다. 블록 I/O는 별도 그룹(diskIO)이라 그대로 유지되므로,
+    #   체크리스트 Observability-4가 요구하는 "컨테이너별 CPU/MEM/블록I/O"는
+    #   깨지지 않는다. 대시보드(infra/monitoring/dashboards/zerocheck-overview
+    #   .json)가 쓰는 건 container_cpu_usage_seconds_total과
+    #   container_memory_usage_bytes 둘뿐이고 container_fs_*는 저장소 어디에서도
+    #   참조하지 않는 것을 확인하고 껐다.
+    # - --docker_only=true: docker 컨테이너 외의 raw cgroup 수집을 끈다. 위
+    #   장애 로그에는 배포용 SSH 접속마다 생긴 user-1000.slice/session-NNN.scope
+    #   에 대한 watcher 오류가 수백 줄 함께 찍혀 있었는데 그 잡음도 사라진다.
+    # - --housekeeping_interval=10s: 기본 1s는 Prometheus scrape_interval(15s)
+    #   보다 15배 촘촘해 대부분 버려지는 수집이다. 스크레이프 주기보다 짧게만
+    #   유지하면 지표 해상도 손실 없이 상시 부하를 줄인다.
+    command:
+      - --disable_metrics=disk
+      - --docker_only=true
+      - --housekeeping_interval=10s
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:rw

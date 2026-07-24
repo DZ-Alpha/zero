@@ -173,6 +173,14 @@ services:
     image: ghcr.io/google/cadvisor:v0.60.5
     container_name: cadvisor
     privileged: true
+    # 2026-07-24, production VM에서 실측된 fsHandler du 스캔 폭주(루트 디스크
+    # 121MB/s 읽기, iowait 81%, :8090 응답 끊김) 대응. 근거와 각 플래그를 고른
+    # 이유는 infra/cadvisor/docker-compose.yml 주석에 전부 적어뒀다 - cAdvisor는
+    # 4개 VM에 같은 설정으로 배포하는 것이 원칙이라 여기도 동일하게 맞춘다.
+    command:
+      - --disable_metrics=disk
+      - --docker_only=true
+      - --housekeeping_interval=10s
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:rw
