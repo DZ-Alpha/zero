@@ -74,8 +74,17 @@ jobs:
 
           strip() { grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$1"; }
 
-          REPORT=""
-          add() { REPORT="${REPORT}${1}"$'\n'; }
+          # 2026-07-24 3차: 보고를 두 등급으로 나눈다.
+          #  ALERT - 사람이 조치해야 하는 것(실제 드리프트, VM 접속 불가)
+          #  INFO  - 알아둘 것이지만 매일 울릴 필요는 없는 것
+          #          (저장소 밖 스택, 권한 때문에 못 읽는 파일)
+          # 첫 실행에서 INFO성 항목이 4건 나왔는데, 이걸 전부 Slack으로 보내면
+          # 조치 전까지 매일 같은 알람이 울려 결국 무시하게 된다. 알람은
+          # 조치 가능한 것만 보내고 나머지는 실행 로그에 남긴다.
+          ALERTS=""
+          INFOS=""
+          add() { ALERTS="${ALERTS}${1}"$'\n'; }
+          note() { INFOS="${INFOS}${1}"$'\n'; }
 
           # 배포 위치 열거는 로컬/원격 모두 "같은 한 줄짜리 명령 문자열"을
           # 실행한다. 원격에서 인자를 쪼개 넘기면 Go 템플릿의 큰따옴표를
@@ -107,7 +116,10 @@ jobs:
               repo=$(printf '%s\n' "$MAP" | sed 's/^[[:space:]]*//' \
                 | awk -F'|' -v d="$name" '$1==d {print $2}')
               if [ -z "$repo" ]; then
-                add "UNMANAGED: $vm:$dir (저장소 매핑 없음 - 표에 추가 필요)"
+                # 이 저장소가 소유하지 않는 스택일 수 있다(예: DB VM의
+                # /opt/dangdang-event-pipeline 류 - 담당자가 다름).
+                # 알람 대상은 아니고, 존재를 알고만 있으면 된다.
+                note "저장소 밖 스택: $vm:$dir"
                 continue
               fi
               if [ ! -f "$repo" ]; then
@@ -117,13 +129,20 @@ jobs:
               tmp="/tmp/drift-live.$$"
               if ! run_cmd "$RUN" "cat '$dir/docker-compose.yml'" \
                    > "$tmp" 2>/dev/null || [ ! -s "$tmp" ]; then
-                add "MISSING: $vm:$dir/docker-compose.yml 를 읽을 수 없음"
+                # 접속 계정이 파일 소유자와 다르면 읽기 권한이 없을 수 있다
+                # (실측: production의 ~zero/alloy 를 bruce로는 못 읽음).
+                # 상시 조건이라 매일 알람을 보내지 않고 기록만 한다.
+                note "읽기 불가(권한 추정): $vm:$dir/docker-compose.yml"
                 rm -f "$tmp"
                 continue
               fi
               if ! diff -q <(strip "$tmp") <(strip "$repo") >/dev/null; then
                 n=$(diff <(strip "$tmp") <(strip "$repo") | grep -c '^[<>]')
                 add "DRIFT: $vm:$dir vs $repo (실질 차이 ${n}줄)"
+                # 차이 내용을 로그에 남겨 2차 조사 없이 판단할 수 있게 한다.
+                # compose 파일의 비밀값은 .env로 분리돼 있어 본문에 없다.
+                echo "--- diff: $vm:$dir (배포본 < / 저장소 >) ---"
+                diff <(strip "$tmp") <(strip "$repo") | head -20
               fi
               rm -f "$tmp"
             done
@@ -140,16 +159,22 @@ jobs:
           check_vm "db" "sshpass -e ssh $SSHOPT zero@10.10.20.10"
           unset SSHPASS
 
-          if [ -n "$REPORT" ]; then
-            printf '%s\n' "$REPORT"
+          if [ -n "$INFOS" ]; then
+            echo "=== 참고 사항(알람 대상 아님) ==="
+            printf '%s' "$INFOS"
+          fi
+
+          if [ -n "$ALERTS" ]; then
+            echo "=== 조치 필요 ==="
+            printf '%s' "$ALERTS"
             {
               echo "found=true"
               echo "report<<EOF"
-              printf '%s\n' "$REPORT"
+              printf '%s' "$ALERTS"
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
           else
-            echo "모든 배포 스택이 저장소와 일치"
+            echo "조치가 필요한 드리프트 없음"
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -163,10 +188,11 @@ jobs:
           REPORT: ${{ steps.drift.outputs.report }}
         run: |
           RUN_URL="$SERVER_URL/$REPOSITORY/actions/runs/$RUN_ID"
-          TEXT=":warning: *인프라 드리프트* - harbor VM 배포본이 main과 다릅니다"
+          TEXT=":warning: *인프라 드리프트* - 배포본이 main과 다릅니다"
           TEXT="$TEXT"$'\n'"$REPORT"
           TEXT="$TEXT"$'\n'"배포된 변경이 아직 머지 안 됐거나,"
           TEXT="$TEXT 저장소 변경이 아직 배포 안 된 상태입니다."
+          TEXT="$TEXT"$'\n'"차이 내용은 실행 로그의 diff 참고."
           TEXT="$TEXT"$'\n'"<$RUN_URL|실행 보기>"
           # 문자열 결합 대신 jq로 JSON을 만든다(build-test.yml의 알람과 동일 이유 -
           # 본문에 따옴표류가 섞이면 payload가 깨져 알람이 통째로 안 나간다).
