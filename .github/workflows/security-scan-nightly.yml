@@ -1,0 +1,148 @@
+# 2026-07-24, 정기 이미지 취약점 스캔.
+#
+# 왜 필요한가: build-test.yml의 이미지 스캔은 paths-filter로 "그 앱 경로가
+# 바뀐 커밋"에서만 돈다. 그래서 코드를 건드리지 않는 한 이미 배포된 이미지의
+# 신규 취약점은 아무도 모른다 - main이 초록불인데 취약한 상태가 성립한다.
+# 2026-07-24 실측: main @ 7f8757b는 frontend-admin/** 변경이 없어 스캔 job이
+# skip 됐고, 그 시점 main에는 next 16.2.10(HIGH 4건)이 그대로 있었다.
+#
+# 이건 이론적 걱정이 아니다. .trivyignore의 2026-07-22 기록대로, 코드가 전혀
+# 안 바뀌었는데 Trivy DB 갱신만으로 몇 시간 만에 sharp HIGH가 새로 검출된
+# 전례가 있다. 취약점은 우리가 커밋할 때가 아니라 공개될 때 생긴다.
+#
+# 무엇을 스캔하나: 로컬 빌드가 아니라 Harbor에 올라가 있는 :latest -
+# 즉 각 서비스가 마지막으로 배포한 실물 이미지다. 재빌드하지 않으므로
+# "지금 돌고 있는 것"을 그대로 검사한다.
+name: Nightly Image Scan
+
+on:
+  schedule:
+    # 03:20 KST(=18:20 UTC). 공식 문서(Events that trigger workflows > schedule)
+    # 기준 두 가지를 반영했다. (1) "Scheduled workflows run on the latest commit
+    # on the default branch" - main 기준으로만 돈다. (2) "The schedule event can
+    # be delayed during periods of high loads... High load times include the
+    # start of every hour" - 그래서 정각을 피해 20분으로 잡았다.
+    - cron: '20 18 * * *'
+  # 취약점 공개 직후 등 필요할 때 손으로 돌릴 수 있게 열어둔다.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-image-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Trivy (${{ matrix.image }})
+    runs-on: self-hosted
+    timeout-minutes: 20
+    strategy:
+      # 한 이미지가 터져도 나머지를 끝까지 본다 - "무엇이 취약한지 전부"가
+      # 필요하지, 첫 실패만 알면 다음 날 또 같은 자리에서 멈춘다.
+      fail-fast: false
+      # 반드시 1이어야 한다. 이 job은 스캔하려고 이미지를 pull하는데,
+      # 병렬로 돌면 11개가 동시에 러너 디스크에 쌓인다. 2026-07-24 실측으로
+      # harbor VM 루트 파티션이 82% -> 94%까지 차서 "High Disk Usage"가
+      # 발화했고 여유가 4.2GB뿐이었다(러너 이미지 정리 미비, 별도 수정됨).
+      # 디스크가 차면 Harbor push가 실패해 파이프라인 전체가 멈추므로,
+      # "매일 밤 도는 검사"가 그 원인이 되어서는 안 된다. 순차 실행하면
+      # 아래 정리 스텝 덕분에 동시 적재량이 항상 이미지 1개로 유지된다.
+      max-parallel: 1
+      matrix:
+        # backend 9종은 build-test.yml의 SERVICES 목록과 같아야 한다.
+        # 새 서비스를 추가하면 여기도 같이 넣을 것(그쪽 하드코딩 목록들과
+        # 동일한 제약 - 빠뜨리면 그 서비스만 조용히 스캔에서 빠진다).
+        # b-gateway는 CI가 빌드하는 이미지가 없어(openresty 수동 운영) 제외.
+        image:
+          - dangdang-backend/admin-service
+          - dangdang-backend/ai
+          - dangdang-backend/community-service
+          - dangdang-backend/diet-service
+          - dangdang-backend/ingredients-service
+          - dangdang-backend/login-service
+          - dangdang-backend/main-service
+          - dangdang-backend/product-service
+          - dangdang-backend/recipe-service
+          - dangdang/frontend
+          - dangdang/frontend-admin
+    steps:
+      # .trivyignore(리스크 수용 목록)를 쓰기 위해 체크아웃이 필요하다.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # build-test.yml과 같은 이유로 호스트명을 harbor.hizero.local로 통일한다 -
+      # Docker는 자격증명을 레지스트리 호스트명 단위로 저장하므로(공식 문서:
+      # docker login이 registry별로 config.json에 기록), 로그인과 pull의
+      # 호스트명이 갈리면 비공개 프로젝트에서 인증이 안 붙는다.
+      - name: Log in to Harbor
+        run: |
+          TOKEN='${{ secrets.HARBOR_ROBOT_TOKEN }}'
+          USR='${{ secrets.HARBOR_ROBOT_USER }}'
+          echo "$TOKEN" | docker login harbor.hizero.local \
+            -u "$USR" --password-stdin
+      # pull 전에 여유를 확인하고, 부족하면 아무것도 받지 않고 멈춘다.
+      # 스캔을 못 하는 것보다 파이프라인을 멈추는 게 훨씬 비싸다 - 실패
+      # 메시지로 사람이 인지하게 하고, 디스크는 건드리지 않는다.
+      - name: Guard - 러너 디스크 여유 확인
+        run: |
+          AVAIL=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "루트 파티션 여유: ${AVAIL}GB"
+          if [ "$AVAIL" -lt 10 ]; then
+            echo "::error::여유 ${AVAIL}GB로 부족해 이미지 pull을 중단합니다." \
+              "야간 스캔이 러너 디스크를 채워 파이프라인을 멈추는 것을 막기" \
+              "위한 가드입니다. 러너 디스크를 먼저 확보하세요."
+            exit 1
+          fi
+      - name: Pull deployed image
+        run: docker pull "harbor.hizero.local/${{ matrix.image }}:latest"
+      # build-test.yml의 스캔 job들과 동일한 이유 - setup-trivy 기본 설치
+      # 경로를 러너들이 공유하면 충돌하므로 러너별 경로에 설치한다.
+      - name: Install Trivy (per-runner path)
+        # v0.2.6
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
+        with:
+          path: /home/bruce/.trivy-bin/${{ runner.name }}
+      - name: Trivy vulnerability scan
+        # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: harbor.hizero.local/${{ matrix.image }}:latest
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          # 리스크 수용 목록을 명시적으로 지정한다. 기본 탐색에 맡기면
+          # 이 job이 PR 게이트보다 엄격해져, 이미 심사·수용한 항목으로
+          # 매일 밤 알람이 울린다.
+          trivyignores: .trivyignore
+          cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
+          skip-setup-trivy: true
+      # 스캔이 실패해도 태그는 정리한다(러너 디스크 누적 방지). 레이어는
+      # 다른 이미지가 참조하면 남으므로, 여기서 지우는 건 태그뿐이다.
+      - name: Clean up pulled tag
+        if: always()
+        run: |
+          docker image rm "harbor.hizero.local/${{ matrix.image }}:latest" \
+            || true
+
+  notify-on-failure:
+    needs: scan
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}  # yamllint disable-line rule:line-length
+        run: |
+          # build-test.yml의 notify와 같은 이유로 jq를 쓴다 - 문자열 결합으로
+          # JSON을 만들면 본문에 큰따옴표/역슬래시가 섞였을 때 알람 자체가
+          # 통째로 안 나간다.
+          TEXT=":rotating_light: *야간 이미지 스캔* 에서"
+          TEXT="$TEXT CRITICAL/HIGH 취약점이 검출되었습니다."
+          TEXT="$TEXT"$'\n'"배포된 :latest 이미지 기준입니다"
+          TEXT="$TEXT — 코드를 안 바꿔도 새로 공개된 취약점일 수 있습니다."
+          TEXT="$TEXT"$'\n'"<$RUN_URL|어떤 이미지인지 보기>"
+          jq -nc --arg t "$TEXT" '{text: $t}' > slack-payload.json
+          curl -sf -X POST \
+            -H 'Content-type: application/json' \
+            --data @slack-payload.json \
+            "$SLACK_WEBHOOK_URL"
