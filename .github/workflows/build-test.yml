@@ -562,7 +562,70 @@ jobs:
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
           logout: false
+      # ---- build-once (2026-07-23): frontend와 동일 패턴을 매트릭스에 적용 ----
+      # PR run: 서비스별 build+scan 후 staging repo push. main run: 재빌드 없이
+      # PR 때 스캔된 이미지를 production repo로 digest 승격(+무결성 검증). 소스
+      # 부재 시 fallback 빌드(아래 스텝 if 참고). PR head sha는 공식
+      # actions/github-script + commit->PR API로 조회(러너 gh 의존 없음).
+      - name: Resolve PR head sha (main only)
+        id: prhead
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          result-encoding: string
+          script: |
+            const { data: prs } =
+              await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+            return prs.length ? prs[0].head.sha : '';
+      - name: Check staging source (main only)
+        id: src
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          SVC="${{ matrix.service }}"
+          STAGING="harbor.hizero.local/dangdang-backend/$SVC-staging"
+          HEAD_SHA="${{ steps.prhead.outputs.result }}"
+          FOUND="false"
+          if [ -n "$HEAD_SHA" ] && \
+             docker buildx imagetools inspect \
+               "$STAGING:$HEAD_SHA" >/dev/null 2>&1; then
+            FOUND="true"
+          fi
+          {
+            echo "head_sha=$HEAD_SHA"
+            echo "found=$FOUND"
+            echo "staging=$STAGING"
+          } >> "$GITHUB_OUTPUT"
+          echo "[$SVC] promote src: head=$HEAD_SHA found=$FOUND"
+      - name: Promote staging image (digest copy)
+        if: steps.src.outputs.found == 'true'
+        run: |
+          SVC="${{ matrix.service }}"
+          STAGING="${{ steps.src.outputs.staging }}"
+          HEAD_SHA="${{ steps.src.outputs.head_sha }}"
+          IMAGE="harbor.hizero.local/dangdang-backend/$SVC"
+          SHA="${{ github.sha }}"
+          SRC="sha256:$(docker buildx imagetools inspect --raw \
+            "$STAGING:$HEAD_SHA" | sha256sum | cut -d' ' -f1)"
+          docker buildx imagetools create \
+            -t "$IMAGE:$SHA" -t "$IMAGE:latest" "$STAGING:$HEAD_SHA"
+          DST_RAW="$(docker buildx imagetools inspect --raw "$IMAGE:$SHA")"
+          DST="sha256:$(printf '%s' "$DST_RAW" | sha256sum | cut -d' ' -f1)"
+          MATCH=false
+          if [ "$DST" = "$SRC" ]; then MATCH=true; fi
+          if printf '%s' "$DST_RAW" | grep -q "$SRC"; then MATCH=true; fi
+          if [ "$MATCH" = true ]; then
+            echo "[$SVC] integrity OK: $DST refs/eq $SRC"
+          else
+            echo "::error::[$SVC] promoted != scanned $SRC"
+            exit 1
+          fi
       - name: Build image
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v7
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
@@ -577,11 +640,13 @@ jobs:
       # 충돌한다(실제로 재현함). 러너별 경로에 직접 설치하고 trivy-action의 재설치는
       # 건너뛴다.
       - name: Install Trivy (per-runner path)
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.2.6
         uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
         with:
           path: /home/bruce/.trivy-bin/${{ runner.name }}
       - name: Trivy vulnerability scan
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -613,12 +678,25 @@ jobs:
       # 없이 달성된다. workflow_dispatch도 push 안 함(수동 재배포는 기존 태그
       # 재사용이라 새 push 불요). Docker 공식 CI 문서의 조건부 push
       # (push: github.event_name != 'pull_request') 표준 패턴과 동일 취지.
-      - name: Tag and push (sha + latest)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # ---- PR run: staging repo push(승격 소스). 미병합 이미지는 staging에만. ----
+      - name: Push to staging (build-once source)
+        if: github.event_name == 'pull_request'
         run: |
-          IMAGE="harbor.hizero.local/dangdang-backend/${{ matrix.service }}"
+          SVC="${{ matrix.service }}"
+          STAGING="harbor.hizero.local/dangdang-backend/$SVC-staging"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
           SHA="${{ github.sha }}"
-          LOCAL="backend-${{ matrix.service }}:$SHA"
+          docker tag "backend-$SVC:$SHA" "$STAGING:$HEAD_SHA"
+          docker push "$STAGING:$HEAD_SHA"
+      # ---- main fallback: 스캔한 이미지를 production repo로 push(구 동작) ----
+      - name: Tag and push (main fallback, sha + latest)
+        if: steps.src.outputs.found == 'false'
+        run: |
+          SVC="${{ matrix.service }}"
+          IMAGE="harbor.hizero.local/dangdang-backend/$SVC"
+          SHA="${{ github.sha }}"
+          LOCAL="backend-$SVC:$SHA"
+          echo "::warning::[$SVC] build-once source missing - fallback"
           docker tag "$LOCAL" "$IMAGE:$SHA"
           docker tag "$LOCAL" "$IMAGE:latest"
           docker push "$IMAGE:$SHA"
@@ -1065,8 +1143,16 @@ jobs:
             exit 1
           fi
 
-  # frontend/ 이미지 빌드+스캔+push. 백엔드와 동일한 :sha/:latest 이중 태그 전략을 쓴다.
-  # 배포는 아래 frontend-deploy-production job 참고.
+  # frontend/ 이미지 - build-once 전략(2026-07-22 도입).
+  #  - PR run: build+scan 후 dangdang/frontend-staging:<PR head sha>로 push.
+  #  - main run: 재빌드/재스캔 없이, PR 때 스캔된 그 이미지를 production repo(dangdang/frontend)
+  #    로 digest 승격(docker buildx imagetools create). "스캔된 바로 그 바이트"가 배포됨.
+  #    PR head sha는 머지 방식(merge/squash/rebase) 무관하게 GitHub "commit->PR" API로
+  #    조회한다(HEAD^2 부모 방식은 squash/rebase에서 깨짐). 승격 후 raw manifest 일치 검증.
+  #  - fallback: 승격 소스를 못 찾으면(전환기 구워크플로 PR/직접 push/핫픽스/API·소스 부재)
+  #    main에서 그 자리 빌드+스캔+push -> main이 배포 불가 상태로 남지 않음(graceful degrade).
+  #  이 잡은 PR·main 양쪽에서 계속 돌고 성공을 리포트하므로 아래 frontend-deploy-production의
+  #  needs/result 조건은 그대로 유효(잡 그래프 변경 없음). 배포는 그 job 참고.
   frontend-image-scanning:
     needs: detect-frontend
     if: needs.detect-frontend.outputs.changed == 'true'
@@ -1074,22 +1160,15 @@ jobs:
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # v4
-      # 2026-07-21, registry 캐시(Harbor) 사용을 위한 per-job 빌더 설정.
-      # - network=host: 빌더 컨테이너가 host의 이름 해석을 쓰게 함
-      #   (bridge 빌더는 harbor.hizero.local 해석 불가 - PR#98 1차 실패 실측)
-      # - image=buildkit-harbor:v1: Harbor CA를 신뢰 저장소에 구운 buildkit
-      #   이미지(harbor VM ~/buildkit-harbor에서 빌드). insecure 우회는 buildkit이
-      #   토큰 요청에 적용하지 않아 실패함(실측) - CA 정식 신뢰가 정공법.
-      #   이미지 pull은 host dockerd가 하므로 certs.d 신뢰로 동작.
+      # v4 - registry 캐시(Harbor) + imagetools 승격에 쓸 per-job 빌더.
+      # network=host: 빌더가 host 이름해석으로 harbor.hizero.local 접근(bridge는 해석
+      # 불가 - PR#98 실측). image=buildkit-harbor:v1: Harbor CA를 신뢰에 구운 buildkit.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
         with:
           driver-opts: |
             network=host
             image=harbor.hizero.local/dangdang/buildkit-harbor:v1
-      # registry 캐시 push(cache-to)에 빌드 시점 인증 필요 - 로그인을 빌드
-      # 앞에 배치. PR 실행에서도 로그인하지만 이미지 push는 여전히 아래
-      # main 가드 스텝에서만 한다(캐시 blob만 push됨).
+      # 캐시 push·staging push·승격·inspect 모두 인증 필요 - 로그인을 먼저.
       - name: Log in to Harbor
         # v3
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -1098,7 +1177,76 @@ jobs:
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
           logout: false
+      # ---- main run: 승격 소스(PR head sha) 조회 ----
+      # 공식 GitHub REST API(list PRs associated with a commit)로 병합된 PR의
+      # head sha(=staging 태그)를 얻는다. merge/squash/rebase 모두 커버. 호출은
+      # 공식 actions/github-script(액션 Node 런타임)로 해 러너의 gh/jq/curl 설치
+      # 의존을 없앤다(1차 canary에서 gh 부재로 빈 값->fallback 실측 후 교체).
+      # 소스 부재 시 found=false로 아래 fallback 빌드로 안전 degrade.
+      - name: Resolve PR head sha (main only)
+        id: prhead
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          result-encoding: string
+          script: |
+            const { data: prs } =
+              await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+            return prs.length ? prs[0].head.sha : '';
+      - name: Check staging source (main only)
+        id: src
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          STAGING="harbor.hizero.local/dangdang/frontend-staging"
+          HEAD_SHA="${{ steps.prhead.outputs.result }}"
+          FOUND="false"
+          if [ -n "$HEAD_SHA" ] && \
+             docker buildx imagetools inspect \
+               "$STAGING:$HEAD_SHA" >/dev/null 2>&1; then
+            FOUND="true"
+          fi
+          {
+            echo "head_sha=$HEAD_SHA"
+            echo "found=$FOUND"
+            echo "staging=$STAGING"
+          } >> "$GITHUB_OUTPUT"
+          echo "promote source: head_sha=$HEAD_SHA found=$FOUND"
+      # ---- main run + 소스 있음: digest 승격(재빌드 0) + 무결성 검증 ----
+      - name: Promote staging image (digest copy)
+        if: steps.src.outputs.found == 'true'
+        run: |
+          STAGING="${{ steps.src.outputs.staging }}"
+          HEAD_SHA="${{ steps.src.outputs.head_sha }}"
+          IMAGE="harbor.hizero.local/dangdang/frontend"
+          SHA="${{ github.sha }}"
+          # 소스(스캔된) 매니페스트 digest를 승격 전에 확보
+          SRC="sha256:$(docker buildx imagetools inspect --raw \
+            "$STAGING:$HEAD_SHA" | sha256sum | cut -d' ' -f1)"
+          docker buildx imagetools create \
+            -t "$IMAGE:$SHA" -t "$IMAGE:latest" "$STAGING:$HEAD_SHA"
+          # 무결성: imagetools create는 단일 소스를 OCI index로 감싸 top-level
+          # digest가 달라진다(1차 실측 2f13..->cc28..) -> raw 바이트 동등 비교는
+          # 틀림. prod가 스캔된 소스 매니페스트를 "참조(index)" 또는 "동등(직접
+          # 복사)"하는지로 검증한다.
+          DST_RAW="$(docker buildx imagetools inspect --raw "$IMAGE:$SHA")"
+          DST="sha256:$(printf '%s' "$DST_RAW" | sha256sum | cut -d' ' -f1)"
+          MATCH=false
+          if [ "$DST" = "$SRC" ]; then MATCH=true; fi
+          if printf '%s' "$DST_RAW" | grep -q "$SRC"; then MATCH=true; fi
+          if [ "$MATCH" = true ]; then
+            echo "integrity OK: prod=$DST references/equals scanned $SRC"
+          else
+            echo "::error::promoted image does not match scanned $SRC"
+            exit 1
+          fi
+      # ---- PR run, 또는 main fallback(소스 없음): 빌드 ----
       - name: Build image
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v7
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
@@ -1110,15 +1258,16 @@ jobs:
           # 2026-07-21, gha(GitHub 왕복·10GB 한도) -> Harbor registry 캐시(LAN)
           cache-from: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache  # yamllint disable-line rule:line-length
           cache-to: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache,mode=max,image-manifest=true,oci-mediatypes=true  # yamllint disable-line rule:line-length
-      # backend-image-scanning과 같은 이유(setup-trivy 기본 설치 경로가
-      # $HOME/.local/bin/trivy-bin 고정이라 harbor-runner/harbor-runner-2가 동시에
-      # 돌면 "Text file busy"로 충돌 - 실제로 2번 재현/확인함) - 러너별 경로에 직접 설치.
+      # setup-trivy 기본 경로($HOME/.local/bin/trivy-bin)는 러너 2대 동시 실행 시
+      # "Text file busy" 충돌(2회 재현) - 러너별 경로에 설치.
       - name: Install Trivy (per-runner path)
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.2.6
         uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
         with:
           path: /home/bruce/.trivy-bin/${{ runner.name }}
       - name: Trivy vulnerability scan
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -1127,20 +1276,25 @@ jobs:
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
           skip-setup-trivy: true
-      # (2026-07-21) Harbor 로그인은 registry 캐시 때문에 Build image 앞으로 이동됨
-      # frontend/compose.production.example.yaml(성애님 작성)는 FRONTEND_IMAGE에
-      # 기본값을 안 두고 명시적인 불변 태그를 요구한다("Set FRONTEND_IMAGE to the
-      # Harbor image and immutable tag") - 그래서 :latest를 기본 배포 태그로 쓰지
-      # 않고 :sha를 기본으로 쓴다. :latest는 수동 확인/편의용으로만 같이 남긴다.
-      #
-      # 2026-07-20, backend-image-scanning의 push 가드와 동일한 이유(그쪽 주석
-      # 참고) - PR 실행에서 미병합 커밋이 :latest를 이동시키는 걸 막고,
-      # push는 main push 실행에서만 한다.
-      - name: Tag and push (sha + latest)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # ---- PR run: staging repo push(승격 소스) ----
+      # 미병합 이미지는 staging repo에만 올라가고 production repo(dangdang/frontend)엔
+      # 안 들어감("미병합 코드 격리" 원칙 유지). PR head sha로 태깅해 main run이 찾게 함.
+      # frontend/compose는 불변 태그를 요구하므로 배포엔 :sha를 쓴다(:latest는 승격 시 편의용).
+      - name: Push to staging (build-once source)
+        if: github.event_name == 'pull_request'
+        run: |
+          STAGING="harbor.hizero.local/dangdang/frontend-staging"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          SHA="${{ github.sha }}"
+          docker tag "frontend:$SHA" "$STAGING:$HEAD_SHA"
+          docker push "$STAGING:$HEAD_SHA"
+      # ---- main fallback: 스캔한 이미지를 production repo로 push(구 동작 경로) ----
+      - name: Tag and push (main fallback, sha + latest)
+        if: steps.src.outputs.found == 'false'
         run: |
           IMAGE="harbor.hizero.local/dangdang/frontend"
           SHA="${{ github.sha }}"
+          echo "::warning::build-once source missing - fallback build for $SHA"
           docker tag "frontend:$SHA" "$IMAGE:$SHA"
           docker tag "frontend:$SHA" "$IMAGE:latest"
           docker push "$IMAGE:$SHA"
@@ -1178,7 +1332,72 @@ jobs:
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
           logout: false
+      # ---- main run: 승격 소스(PR head sha) 조회 ----
+      # frontend-image-scanning의 build-once 구조를 그대로 따른다(그쪽 주석에
+      # 각 스텝의 근거가 있음). 처음엔 이 job을 build-once 도입 전의 frontend
+      # 패턴(PR/main 양쪽 빌드 + main에서 push)으로 만들었는데, 그 사이 main에
+      # build-once가 들어와 admin만 구 방식으로 남으면 (1) main에서 재빌드가
+      # 다시 발생해 build-once의 이점을 잃고 (2) 두 프론트 앱의 파이프라인
+      # 구조가 갈려 이후 유지보수에서 또 한쪽만 빠지는 사고가 난다.
+      - name: Resolve PR head sha (main only)
+        id: prhead
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          result-encoding: string
+          script: |
+            const { data: prs } =
+              await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+            return prs.length ? prs[0].head.sha : '';
+      - name: Check staging source (main only)
+        id: src
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          STAGING="harbor.hizero.local/dangdang/frontend-admin-staging"
+          HEAD_SHA="${{ steps.prhead.outputs.result }}"
+          FOUND="false"
+          if [ -n "$HEAD_SHA" ] && \
+             docker buildx imagetools inspect \
+               "$STAGING:$HEAD_SHA" >/dev/null 2>&1; then
+            FOUND="true"
+          fi
+          {
+            echo "head_sha=$HEAD_SHA"
+            echo "found=$FOUND"
+            echo "staging=$STAGING"
+          } >> "$GITHUB_OUTPUT"
+          echo "promote source: head_sha=$HEAD_SHA found=$FOUND"
+      # ---- main run + 소스 있음: digest 승격(재빌드 0) + 무결성 검증 ----
+      - name: Promote staging image (digest copy)
+        if: steps.src.outputs.found == 'true'
+        run: |
+          STAGING="${{ steps.src.outputs.staging }}"
+          HEAD_SHA="${{ steps.src.outputs.head_sha }}"
+          IMAGE="harbor.hizero.local/dangdang/frontend-admin"
+          SHA="${{ github.sha }}"
+          SRC="sha256:$(docker buildx imagetools inspect --raw \
+            "$STAGING:$HEAD_SHA" | sha256sum | cut -d' ' -f1)"
+          docker buildx imagetools create \
+            -t "$IMAGE:$SHA" -t "$IMAGE:latest" "$STAGING:$HEAD_SHA"
+          DST_RAW="$(docker buildx imagetools inspect --raw "$IMAGE:$SHA")"
+          DST="sha256:$(printf '%s' "$DST_RAW" | sha256sum | cut -d' ' -f1)"
+          MATCH=false
+          if [ "$DST" = "$SRC" ]; then MATCH=true; fi
+          if printf '%s' "$DST_RAW" | grep -q "$SRC"; then MATCH=true; fi
+          if [ "$MATCH" = true ]; then
+            echo "integrity OK: prod=$DST references/equals scanned $SRC"
+          else
+            echo "::error::promoted image does not match scanned $SRC"
+            exit 1
+          fi
+      # ---- PR run, 또는 main fallback(소스 없음): 빌드 ----
       - name: Build image
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v7
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
@@ -1190,11 +1409,13 @@ jobs:
           cache-from: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend-admin:cache  # yamllint disable-line rule:line-length
           cache-to: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend-admin:cache,mode=max,image-manifest=true,oci-mediatypes=true  # yamllint disable-line rule:line-length
       - name: Install Trivy (per-runner path)
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.2.6
         uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
         with:
           path: /home/bruce/.trivy-bin/${{ runner.name }}
       - name: Trivy vulnerability scan
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -1203,11 +1424,22 @@ jobs:
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
           skip-setup-trivy: true
-      - name: Tag and push (sha + latest)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # ---- PR run: staging repo push(승격 소스) ----
+      - name: Push to staging (build-once source)
+        if: github.event_name == 'pull_request'
+        run: |
+          STAGING="harbor.hizero.local/dangdang/frontend-admin-staging"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          SHA="${{ github.sha }}"
+          docker tag "frontend-admin:$SHA" "$STAGING:$HEAD_SHA"
+          docker push "$STAGING:$HEAD_SHA"
+      # ---- main fallback: 스캔한 이미지를 production repo로 push ----
+      - name: Tag and push (main fallback, sha + latest)
+        if: steps.src.outputs.found == 'false'
         run: |
           IMAGE="harbor.hizero.local/dangdang/frontend-admin"
           SHA="${{ github.sha }}"
+          echo "::warning::build-once source missing - fallback build for $SHA"
           docker tag "frontend-admin:$SHA" "$IMAGE:$SHA"
           docker tag "frontend-admin:$SHA" "$IMAGE:latest"
           docker push "$IMAGE:$SHA"
