@@ -1,0 +1,41 @@
+services:
+  frontend-admin:
+    image: ${FRONTEND_ADMIN_IMAGE:?Set FRONTEND_ADMIN_IMAGE to the Harbor image and immutable tag}
+    container_name: dangdang-frontend-admin
+    restart: unless-stopped
+    environment:
+      BACKEND_GATEWAY_URL: ${BACKEND_GATEWAY_URL:-http://b-gateway:8080}
+      # 관리자 페이지는 아직 실제 공개 도메인이 없다 — frontend의 PUBLIC_APP_URL과
+      # 달리 :?로 필수 요구하지 않고 loopback 기본값을 둔다(CI/CD 팀 권고). 도메인이
+      # 생기면 그때 이 기본값을 실제 값으로 덮어쓴다.
+      ADMIN_PUBLIC_APP_URL: ${ADMIN_PUBLIC_APP_URL:-http://127.0.0.1:3002}
+    # 호스트 포트는 여기서 열지 않는다 — 외부 노출은 배포 override 파일이
+    # loopback(127.0.0.1:3002)으로만 담당한다(CI/CD 팀 결정: SSH 터널 접속 전용,
+    # docker publish가 iptables DOCKER 체인으로 ufw를 우회하는 문제 때문에
+    # 방화벽이 아니라 바인딩 주소로 풀어야 한다는 게 근거).
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    networks:
+      - dangdang-edge
+
+networks:
+  dangdang-edge:
+    external: true
+    name: ${APP_NETWORK:-dangdang-edge}
