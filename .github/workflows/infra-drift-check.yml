@@ -72,6 +72,37 @@ jobs:
           # Harbor 제품 자체 설치본은 이 저장소가 소유하지 않는다(./prepare가 생성).
           EXTERNAL="harbor"
 
+          # 2026-07-24 4차: 텍스트 비교 -> compose 정규화 비교.
+          #
+          # 3차까지는 주석/공백만 제거한 텍스트를 비교했는데, 그러면 "줄 끝
+          # 인라인 주석"이 차이로 잡힌다. 실제로 첫 확장 실행에서 DB VM alloy가
+          # DRIFT로 보고됐는데 내용이 이것뿐이었다:
+          #     <   - "12345:12345"
+          #     >   - "12345:12345" # Alloy UI/디버그
+          # 기능은 완전히 동일한데 알람이 울린 것 - 알람 피로를 만들지 않으려고
+          # 등급을 나눠놓고, 정작 비교 로직이 오탐을 만들고 있었다.
+          #
+          # `docker compose config`는 변수 치환·주석 제거·키 정렬까지 끝난
+          # 정규화 결과를 내주므로, 이걸 비교하면 "표기 차이"가 아니라 "설정
+          # 차이"만 남는다. 오늘 backend compose 앵커 리팩터링의 등가성을
+          # 증명할 때 쓴 것과 같은 방법이다.
+          #
+          # 두 파일을 같은 임시 디렉터리에 번갈아 놓고 정규화한다 - 서로 다른
+          # 디렉터리에서 돌리면 bind mount의 source가 절대경로로 해석돼 그
+          # 경로 차이가 그대로 diff에 남는다(실측). 프로젝트명도 -p로 고정한다
+          # (미지정 시 디렉터리명이 name 필드에 들어가 같은 문제가 생긴다).
+          # .env는 빈 파일을 둔다 - 양쪽 모두 변수를 동일하게(빈 값으로) 채워
+          # 값 차이가 아니라 구조 차이만 보기 위함이다.
+          NORMDIR=$(mktemp -d)
+          # self-hosted 러너는 워크스페이스가 재사용되므로 임시물을 반드시
+          # 치운다(오늘 러너 디스크가 94%까지 찬 원인도 정리 부재였다).
+          trap 'rm -rf "$NORMDIR"' EXIT
+          : > "$NORMDIR/.env"
+          normalize() {
+            cp "$1" "$NORMDIR/docker-compose.yml" 2>/dev/null || return 1
+            (cd "$NORMDIR" && docker compose -p driftcheck config 2>/dev/null)
+          }
+          # 정규화가 실패하는 파일(필수 변수 미설정 등)을 위한 대비책
           strip() { grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$1"; }
 
           # 2026-07-24 3차: 보고를 두 등급으로 나눈다.
@@ -136,15 +167,27 @@ jobs:
                 rm -f "$tmp"
                 continue
               fi
-              if ! diff -q <(strip "$tmp") <(strip "$repo") >/dev/null; then
-                n=$(diff <(strip "$tmp") <(strip "$repo") | grep -c '^[<>]')
-                add "DRIFT: $vm:$dir vs $repo (실질 차이 ${n}줄)"
+              # 정규화 비교를 우선 시도하고, 어느 한쪽이라도 정규화에 실패하면
+              # (필수 변수 미설정 등) 텍스트 비교로 물러난다.
+              nl="/tmp/drift-norm-live.$$"
+              nr="/tmp/drift-norm-repo.$$"
+              if normalize "$tmp" > "$nl" 2>/dev/null && [ -s "$nl" ] \
+                 && normalize "$repo" > "$nr" 2>/dev/null && [ -s "$nr" ]; then
+                basis="정규화"
+              else
+                strip "$tmp" > "$nl"
+                strip "$repo" > "$nr"
+                basis="텍스트"
+              fi
+              if ! diff -q "$nl" "$nr" >/dev/null; then
+                n=$(diff "$nl" "$nr" | grep -c '^[<>]')
+                add "DRIFT: $vm:$dir vs $repo (${basis} 비교, 차이 ${n}줄)"
                 # 차이 내용을 로그에 남겨 2차 조사 없이 판단할 수 있게 한다.
                 # compose 파일의 비밀값은 .env로 분리돼 있어 본문에 없다.
                 echo "--- diff: $vm:$dir (배포본 < / 저장소 >) ---"
-                diff <(strip "$tmp") <(strip "$repo") | head -20
+                diff "$nl" "$nr" | head -20
               fi
-              rm -f "$tmp"
+              rm -f "$tmp" "$nl" "$nr"
             done
           }
 
