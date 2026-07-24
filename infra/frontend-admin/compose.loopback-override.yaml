@@ -1,0 +1,34 @@
+# Admin Frontend의 외부 노출 정책 파일(2026-07-24 지훈 결정).
+#
+# 쇼핑몰 프론트의 infra/frontend/compose.lan-test-override.yaml과 이름은
+# 비슷하지만 목적이 정반대다:
+#   - lan-test-override: 도메인/edge proxy가 생길 때까지 LAN에서 확인하려고
+#     3001을 0.0.0.0에 publish하는 "임시" 파일(도메인 생기면 삭제 예정).
+#   - 이 파일: admin을 loopback에만 묶어두는 "상시" 노출 정책. 삭제 대상 아님.
+#
+# 왜 loopback인가
+# - 요청서에는 frontend가 "호스트 포트 없이 dangdang-edge로만 열려 있다"고
+#   되어 있었지만 실제 배포 상태는 다르다. frontend-deploy-production이 배포
+#   때마다 위 lan-test-override를 -f로 겹쳐 올리기 때문에 3001이 호스트에
+#   publish되고, 그게 지금 사용자 접속 경로(192.168.0.56:3001, NAT)다.
+#   또 b-gateway의 nginx.conf에는 프론트로 가는 location이 하나도 없다 -
+#   /b/*를 백엔드로 보낼 뿐이고, 오히려 프론트가 b-gateway를 호출하는 방향이다.
+#   즉 "frontend와 같은 방식"을 문자 그대로 복제하면 관리자 페이지도 같은
+#   NAT 경로로 인터넷에서 닿게 된다.
+# - 호스트 방화벽(ufw)으로 막는 방식은 신뢰할 수 없다. Docker의 publish는
+#   iptables DOCKER 체인에 규칙을 직접 삽입해 ufw 규칙을 우회하며, 노출을
+#   제한하려면 바인딩 주소를 특정하라는 게 공식 문서의 권고 자체다:
+#   https://docs.docker.com/engine/network/packet-filtering-firewalls/
+# - 지금 admin의 유일한 보호막은 앱 레벨 로그인뿐이라, 네트워크 레벨
+#   방어를 한 겹 더 두는 비용이 사실상 0인 이 시점에 걸어둔다. 진짜
+#   인증/인가가 붙은 ingress는 k8s 이관 때 다시 설계한다.
+#
+# 관리자 접속 방법(브라우저로 바로 안 열리는 게 정상):
+#   ssh -L 3002:127.0.0.1:3002 bruce@10.10.10.30
+#   → 로컬 브라우저에서 http://localhost:3002
+#
+# 포트 3002는 쇼핑몰 프론트가 쓰는 3001과 겹치지 않게 고른 값이다.
+services:
+  frontend-admin:
+    ports:
+      - "127.0.0.1:3002:3000"

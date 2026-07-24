@@ -8,22 +8,41 @@ on:
   pull_request:
     branches: [main]
 
+# 2026-07-24, build-test.yml에는 있었으나 이 워크플로우엔 없던 명시적 권한 최소화.
+# 저장소 기본 권한(현재 read)에만 의존하면 나중에 누군가 기본값을 write로 바꿀 때
+# 이 워크플로우까지 같이 영향을 받는다 - 공식 하드닝 가이드 권고:
+# yamllint disable-line rule:line-length
+# https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+# lint는 체크아웃해서 파일만 읽으므로 contents: read 하나면 충분하다.
+permissions:
+  contents: read
+
 jobs:
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # 2026-07-24, 태그 핀 -> 커밋 SHA 핀. 태그는 이동 가능해서 같은 참조가
+      # 다른 코드를 가리킬 수 있다(공급망 공격 경로) - 공식 하드닝 가이드가
+      # "Pin actions to a full length commit SHA"를 명시적으로 권고한다.
+      # build-test.yml은 이미 전부 SHA 핀이었는데 이 파일만 태그 핀이라
+      # 저장소 안에서 기준이 갈려 있었다. 서드파티 액션
+      # (ludeeus/action-shellcheck)이 특히 중요하다.
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@2.0.0
+        # 2.0.0
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # yamllint disable-line rule:line-length
         with:
           scandir: './scripts'
 
   yamllint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Set up Python
-        uses: actions/setup-python@v5
+        # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
       - name: Install yamllint
@@ -36,10 +55,18 @@ jobs:
       # 추가한다. relaxed 프로파일: 문법 오류(syntax)는 exit 1로 차단하되
       # 스타일(중괄호 공백/80자 등)은 warning이라 기존 파일들이 안 깨짐을
       # 실측 확인함(기존 4개 파일 exit 0, PR#54 재현본 exit 1).
+      # 2026-07-24, 파일 목록 하드코딩을 글롭으로 바꾼다. Admin Frontend
+      # (frontend-admin/compose.production.example.yaml)를 추가하면서 보니,
+      # 새 앱의 compose를 여기 손으로 안 넣으면 그 파일만 문법 게이트 밖에
+      # 남는다 - 바로 위 PR #54 사고가 새 파일에서 그대로 재현되는 경로다.
+      # detect-backend의 서비스 allowlist와 같은 "수동 목록" 한계라, 글롭으로
+      # 바꿔 앞으로 추가되는 앱은 자동으로 포함되게 한다.
+      # backend/와 frontend*/ 아래 compose 파일이 항상 최소 한 개는 있으므로,
+      # 글롭이 매칭 없이 문자 그대로 남아 yamllint가 없는 파일을 열려다
+      # 실패하는 경우는 없다.
       - name: Run yamllint (deploy YAML syntax gate, relaxed)
         run: |
           yamllint -d relaxed \
-            backend/compose.production.example.yaml \
-            frontend/compose.frontend.yaml \
-            frontend/compose.production.example.yaml \
+            backend/compose*.yaml \
+            frontend*/compose*.yaml \
             infra/

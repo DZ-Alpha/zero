@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1.7
+# build-once: PR에서 1회 빌드/스캔 후 staging에 push, main 병합 시 재빌드 없이
+# production repo로 digest 승격한다(.github/workflows/build-test.yml 참고).
 FROM node:22.15.0-bookworm-slim@sha256:557e52a0fcb928ee113df7e1fb5d4f60c1341dbda53f55e3d815ca10807efdce AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./

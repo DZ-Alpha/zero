@@ -21,3 +21,11 @@ CVE-2026-53615
 CVE-2026-54369
 CVE-2026-8376
 CVE-2026-9538
+
+# 2026-07-23: build-once backend 도입 후 재스캔에서 perl-base CRITICAL 신규 검출
+# (전 backend python:3.12-slim 서비스 공통). CVE-2026-57433 = Perl Storable 정수
+# 오버플로(av_extend panic -> DoS). Debian 트래커 확인: trixie perl 5.40.1-6 취약,
+# fix 5.40.1-8은 sid에만 = trixie 안정판엔 apt로 못 받음. 우리 FastAPI 서비스는
+# Storable/perl을 런타임에 호출하지 않아 공격면 아님 - 위 perl-base 리스크수용과
+# 동일 근거. trixie가 5.40.1-8 받으면 제거.
+CVE-2026-57433

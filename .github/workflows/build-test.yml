@@ -34,6 +34,19 @@ on:
         description: '프론트 배포 태그 (비우면 현재 커밋 sha)'
         required: false
         default: ''
+      frontend_admin_tag:
+        # 2026-07-24, Admin Frontend(frontend-admin/) 추가. frontend_tag와 완전히
+        # 같은 규칙 - admin compose도 불변 태그를 요구하므로 기본값을 latest로
+        # 두지 않고, 비우면 이번 실행의 커밋 sha로 폴백한다(job 내부에서 처리).
+        # 별도 입력을 둔 이유: frontend_tag를 공유하면 쇼핑몰 프론트를 특정
+        # 태그로 롤백할 때 admin도 그 태그로 강제 배포되는데, 두 앱은 서로
+        # 독립적으로 빌드되므로(각자 paths-filter) 그 sha의 admin 이미지가
+        # 레지스트리에 없어 pull 실패 → 배포 실패 + 오탐 알람이 난다.
+        # 2026-07-19에 backend_tag만 넣었다가 frontend까지 딸려 돌아 실측된
+        # 사고와 동일한 패턴이라, 처음부터 태그도 대상도 분리한다.
+        description: 'Admin 프론트 배포 태그 (비우면 현재 커밋 sha)'
+        required: false
+        default: ''
       deploy_target:
         # 2026-07-19, backend_tag만 넣고 백엔드만 수동 재배포하려 했는데
         # frontend-deploy-production까지 무조건 같이 돌아서, frontend/가 아직
@@ -52,7 +65,16 @@ on:
         # 명시적으로 선택하게 하는 게 안전하다(자동 push 배포 경로는 이 입력을
         # 참조하지 않는 별도 조건이라 영향 없음). 하루 종일 적용해온 "production을
         # 건드리는 건 명시적 opt-in" 원칙과도 일관됨.
-        description: '수동 배포 대상 (기본 none - 배포하려면 명시적으로 선택)'
+        # 2026-07-24, frontend-admin 추가. frontend에 묶지 않고 별도 옵션으로
+        # 둔 이유는 frontend_admin_tag 주석 참고(대상 분리가 이 입력의 존재
+        # 이유 그 자체). both의 의미는 기존 그대로 backend + frontend(쇼핑몰)로
+        # 유지한다 - 이미 문서화되어 쓰이고 있는 옵션의 폭발 반경을 조용히
+        # 넓히는 건, 07-20에 기본값을 both -> none으로 바꾼 "production을
+        # 건드리는 건 명시적 opt-in" 원칙과 어긋난다. 3개를 한 번에 배포할
+        # 일이 생기면 dispatch를 두 번 돌린다.
+        description: >-
+          수동 배포 대상 (기본 none - 배포하려면 명시적으로 선택.
+          both = backend + frontend(쇼핑몰), admin은 별도 선택)
         required: false
         default: 'none'
         type: choice
@@ -61,6 +83,7 @@ on:
           - both
           - backend
           - frontend
+          - frontend-admin
       run_bgateway_cutover:
         # 2026-07-19, b-gateway non-root/read-only 전환 검증차 처음 추가했으나
         # prod-env-fix류 일회성 job과 달리, b-gateway는 이 job 전엔 자동화된
@@ -180,28 +203,52 @@ jobs:
       # 바꾼다. backend/services는 실제 서비스가 아니라 문서(.md) 폴더라 예외.
       # 새 backend/<name> 디렉터리가 생기면 이 job이 즉시 실패하면서 어디를
       # 고쳐야 하는지 알려준다 - PR #52처럼 아무도 못 알아채고 넘어가는 걸 방지.
-      - name: Fail loudly if a backend/ dir is missing from known services
+      # 2026-07-24, 이 가드가 실제로는 자기 주장을 검증하지 않고 있었다.
+      # 에러 메시지는 "paths-filter / SERVICES / PORTS 세 곳에 다 넣어라"라고
+      # 하는데, 검사 대상은 그 셋이 아니라 이 스텝 안의 KNOWN 목록 하나뿐이었다.
+      # 즉 새 서비스를 KNOWN에만 넣고 SERVICES나 PORTS를 빠뜨리면 가드는
+      # 통과하고, 그 서비스는 빌드/스캔은 되는데 배포에서 조용히 빠진다 -
+      # PR #52에서 겪은 "조용한 스킵"이 가드를 켜둔 채로도 그대로 재현되는
+      # 상태였다. KNOWN이라는 네 번째 하드코딩 목록 자체가 위험 요소이기도 했다.
+      #
+      # 이제 KNOWN을 없애고 워크플로우 파일 자신을 읽어 실제 세 목록을 직접
+      # 대조한다. 목록을 하나 줄이면서(4개 -> 3개), 가드가 말하는 내용과
+      # 검사하는 내용을 일치시킨다.
+      - name: Fail loudly if a backend/ dir isn't wired into all three lists
         if: steps.check.outputs.exists == 'true'
         run: |
-          KNOWN="admin-service ai community-service diet-service
-                 ingredients-service login-service main-service
-                 product-service recipe-service"
+          WF=.github/workflows/build-test.yml
+          # SERVICES는 여러 줄 folded 스칼라라 블록만 잘라내서 대조한다.
+          # 종료 조건은 "다음 키"가 아니라 "스칼라 본문 들여쓰기(8칸)를 벗어남"
+          # 이어야 한다 - 다음 키 기준으로 자르면 사이에 낀 주석까지 블록에
+          # 딸려 들어와, 주석에서만 언급된 서비스명이 배선된 것처럼 통과한다
+          # (2026-07-24 이 가드를 실제로 돌려보다 발견).
+          SERVICES_BLOCK=$(awk '
+            /^      SERVICES: >-/ {f=1; next}
+            f && !/^        [a-z]/ {f=0}
+            f {print}
+          ' "$WF")
+          RC=0
           for dir in backend/*/; do
+            [ -d "$dir" ] || continue
             name="$(basename "$dir")"
             [ "$name" = "services" ] && continue
-            match=0
-            for k in $KNOWN; do
-              [ "$k" = "$name" ] && match=1 && break
-            done
-            if [ "$match" = "0" ]; then
-              echo "::error::backend/$name exists but isn't in" \
-                "detect-backend's paths-filter or" \
-                "backend-deploy-production's SERVICES list/PORTS map." \
-                "Add it to all three before this service can" \
-                "build/scan/deploy."
-              exit 1
+            missing=""
+            grep -q "^            $name: 'backend/$name/\*\*'$" "$WF" \
+              || missing="$missing detect-backend의-paths-filter"
+            printf '%s' "$SERVICES_BLOCK" \
+              | grep -qE "(^|[[:space:]])$name([[:space:]]|$)" \
+              || missing="$missing backend-deploy-production의-SERVICES"
+            grep -q "\[$name\]=" "$WF" \
+              || missing="$missing backend-deploy-production의-PORTS"
+            if [ -n "$missing" ]; then
+              echo "::error::backend/$name 이(가) 다음에 빠져 있습니다:" \
+                "$missing. 세 곳 모두에 추가해야 build/scan/deploy가" \
+                "정상 동작합니다(하나라도 빠지면 조용히 스킵됩니다)."
+              RC=1
             fi
           done
+          exit $RC
 
   # detect-backend와 같은 이유로 별도 job - frontend/ 존재 여부와 변경 여부를 체크아웃 후
   # 확인해서 넘긴다(2026-07-17 성애님 frontend/ 브랜치 인수 - sungA/front/main).
@@ -213,6 +260,16 @@ jobs:
       changed: >-
         ${{ github.event_name == 'workflow_dispatch' && 'false' ||
         steps.filter.outputs.frontend }}
+      # 2026-07-24, Admin Frontend(frontend-admin/) 추가. 별도 detect job을
+      # 새로 만들지 않고 이 job에 얹은 이유는 detect-backend가 이미 같은
+      # 구조이기 때문(서비스 필터 + 별도 filter-bgateway 스텝).
+      # 두 앱이 서로를 끌고 돌지 않는 근거: dorny/paths-filter의 글롭은 경로
+      # 구분자를 문자 그대로 매칭하므로 'frontend/**'는 'frontend-admin/...'을
+      # 잡지 않는다(그 반대도 마찬가지). 즉 쇼핑몰 프론트만 고친 커밋에서
+      # admin 파이프라인이 도는 일은 없다.
+      admin_changed: >-
+        ${{ github.event_name == 'workflow_dispatch' && 'false' ||
+        steps.filter-admin.outputs.admin }}
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -222,6 +279,53 @@ jobs:
         with:
           filters: |
             frontend: 'frontend/**'
+      # detect-backend의 filter-bgateway와 같은 이유로 반드시 별도 스텝이다.
+      # 지금은 이 job이 changes가 아니라 이름 있는 출력만 읽어서 한 스텝에
+      # 합쳐도 동작하지만, PR #61에서 필터를 한 스텝에 섞었다가 changes 출력이
+      # 오염돼 매트릭스가 깨진 전례가 있어 구조를 통일해 둔다.
+      # v4
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706
+        id: filter-admin
+        with:
+          filters: |
+            admin: 'frontend-admin/**'
+      # 2026-07-24, detect-backend의 "Fail loudly" 가드를 프론트에도 복제한다.
+      # 그동안 프론트는 앱이 하나뿐이라 안 만들었지만, frontend-admin이 생기며
+      # 백엔드와 똑같은 구조적 한계(수동 allowlist)를 갖게 됐다. PR #52에서
+      # backend/ai가 파이프라인 어디에도 안 걸려 조용히 skip된 사고와 같은
+      # 일이, 앞으로 frontend-<앱>이 추가될 때 그대로 재현될 수 있다.
+      # 새 프론트 앱 디렉터리가 생기면 이 job이 즉시 실패하면서 어디를
+      # 고쳐야 하는지 알려준다.
+      # detect-backend의 가드와 같은 방식으로, KNOWN 목록 대신 워크플로우 파일
+      # 자신을 읽어 실제 배선을 대조한다(그쪽 주석의 2026-07-24 근거 참고 -
+      # 처음엔 여기도 KNOWN 목록으로 만들었다가 같은 결함이라 함께 고쳤다).
+      # 프론트 앱은 paths-filter / build-test / image-scanning / sonar sources
+      # 네 곳에 배선돼야 하고, 하나라도 빠지면 그 앱은 조용히 스킵되거나
+      # (더 나쁘게는) 정적분석 없이 배포된다.
+      - name: Fail loudly if a frontend app dir isn't fully wired
+        run: |
+          WF=.github/workflows/build-test.yml
+          RC=0
+          for dir in frontend*/; do
+            [ -d "$dir" ] || continue
+            name="$(basename "$dir")"
+            missing=""
+            grep -q "^            [a-z-]*: '$name/\*\*'$" "$WF" \
+              || missing="$missing detect-frontend의-paths-filter"
+            grep -q "^        working-directory: $name$" "$WF" \
+              || missing="$missing build-test-job"
+            grep -q "^          context: $name$" "$WF" \
+              || missing="$missing image-scanning-job"
+            grep -q "^          add_source $name$" "$WF" \
+              || missing="$missing code-scanning의-sonar-sources"
+            if [ -n "$missing" ]; then
+              echo "::error::$name/ 이(가) 다음에 빠져 있습니다: $missing." \
+                "네 곳 모두에 배선해야 합니다 - 특히 sonar sources가 빠지면" \
+                "정적분석을 한 번도 안 거친 코드가 배포됩니다."
+              RC=1
+            fi
+          done
+          exit $RC
 
   # Node.js 22.15.0/npm 10.9.2 고정(프론트 인수 조건 명시값). tsc --noEmit 기반 typecheck를
   # lint로도 겸용한다(frontend/package.json 기준, 별도 ESLint 아직 미도입).
@@ -247,6 +351,36 @@ jobs:
         run: npm run typecheck
       - name: Build
         working-directory: frontend
+        run: npm run build
+
+  # 2026-07-24, Admin Frontend. frontend-build-test와 동일한 구성이며
+  # (Node 22.15.0/npm 10.9.2 고정, tsc --noEmit 겸용 typecheck), 다른 점은
+  # 작업 디렉터리와 캐시 키(frontend-admin/package-lock.json)뿐이다.
+  # 별도 job으로 둔 이유: 두 앱은 각자의 paths-filter로 독립 실행돼야 하고
+  # (한쪽만 고친 커밋에서 다른 쪽까지 빌드하면 러너 낭비), 브랜치 보호의
+  # 필수 체크에도 각각 고정된 이름으로 등록할 수 있어야 한다.
+  frontend-admin-build-test:
+    needs: detect-frontend
+    if: needs.detect-frontend.outputs.admin_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up Node.js
+        # v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.15.0'
+          cache: 'npm'
+          cache-dependency-path: frontend-admin/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend-admin
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend-admin
+        run: npm run typecheck
+      - name: Build
+        working-directory: frontend-admin
         run: npm run build
 
   # backend/*-service는 아직 자체 테스트가 없어서(재헌님 인계 메모 확인, 2026-07-16 기준)
@@ -328,19 +462,40 @@ jobs:
       # 전부 ZeroCheck Launch Gate(기본 게이트로 지정 완료)를 물려받는다.
       - name: Determine sonar sources and project key
         id: sonar-sources
+        # 2026-07-24, 브랜치명을 run 스크립트 안에 직접 보간하던 것을 env로 옮긴다.
+        # `BRANCH="${{ github.head_ref }}"` 형태는 컨텍스트 값이 쉘 스크립트에
+        # 그대로 치환된 뒤 실행되는 구조라, 값에 따옴표나 명령치환이 들어가면
+        # 러너에서 임의 명령이 실행된다(브랜치 이름에는 큰따옴표가 들어갈 수 있다).
+        # 공식 하드닝 가이드가 지목하는 script injection 패턴이고, 권고 완화책이
+        # 정확히 "중간 환경변수를 거쳐라"이다:
+        # yamllint disable-line rule:line-length
+        # https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections
+        env:
+          BRANCH_RAW: ${{ github.head_ref || github.ref_name }}
+        #
+        # 2026-07-24, frontend-admin 추가. 이 목록이 하드코딩이라, 새 앱을 여기
+        # 안 넣으면 그 앱은 SonarQube 분석 대상에서 통째로 빠진다. 그런데
+        # <앱>-deploy-production은 needs에 code-scanning을 넣으므로, 결과적으로
+        # "그 앱 코드를 한 줄도 안 본 Quality Gate"가 초록불로 배포를 승인하게
+        # 된다 - 관리자 권한을 다루는 앱에서는 특히 위험한 사각지대라 파이프라인
+        # 복제와 같은 PR에서 반드시 함께 넣어야 한다(detect-frontend의 Fail
+        # loudly 가드가 이걸 잊었을 때 잡아준다).
         run: |
           SOURCES=""
-          if [ -d frontend ]; then SOURCES="frontend"; fi
-          if [ -d backend ]; then
+          add_source() {
+            [ -d "$1" ] || return 0
             if [ -n "$SOURCES" ]; then
-              SOURCES="$SOURCES,backend"
+              SOURCES="$SOURCES,$1"
             else
-              SOURCES="backend"
+              SOURCES="$1"
             fi
-          fi
+          }
+          add_source frontend
+          add_source frontend-admin
+          add_source backend
           echo "sources=$SOURCES" >> "$GITHUB_OUTPUT"
 
-          BRANCH="${{ github.head_ref || github.ref_name }}"
+          BRANCH="$BRANCH_RAW"
           if [ "$BRANCH" = "main" ]; then
             PROJECT_KEY="zerocheck"
           else
@@ -407,7 +562,70 @@ jobs:
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
           logout: false
+      # ---- build-once (2026-07-23): frontend와 동일 패턴을 매트릭스에 적용 ----
+      # PR run: 서비스별 build+scan 후 staging repo push. main run: 재빌드 없이
+      # PR 때 스캔된 이미지를 production repo로 digest 승격(+무결성 검증). 소스
+      # 부재 시 fallback 빌드(아래 스텝 if 참고). PR head sha는 공식
+      # actions/github-script + commit->PR API로 조회(러너 gh 의존 없음).
+      - name: Resolve PR head sha (main only)
+        id: prhead
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          result-encoding: string
+          script: |
+            const { data: prs } =
+              await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+            return prs.length ? prs[0].head.sha : '';
+      - name: Check staging source (main only)
+        id: src
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          SVC="${{ matrix.service }}"
+          STAGING="harbor.hizero.local/dangdang-backend/$SVC-staging"
+          HEAD_SHA="${{ steps.prhead.outputs.result }}"
+          FOUND="false"
+          if [ -n "$HEAD_SHA" ] && \
+             docker buildx imagetools inspect \
+               "$STAGING:$HEAD_SHA" >/dev/null 2>&1; then
+            FOUND="true"
+          fi
+          {
+            echo "head_sha=$HEAD_SHA"
+            echo "found=$FOUND"
+            echo "staging=$STAGING"
+          } >> "$GITHUB_OUTPUT"
+          echo "[$SVC] promote src: head=$HEAD_SHA found=$FOUND"
+      - name: Promote staging image (digest copy)
+        if: steps.src.outputs.found == 'true'
+        run: |
+          SVC="${{ matrix.service }}"
+          STAGING="${{ steps.src.outputs.staging }}"
+          HEAD_SHA="${{ steps.src.outputs.head_sha }}"
+          IMAGE="harbor.hizero.local/dangdang-backend/$SVC"
+          SHA="${{ github.sha }}"
+          SRC="sha256:$(docker buildx imagetools inspect --raw \
+            "$STAGING:$HEAD_SHA" | sha256sum | cut -d' ' -f1)"
+          docker buildx imagetools create \
+            -t "$IMAGE:$SHA" -t "$IMAGE:latest" "$STAGING:$HEAD_SHA"
+          DST_RAW="$(docker buildx imagetools inspect --raw "$IMAGE:$SHA")"
+          DST="sha256:$(printf '%s' "$DST_RAW" | sha256sum | cut -d' ' -f1)"
+          MATCH=false
+          if [ "$DST" = "$SRC" ]; then MATCH=true; fi
+          if printf '%s' "$DST_RAW" | grep -q "$SRC"; then MATCH=true; fi
+          if [ "$MATCH" = true ]; then
+            echo "[$SVC] integrity OK: $DST refs/eq $SRC"
+          else
+            echo "::error::[$SVC] promoted != scanned $SRC"
+            exit 1
+          fi
       - name: Build image
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v7
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
@@ -422,11 +640,13 @@ jobs:
       # 충돌한다(실제로 재현함). 러너별 경로에 직접 설치하고 trivy-action의 재설치는
       # 건너뛴다.
       - name: Install Trivy (per-runner path)
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.2.6
         uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
         with:
           path: /home/bruce/.trivy-bin/${{ runner.name }}
       - name: Trivy vulnerability scan
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -458,12 +678,25 @@ jobs:
       # 없이 달성된다. workflow_dispatch도 push 안 함(수동 재배포는 기존 태그
       # 재사용이라 새 push 불요). Docker 공식 CI 문서의 조건부 push
       # (push: github.event_name != 'pull_request') 표준 패턴과 동일 취지.
-      - name: Tag and push (sha + latest)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # ---- PR run: staging repo push(승격 소스). 미병합 이미지는 staging에만. ----
+      - name: Push to staging (build-once source)
+        if: github.event_name == 'pull_request'
         run: |
-          IMAGE="harbor.hizero.local/dangdang-backend/${{ matrix.service }}"
+          SVC="${{ matrix.service }}"
+          STAGING="harbor.hizero.local/dangdang-backend/$SVC-staging"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
           SHA="${{ github.sha }}"
-          LOCAL="backend-${{ matrix.service }}:$SHA"
+          docker tag "backend-$SVC:$SHA" "$STAGING:$HEAD_SHA"
+          docker push "$STAGING:$HEAD_SHA"
+      # ---- main fallback: 스캔한 이미지를 production repo로 push(구 동작) ----
+      - name: Tag and push (main fallback, sha + latest)
+        if: steps.src.outputs.found == 'false'
+        run: |
+          SVC="${{ matrix.service }}"
+          IMAGE="harbor.hizero.local/dangdang-backend/$SVC"
+          SHA="${{ github.sha }}"
+          LOCAL="backend-$SVC:$SHA"
+          echo "::warning::[$SVC] build-once source missing - fallback"
           docker tag "$LOCAL" "$IMAGE:$SHA"
           docker tag "$LOCAL" "$IMAGE:latest"
           docker push "$IMAGE:$SHA"
@@ -609,19 +842,58 @@ jobs:
           # 죽었다(product-service:5311c6b not found). --no-deps(공식: "Don't
           # start linked services")로 대상 서비스만 재생성한다 - 의존 서비스는
           # 이미 떠서 돌고 있으므로 건드릴 이유가 없다.
-          UPDATED=""
+          # 2026-07-24, 두 가지 결함을 함께 고친다.
+          #
+          # (1) pull 실패를 전부 "이번 커밋에 안 바뀐 서비스"로 취급하고 있었다.
+          #     원래 코드는 `docker pull ... >/dev/null 2>&1` 의 성공 여부만 봐서,
+          #     "그 태그가 없음"과 "인증 실패/네트워크 오류/레지스트리 다운"을
+          #     구분하지 못했다. Harbor의 dangdang-backend 프로젝트는 비공개이고
+          #     (public=false, 2026-07-24 확인), 이 job은 harbor.hizero.local로
+          #     로그인하는데 pull은 192.168.0.53으로 한다 - Docker는 자격증명을
+          #     레지스트리 호스트명 단위로 저장하므로(공식 문서: docker login이
+          #     "registry"별로 config.json에 기록), 두 이름이 갈린 지금 구성은
+          #     production VM에 남아있는 별도 로그인에 의존한다. 그게 만료되면
+          #     9개 서비스가 전부 "not rebuilt this commit"으로 조용히 스킵되고,
+          #     job은 초록불로 끝나며 notify-on-deploy는 "배포 완료"를 보낸다.
+          #     이제 pull 출력을 보고 "태그 없음"일 때만 스킵하고, 그 외 실패는
+          #     즉시 job을 실패시킨다.
+          #     (레지스트리 호스트명 통일은 compose의 image 참조까지 함께 바꿔야
+          #      해서 production 영향이 있음 - 별도 승인 항목으로 분리.)
+          #
+          # (2) 롤백 대상 목록이 루프가 끝난 뒤에야 기록됐다. 루프 도중 compose up이
+          #     실패하면(bash -e로 스텝이 즉시 종료) UPDATED_SERVICES가 아예 안
+          #     남아, 그 시점까지 이미 새 이미지로 교체된 서비스들이 롤백되지
+          #     않고 그대로 남았다. 매 서비스마다 파일에 append 해서, 스텝이
+          #     어디서 죽든 그때까지 배포된 목록이 보존되게 한다(GITHUB_ENV 대신
+          #     워크스페이스 파일 - 스텝 실패 시 환경파일 처리 시점에 의존하지
+          #     않기 위함).
+          UPDATED_FILE="$GITHUB_WORKSPACE/.updated-services"
+          : > "$UPDATED_FILE"
           for s in $SERVICES; do
             IMG="192.168.0.53/dangdang-backend/$s:$TAG"
-            if $SSH "docker pull $IMG" >/dev/null 2>&1; then
+            set +e
+            PULL_OUT=$($SSH "docker pull $IMG" 2>&1)
+            PULL_RC=$?
+            set -e
+            if [ "$PULL_RC" = "0" ]; then
               echo "$s: $TAG found in registry, deploying"
               $SSH "cd ~/backend && TAG=$TAG \
                 docker compose -f docker-compose.yaml up -d --no-deps $s"
-              UPDATED="$UPDATED $s"
-            else
+              echo "$s" >> "$UPDATED_FILE"
+            elif printf '%s' "$PULL_OUT" \
+                | grep -qiE 'manifest unknown|not found'; then
               echo "$s: $TAG not in registry (not rebuilt this commit)" \
                 "- leaving current deployment untouched"
+            else
+              echo "::error::$s: docker pull이 '태그 없음'이 아닌 이유로" \
+                "실패했습니다(인증/네트워크/레지스트리 장애 가능성)." \
+                "이 경우를 스킵으로 처리하면 아무것도 배포되지 않은 채" \
+                "배포 성공으로 보고됩니다. 원본 출력:"
+              printf '%s\n' "$PULL_OUT"
+              exit 1
             fi
           done
+          UPDATED=$(tr '\n' ' ' < "$UPDATED_FILE")
           echo "UPDATED_SERVICES=$UPDATED" >> "$GITHUB_ENV"
           if [ -z "$UPDATED" ]; then
             echo "No service had a new image for this commit; nothing to do"
@@ -670,7 +942,21 @@ jobs:
           # 기록해둔 이전 이미지(레지스트리/경로/태그 전체)에서 태그만
           # 떼어내 compose의 서비스 단위 up으로 되돌린다 - compose가 해당
           # 서비스에만 그 TAG를 적용하므로 다른 서비스는 영향받지 않는다.
-          for s in $UPDATED_SERVICES; do
+          #
+          # 2026-07-24, $UPDATED_SERVICES(환경변수) 대신 배포 스텝이 매 서비스마다
+          # append한 파일을 읽는다. 배포 스텝이 루프 중간에 죽은 경우 환경변수는
+          # 비어 있지만 그때까지 교체된 서비스는 실제로 존재하므로, 환경변수만
+          # 보면 그 서비스들이 롤백되지 않고 남는다(배포 스텝 주석 (2) 참고).
+          UPDATED_FILE="$GITHUB_WORKSPACE/.updated-services"
+          if [ -s "$UPDATED_FILE" ]; then
+            ROLLBACK_LIST=$(tr '\n' ' ' < "$UPDATED_FILE")
+          else
+            ROLLBACK_LIST="$UPDATED_SERVICES"
+          fi
+          if [ -z "$ROLLBACK_LIST" ]; then
+            echo "이번 실행에서 교체된 서비스가 없음 - 롤백할 대상 없음"
+          fi
+          for s in $ROLLBACK_LIST; do
             VAR="PREV_IMG_$s"
             PREV="${!VAR}"
             if [ -n "$PREV" ]; then
@@ -721,7 +1007,10 @@ jobs:
     env:
       PROD_HOST: bruce@10.10.10.30
     steps:
-      - uses: actions/checkout@v4
+      # 2026-07-24, 이 파일에서 유일하게 남아있던 태그 핀을 SHA 핀으로 통일
+      # (나머지 스텝은 전부 SHA 핀이었는데 이 job만 어긋나 있었다).
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Backup current b-gateway state
         env:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
@@ -776,18 +1065,31 @@ jobs:
               *) FAIL="1" ;;
             esac
           }
+          # 2026-07-24, 아래 두 POST 검증이 상태코드를 출력만 하고 FAIL 판정에
+          # 전혀 반영하지 않고 있었다. /b/admin은 이 게이트웨이에서 유일하게
+          # Lua 분기(menu 값에 따라 product-service / ingredients-service)를
+          # 타는 경로라 가장 깨지기 쉬운데, 정작 그 경로가 500이 나도 라우트
+          # 검증은 통과하고 자동 롤백도 안 걸렸다. 위 GET들과 같은 판정 로직을
+          # 태워 실제 게이트로 만든다.
+          check_post() {
+            label="$1"; menu="$2"
+            CMD="curl -s -X POST -H 'Content-Type: application/json'"
+            CMD="$CMD -d '{\"menu\":\"$menu\"}'"
+            CMD="$CMD -o /dev/null -w '%{http_code}'"
+            CMD="$CMD http://localhost:8080/b/admin"
+            CODE=$($SSH "$CMD" || echo "000")
+            echo "$label -> $CODE"
+            case "$CODE" in
+              2*|3*) : ;;
+              *) FAIL="1" ;;
+            esac
+          }
           check "http://localhost:8080/b/search?page=1"
           check "http://localhost:8080/b/recipes"
           check "http://localhost:8080/b/tags/category"
           check "http://localhost:8080/b/home/rank/item"
-          $SSH "curl -s -X POST -H 'Content-Type: application/json' \
-            -d '{\"menu\":\"product\"}' \
-            -o /dev/null -w '/b/admin (product) -> %{http_code}\n' \
-            http://localhost:8080/b/admin"
-          $SSH "curl -s -X POST -H 'Content-Type: application/json' \
-            -d '{\"menu\":\"create-tag\"}' \
-            -o /dev/null -w '/b/admin (create-tag) -> %{http_code}\n' \
-            http://localhost:8080/b/admin"
+          check_post "/b/admin (product)" "product"
+          check_post "/b/admin (create-tag)" "create-tag"
           $SSH "docker ps --filter name=b-gateway --format '{{.Status}}'"
           if [ -n "$FAIL" ]; then
             echo "One or more core routes failed"
@@ -799,6 +1101,18 @@ jobs:
           SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
         run: |
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          # 2026-07-24, BACKUP_TS가 비어 있는 경우를 막는다. 백업 스텝이
+          # 실패하면 이 변수가 없는 채로 롤백이 돌아 `cp ~/b-gateway-backup-/*`
+          # 라는 엉뚱한 경로를 복사하려 했다 - 실패는 하지만, 그때 이미
+          # `compose down`으로 게이트웨이를 내린 뒤라 전체 API가 죽은 상태로
+          # 남는다(b-gateway는 모든 /b/* 트래픽의 유일한 진입점).
+          # 백업이 없으면 내리지 말고 즉시 사람을 부른다.
+          if [ -z "$BACKUP_TS" ]; then
+            echo "::error::백업 타임스탬프가 없습니다(백업 스텝 실패 추정)." \
+              "복구할 원본이 없으므로 b-gateway를 내리지 않고 중단합니다." \
+              "production VM에서 수동 확인이 필요합니다."
+            exit 1
+          fi
           CMD="cd ~/b-gateway && docker compose -p backend down"
           CMD="$CMD && cp ~/b-gateway-backup-$BACKUP_TS/* ~/b-gateway/"
           CMD="$CMD && docker compose -p backend up -d"
@@ -829,8 +1143,16 @@ jobs:
             exit 1
           fi
 
-  # frontend/ 이미지 빌드+스캔+push. 백엔드와 동일한 :sha/:latest 이중 태그 전략을 쓴다.
-  # 배포는 아래 frontend-deploy-production job 참고.
+  # frontend/ 이미지 - build-once 전략(2026-07-22 도입).
+  #  - PR run: build+scan 후 dangdang/frontend-staging:<PR head sha>로 push.
+  #  - main run: 재빌드/재스캔 없이, PR 때 스캔된 그 이미지를 production repo(dangdang/frontend)
+  #    로 digest 승격(docker buildx imagetools create). "스캔된 바로 그 바이트"가 배포됨.
+  #    PR head sha는 머지 방식(merge/squash/rebase) 무관하게 GitHub "commit->PR" API로
+  #    조회한다(HEAD^2 부모 방식은 squash/rebase에서 깨짐). 승격 후 raw manifest 일치 검증.
+  #  - fallback: 승격 소스를 못 찾으면(전환기 구워크플로 PR/직접 push/핫픽스/API·소스 부재)
+  #    main에서 그 자리 빌드+스캔+push -> main이 배포 불가 상태로 남지 않음(graceful degrade).
+  #  이 잡은 PR·main 양쪽에서 계속 돌고 성공을 리포트하므로 아래 frontend-deploy-production의
+  #  needs/result 조건은 그대로 유효(잡 그래프 변경 없음). 배포는 그 job 참고.
   frontend-image-scanning:
     needs: detect-frontend
     if: needs.detect-frontend.outputs.changed == 'true'
@@ -838,22 +1160,15 @@ jobs:
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # v4
-      # 2026-07-21, registry 캐시(Harbor) 사용을 위한 per-job 빌더 설정.
-      # - network=host: 빌더 컨테이너가 host의 이름 해석을 쓰게 함
-      #   (bridge 빌더는 harbor.hizero.local 해석 불가 - PR#98 1차 실패 실측)
-      # - image=buildkit-harbor:v1: Harbor CA를 신뢰 저장소에 구운 buildkit
-      #   이미지(harbor VM ~/buildkit-harbor에서 빌드). insecure 우회는 buildkit이
-      #   토큰 요청에 적용하지 않아 실패함(실측) - CA 정식 신뢰가 정공법.
-      #   이미지 pull은 host dockerd가 하므로 certs.d 신뢰로 동작.
+      # v4 - registry 캐시(Harbor) + imagetools 승격에 쓸 per-job 빌더.
+      # network=host: 빌더가 host 이름해석으로 harbor.hizero.local 접근(bridge는 해석
+      # 불가 - PR#98 실측). image=buildkit-harbor:v1: Harbor CA를 신뢰에 구운 buildkit.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
         with:
           driver-opts: |
             network=host
             image=harbor.hizero.local/dangdang/buildkit-harbor:v1
-      # registry 캐시 push(cache-to)에 빌드 시점 인증 필요 - 로그인을 빌드
-      # 앞에 배치. PR 실행에서도 로그인하지만 이미지 push는 여전히 아래
-      # main 가드 스텝에서만 한다(캐시 blob만 push됨).
+      # 캐시 push·staging push·승격·inspect 모두 인증 필요 - 로그인을 먼저.
       - name: Log in to Harbor
         # v3
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -862,7 +1177,76 @@ jobs:
           username: ${{ secrets.HARBOR_ROBOT_USER }}
           password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
           logout: false
+      # ---- main run: 승격 소스(PR head sha) 조회 ----
+      # 공식 GitHub REST API(list PRs associated with a commit)로 병합된 PR의
+      # head sha(=staging 태그)를 얻는다. merge/squash/rebase 모두 커버. 호출은
+      # 공식 actions/github-script(액션 Node 런타임)로 해 러너의 gh/jq/curl 설치
+      # 의존을 없앤다(1차 canary에서 gh 부재로 빈 값->fallback 실측 후 교체).
+      # 소스 부재 시 found=false로 아래 fallback 빌드로 안전 degrade.
+      - name: Resolve PR head sha (main only)
+        id: prhead
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          result-encoding: string
+          script: |
+            const { data: prs } =
+              await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+            return prs.length ? prs[0].head.sha : '';
+      - name: Check staging source (main only)
+        id: src
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          STAGING="harbor.hizero.local/dangdang/frontend-staging"
+          HEAD_SHA="${{ steps.prhead.outputs.result }}"
+          FOUND="false"
+          if [ -n "$HEAD_SHA" ] && \
+             docker buildx imagetools inspect \
+               "$STAGING:$HEAD_SHA" >/dev/null 2>&1; then
+            FOUND="true"
+          fi
+          {
+            echo "head_sha=$HEAD_SHA"
+            echo "found=$FOUND"
+            echo "staging=$STAGING"
+          } >> "$GITHUB_OUTPUT"
+          echo "promote source: head_sha=$HEAD_SHA found=$FOUND"
+      # ---- main run + 소스 있음: digest 승격(재빌드 0) + 무결성 검증 ----
+      - name: Promote staging image (digest copy)
+        if: steps.src.outputs.found == 'true'
+        run: |
+          STAGING="${{ steps.src.outputs.staging }}"
+          HEAD_SHA="${{ steps.src.outputs.head_sha }}"
+          IMAGE="harbor.hizero.local/dangdang/frontend"
+          SHA="${{ github.sha }}"
+          # 소스(스캔된) 매니페스트 digest를 승격 전에 확보
+          SRC="sha256:$(docker buildx imagetools inspect --raw \
+            "$STAGING:$HEAD_SHA" | sha256sum | cut -d' ' -f1)"
+          docker buildx imagetools create \
+            -t "$IMAGE:$SHA" -t "$IMAGE:latest" "$STAGING:$HEAD_SHA"
+          # 무결성: imagetools create는 단일 소스를 OCI index로 감싸 top-level
+          # digest가 달라진다(1차 실측 2f13..->cc28..) -> raw 바이트 동등 비교는
+          # 틀림. prod가 스캔된 소스 매니페스트를 "참조(index)" 또는 "동등(직접
+          # 복사)"하는지로 검증한다.
+          DST_RAW="$(docker buildx imagetools inspect --raw "$IMAGE:$SHA")"
+          DST="sha256:$(printf '%s' "$DST_RAW" | sha256sum | cut -d' ' -f1)"
+          MATCH=false
+          if [ "$DST" = "$SRC" ]; then MATCH=true; fi
+          if printf '%s' "$DST_RAW" | grep -q "$SRC"; then MATCH=true; fi
+          if [ "$MATCH" = true ]; then
+            echo "integrity OK: prod=$DST references/equals scanned $SRC"
+          else
+            echo "::error::promoted image does not match scanned $SRC"
+            exit 1
+          fi
+      # ---- PR run, 또는 main fallback(소스 없음): 빌드 ----
       - name: Build image
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v7
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
@@ -874,15 +1258,16 @@ jobs:
           # 2026-07-21, gha(GitHub 왕복·10GB 한도) -> Harbor registry 캐시(LAN)
           cache-from: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache  # yamllint disable-line rule:line-length
           cache-to: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend:cache,mode=max,image-manifest=true,oci-mediatypes=true  # yamllint disable-line rule:line-length
-      # backend-image-scanning과 같은 이유(setup-trivy 기본 설치 경로가
-      # $HOME/.local/bin/trivy-bin 고정이라 harbor-runner/harbor-runner-2가 동시에
-      # 돌면 "Text file busy"로 충돌 - 실제로 2번 재현/확인함) - 러너별 경로에 직접 설치.
+      # setup-trivy 기본 경로($HOME/.local/bin/trivy-bin)는 러너 2대 동시 실행 시
+      # "Text file busy" 충돌(2회 재현) - 러너별 경로에 설치.
       - name: Install Trivy (per-runner path)
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.2.6
         uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
         with:
           path: /home/bruce/.trivy-bin/${{ runner.name }}
       - name: Trivy vulnerability scan
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
         # v0.36.0
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -891,22 +1276,172 @@ jobs:
           exit-code: '1'
           cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
           skip-setup-trivy: true
-      # (2026-07-21) Harbor 로그인은 registry 캐시 때문에 Build image 앞으로 이동됨
-      # frontend/compose.production.example.yaml(성애님 작성)는 FRONTEND_IMAGE에
-      # 기본값을 안 두고 명시적인 불변 태그를 요구한다("Set FRONTEND_IMAGE to the
-      # Harbor image and immutable tag") - 그래서 :latest를 기본 배포 태그로 쓰지
-      # 않고 :sha를 기본으로 쓴다. :latest는 수동 확인/편의용으로만 같이 남긴다.
-      #
-      # 2026-07-20, backend-image-scanning의 push 가드와 동일한 이유(그쪽 주석
-      # 참고) - PR 실행에서 미병합 커밋이 :latest를 이동시키는 걸 막고,
-      # push는 main push 실행에서만 한다.
-      - name: Tag and push (sha + latest)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # ---- PR run: staging repo push(승격 소스) ----
+      # 미병합 이미지는 staging repo에만 올라가고 production repo(dangdang/frontend)엔
+      # 안 들어감("미병합 코드 격리" 원칙 유지). PR head sha로 태깅해 main run이 찾게 함.
+      # frontend/compose는 불변 태그를 요구하므로 배포엔 :sha를 쓴다(:latest는 승격 시 편의용).
+      - name: Push to staging (build-once source)
+        if: github.event_name == 'pull_request'
+        run: |
+          STAGING="harbor.hizero.local/dangdang/frontend-staging"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          SHA="${{ github.sha }}"
+          docker tag "frontend:$SHA" "$STAGING:$HEAD_SHA"
+          docker push "$STAGING:$HEAD_SHA"
+      # ---- main fallback: 스캔한 이미지를 production repo로 push(구 동작 경로) ----
+      - name: Tag and push (main fallback, sha + latest)
+        if: steps.src.outputs.found == 'false'
         run: |
           IMAGE="harbor.hizero.local/dangdang/frontend"
           SHA="${{ github.sha }}"
+          echo "::warning::build-once source missing - fallback build for $SHA"
           docker tag "frontend:$SHA" "$IMAGE:$SHA"
           docker tag "frontend:$SHA" "$IMAGE:latest"
+          docker push "$IMAGE:$SHA"
+          docker push "$IMAGE:latest"
+
+  # 2026-07-24, Admin Frontend 이미지 빌드+스캔+push. frontend-image-scanning과
+  # 동일한 구성(빌더/캐시/Trivy/push 가드)이고 달라지는 건 컨텍스트 경로와
+  # 이미지·캐시 repo 이름뿐이라, 각 스텝의 상세 근거는 위 job 주석을 참고할 것.
+  #
+  # Harbor는 같은 dangdang 프로젝트 안에 repo만 새로 만든다
+  # (dangdang/frontend-admin, dangdang/buildcache-frontend-admin). robot 계정
+  # 권한이 프로젝트 스코프라 별도 프로젝트로 빼면 자격증명을 새로 발급해야
+  # 하는데, 같은 프로젝트면 기존 HARBOR_ROBOT_USER/TOKEN이 그대로 쓰인다.
+  # 주의: 07-20에 넣은 쿼터/리텐션(태그 15개 유지)/주간 GC 규칙이 새 repo에도
+  # 적용되는지 확인이 필요하다 - 리텐션 규칙이 repository 패턴으로 걸려 있으면
+  # 신규 repo가 누락돼 무한 증식할 수 있고, mode=max 빌드 캐시는 GB 단위다.
+  frontend-admin-image-scanning:
+    needs: detect-frontend
+    if: needs.detect-frontend.outputs.admin_changed == 'true'
+    runs-on: self-hosted
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
+        with:
+          driver-opts: |
+            network=host
+            image=harbor.hizero.local/dangdang/buildkit-harbor:v1
+      - name: Log in to Harbor
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+          logout: false
+      # ---- main run: 승격 소스(PR head sha) 조회 ----
+      # frontend-image-scanning의 build-once 구조를 그대로 따른다(그쪽 주석에
+      # 각 스텝의 근거가 있음). 처음엔 이 job을 build-once 도입 전의 frontend
+      # 패턴(PR/main 양쪽 빌드 + main에서 push)으로 만들었는데, 그 사이 main에
+      # build-once가 들어와 admin만 구 방식으로 남으면 (1) main에서 재빌드가
+      # 다시 발생해 build-once의 이점을 잃고 (2) 두 프론트 앱의 파이프라인
+      # 구조가 갈려 이후 유지보수에서 또 한쪽만 빠지는 사고가 난다.
+      - name: Resolve PR head sha (main only)
+        id: prhead
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          result-encoding: string
+          script: |
+            const { data: prs } =
+              await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+            return prs.length ? prs[0].head.sha : '';
+      - name: Check staging source (main only)
+        id: src
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          STAGING="harbor.hizero.local/dangdang/frontend-admin-staging"
+          HEAD_SHA="${{ steps.prhead.outputs.result }}"
+          FOUND="false"
+          if [ -n "$HEAD_SHA" ] && \
+             docker buildx imagetools inspect \
+               "$STAGING:$HEAD_SHA" >/dev/null 2>&1; then
+            FOUND="true"
+          fi
+          {
+            echo "head_sha=$HEAD_SHA"
+            echo "found=$FOUND"
+            echo "staging=$STAGING"
+          } >> "$GITHUB_OUTPUT"
+          echo "promote source: head_sha=$HEAD_SHA found=$FOUND"
+      # ---- main run + 소스 있음: digest 승격(재빌드 0) + 무결성 검증 ----
+      - name: Promote staging image (digest copy)
+        if: steps.src.outputs.found == 'true'
+        run: |
+          STAGING="${{ steps.src.outputs.staging }}"
+          HEAD_SHA="${{ steps.src.outputs.head_sha }}"
+          IMAGE="harbor.hizero.local/dangdang/frontend-admin"
+          SHA="${{ github.sha }}"
+          SRC="sha256:$(docker buildx imagetools inspect --raw \
+            "$STAGING:$HEAD_SHA" | sha256sum | cut -d' ' -f1)"
+          docker buildx imagetools create \
+            -t "$IMAGE:$SHA" -t "$IMAGE:latest" "$STAGING:$HEAD_SHA"
+          DST_RAW="$(docker buildx imagetools inspect --raw "$IMAGE:$SHA")"
+          DST="sha256:$(printf '%s' "$DST_RAW" | sha256sum | cut -d' ' -f1)"
+          MATCH=false
+          if [ "$DST" = "$SRC" ]; then MATCH=true; fi
+          if printf '%s' "$DST_RAW" | grep -q "$SRC"; then MATCH=true; fi
+          if [ "$MATCH" = true ]; then
+            echo "integrity OK: prod=$DST references/equals scanned $SRC"
+          else
+            echo "::error::promoted image does not match scanned $SRC"
+            exit 1
+          fi
+      # ---- PR run, 또는 main fallback(소스 없음): 빌드 ----
+      - name: Build image
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
+        # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: frontend-admin
+          file: frontend-admin/Dockerfile
+          pull: true
+          tags: frontend-admin:${{ github.sha }}
+          load: true
+          cache-from: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend-admin:cache  # yamllint disable-line rule:line-length
+          cache-to: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend-admin:cache,mode=max,image-manifest=true,oci-mediatypes=true  # yamllint disable-line rule:line-length
+      - name: Install Trivy (per-runner path)
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
+        # v0.2.6
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
+        with:
+          path: /home/bruce/.trivy-bin/${{ runner.name }}
+      - name: Trivy vulnerability scan
+        if: github.event_name == 'pull_request' || steps.src.outputs.found == 'false'  # yamllint disable-line rule:line-length
+        # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: frontend-admin:${{ github.sha }}
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
+          skip-setup-trivy: true
+      # ---- PR run: staging repo push(승격 소스) ----
+      - name: Push to staging (build-once source)
+        if: github.event_name == 'pull_request'
+        run: |
+          STAGING="harbor.hizero.local/dangdang/frontend-admin-staging"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          SHA="${{ github.sha }}"
+          docker tag "frontend-admin:$SHA" "$STAGING:$HEAD_SHA"
+          docker push "$STAGING:$HEAD_SHA"
+      # ---- main fallback: 스캔한 이미지를 production repo로 push ----
+      - name: Tag and push (main fallback, sha + latest)
+        if: steps.src.outputs.found == 'false'
+        run: |
+          IMAGE="harbor.hizero.local/dangdang/frontend-admin"
+          SHA="${{ github.sha }}"
+          echo "::warning::build-once source missing - fallback build for $SHA"
+          docker tag "frontend-admin:$SHA" "$IMAGE:$SHA"
+          docker tag "frontend-admin:$SHA" "$IMAGE:latest"
           docker push "$IMAGE:$SHA"
           docker push "$IMAGE:latest"
 
@@ -1060,6 +1595,175 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           $SSH "echo $TAG > ~/frontend/.last-deployed-tag"
 
+  # 2026-07-24, Admin Frontend production 배포. frontend-deploy-production과
+  # 같은 방식(self-hosted 러너에서 production VM으로 SSH → 그쪽 compose로
+  # pull/up)이며 트리거/always() 필요성도 동일하므로 그 job 주석을 참고할 것.
+  #
+  # 쇼핑몰 프론트와 결정적으로 다른 점은 "외부 노출"이다(2026-07-24 지훈 결정).
+  # 요청서에는 frontend가 "호스트 포트 없이 dangdang-edge로만 열려 있다"고
+  # 되어 있었지만 실제 배포 상태는 다르다 - frontend/compose.production.
+  # example.yaml 원본은 expose만 있는 게 맞으나, 배포 시 항상
+  # infra/frontend/compose.lan-test-override.yaml을 -f로 겹쳐 올리고 그
+  # override가 3001을 호스트에 publish한다(현재 사용자 접속 경로
+  # 192.168.0.56:3001이 이것). 또 b-gateway의 nginx.conf에는 프론트로 가는
+  # location이 하나도 없다 - /b/*를 백엔드로 보낼 뿐이고, 오히려 프론트가
+  # b-gateway를 호출하는 방향이다. 즉 프론트 구성을 문자 그대로 복제하면
+  # admin도 같은 NAT 경로로 인터넷에서 닿는다.
+  # 그래서 admin은 loopback(127.0.0.1)에만 publish한다 - Docker의 publish는
+  # iptables DOCKER 체인에 규칙을 직접 넣어 호스트 방화벽(ufw)을 우회하므로
+  # 방화벽으로 막는 접근은 신뢰할 수 없고, 공식 문서가 권고하는 해법 자체가
+  # 바인딩 주소를 특정하는 것이다:
+  # yamllint disable-line rule:line-length
+  # https://docs.docker.com/engine/network/packet-filtering-firewalls/
+  # 관리자 접속은 SSH 터널로 한다(infra/frontend-admin/ 파일 헤더 참고).
+  frontend-admin-deploy-production:
+    needs: [frontend-admin-image-scanning, code-scanning]
+    if: |
+      always() &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+          inputs.deploy_target == 'frontend-admin') ||
+        (
+          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          needs.frontend-admin-image-scanning.result == 'success' &&
+          needs.code-scanning.result == 'success'
+        )
+      )
+    runs-on: self-hosted
+    env:
+      PROD_HOST: bruce@10.10.10.30
+      FRONTEND_ADMIN_TAG: ${{ inputs.frontend_admin_tag }}
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Determine tag
+        run: |
+          TAG="$FRONTEND_ADMIN_TAG"
+          if [ -z "$TAG" ]; then TAG="${{ github.sha }}"; fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+      - name: Copy compose files to production VM
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          SCP="sshpass -e scp -o StrictHostKeyChecking=accept-new"
+          $SSH "mkdir -p ~/frontend-admin"
+          $SCP frontend-admin/compose.production.example.yaml \
+            "$PROD_HOST":~/frontend-admin/docker-compose.yaml
+          # 이 override가 loopback 바인딩을 담당한다. 쇼핑몰 프론트의
+          # lan-test-override와 달리 "도메인 생기면 삭제"할 임시 파일이
+          # 아니라, admin의 노출 정책 그 자체라 상시 유지한다.
+          $SCP infra/frontend-admin/compose.loopback-override.yaml \
+            "$PROD_HOST":~/frontend-admin/compose.loopback-override.yaml
+      - name: Ensure dangdang-edge network exists
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          $SSH "docker network inspect dangdang-edge >/dev/null 2>&1 \
+            || docker network create dangdang-edge"
+      - name: Record previous tag
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          PREV=$($SSH "cat ~/frontend-admin/.last-deployed-tag 2>/dev/null" \
+            || true)
+          echo "PREV_TAG=$PREV" >> "$GITHUB_ENV"
+          echo "Previous deployed tag: ${PREV:-<none>}"
+      - name: Log in to Harbor (production VM)
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          # 작은따옴표 대입 - robot 계정명의 '$'가 bash 변수 참조로
+          # 오해석되는 것 방지(frontend-deploy-production 주석 참고).
+          TOKEN='${{ secrets.HARBOR_ROBOT_TOKEN }}'
+          USR='${{ secrets.HARBOR_ROBOT_USER }}'
+          echo "$TOKEN" | $SSH "docker login harbor.hizero.local -u '$USR' \
+            --password-stdin"
+      - name: Deploy via Docker Compose (SSH)
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          IMAGE="harbor.hizero.local/dangdang/frontend-admin:$TAG"
+          # ADMIN_PUBLIC_APP_URL Secret은 아직 없어도 된다 - admin compose가
+          # 이 값에 기본값(loopback)을 두기로 했으므로, 비어 있으면 compose의
+          # :- 기본값이 적용된다. 실제 도메인/edge proxy가 생기면 그때
+          # Secret을 추가하면 이 job은 수정 없이 그대로 동작한다.
+          PUB="${{ secrets.ADMIN_PUBLIC_APP_URL }}"
+          GW="${{ secrets.BACKEND_GATEWAY_URL }}"
+          FILES="-f docker-compose.yaml -f compose.loopback-override.yaml"
+          CMD="cd ~/frontend-admin && FRONTEND_ADMIN_IMAGE=$IMAGE"
+          CMD="$CMD ADMIN_PUBLIC_APP_URL='$PUB' BACKEND_GATEWAY_URL='$GW'"
+          CMD="$CMD docker compose $FILES pull"
+          CMD="$CMD && FRONTEND_ADMIN_IMAGE=$IMAGE ADMIN_PUBLIC_APP_URL='$PUB'"
+          CMD="$CMD BACKEND_GATEWAY_URL='$GW'"
+          CMD="$CMD docker compose $FILES up -d"
+          $SSH "$CMD"
+      - name: Health check (container status + gateway reachability)
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          FMT='{{.State.Health.Status}}'
+          OK=""
+          for i in $(seq 1 10); do
+            STATUS=$($SSH "docker inspect --format '$FMT' \
+              dangdang-frontend-admin" 2>/dev/null || true)
+            if [ "$STATUS" = "healthy" ]; then
+              OK=1
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "$OK" ]; then
+            echo "Container health check failed"
+            exit 1
+          fi
+          echo "Container healthy, checking b-gateway reachability..."
+          # frontend의 /b/search 체크를 그대로 복제하면 안 된다 - admin이
+          # 쓰는 엔드포인트(/b/admin/me 등)는 로그인 없이는 401이라 r.ok가
+          # false가 되고, 정상 배포가 실패로 판정돼 롤백된다. bgateway-cutover의
+          # 라우트 검증에서 2xx가 확인된 무인증 GET으로, "edge 네트워크에
+          # 붙었고 게이트웨이가 응답한다"만 확인한다.
+          URL="http://b-gateway:8080/b/tags/category"
+          CHECK="node -e \"fetch('$URL')"
+          CHECK="$CHECK .then(r=>{if(!r.ok)process.exit(1)})"
+          CHECK="$CHECK .catch(()=>process.exit(1))\""
+          if ! $SSH "docker exec dangdang-frontend-admin $CHECK"; then
+            echo "b-gateway not reachable from admin container"
+            exit 1
+          fi
+          echo "All checks passed"
+      - name: Rollback on failed health check
+        if: failure()
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          if [ -n "$PREV_TAG" ]; then
+            echo "Rolling back to previous tag: $PREV_TAG"
+            IMAGE="harbor.hizero.local/dangdang/frontend-admin:$PREV_TAG"
+            PUB="${{ secrets.ADMIN_PUBLIC_APP_URL }}"
+            GW="${{ secrets.BACKEND_GATEWAY_URL }}"
+            FILES="-f docker-compose.yaml -f compose.loopback-override.yaml"
+            CMD="cd ~/frontend-admin && FRONTEND_ADMIN_IMAGE=$IMAGE"
+            CMD="$CMD ADMIN_PUBLIC_APP_URL='$PUB' BACKEND_GATEWAY_URL='$GW'"
+            CMD="$CMD docker compose $FILES up -d"
+            $SSH "$CMD"
+          else
+            echo "No previous tag recorded - nothing to roll back to"
+          fi
+      - name: Record this deploy as last-deployed
+        if: success()
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          $SSH "echo $TAG > ~/frontend-admin/.last-deployed-tag"
+
   # needs에 없는 job이 실패하면 GitHub 기본 동작상 그 job에 의존하는 하위 job들은
   # "실패"가 아니라 "스킵"으로 처리된다 - 그러면 이 job의 needs 안에 실제 실패가
   # 하나도 안 잡혀서 failure()가 false가 되고, notify-on-failure 자체가 조용히
@@ -1077,6 +1781,13 @@ jobs:
       - frontend-image-scanning
       - backend-deploy-production
       - frontend-deploy-production
+      # 2026-07-24, Admin Frontend job 3개. 위 2026-07-19 사각지대와 정확히
+      # 같은 이유로 신규 job은 반드시 여기 같이 넣어야 한다 - 빠뜨리면 admin
+      # 파이프라인이 실패해도 Slack이 조용하다. (detect-frontend는 이미 위에
+      # 있고 admin 감지도 그 job이 겸하므로 추가 항목이 없다.)
+      - frontend-admin-build-test
+      - frontend-admin-image-scanning
+      - frontend-admin-deploy-production
       # 2026-07-20, bgateway-cutover 자동배포 전환에 맞춰 추가 - 자동 cutover가
       # (롤백까지 실패하는 등으로) 죽었을 때도 Slack 알람이 울리게 한다.
       - bgateway-cutover
@@ -1096,11 +1807,22 @@ jobs:
           FRONTEND_SCAN_RESULT: ${{ needs.frontend-image-scanning.result }}
           BACKEND_DEPLOY_RESULT: ${{ needs.backend-deploy-production.result }}
           FRONTEND_DEPLOY_RESULT: ${{ needs.frontend-deploy-production.result }}
+          ADMIN_TEST_RESULT: ${{ needs.frontend-admin-build-test.result }}
+          ADMIN_SCAN_RESULT: ${{ needs.frontend-admin-image-scanning.result }}
+          ADMIN_DEPLOY_RESULT: >-
+            ${{ needs.frontend-admin-deploy-production.result }}
+          # 2026-07-24, 브랜치명 등 컨텍스트 값을 run 스크립트에 직접 보간하지 않고
+          # env를 거친다(code-scanning의 sonar-sources 스텝 주석에 근거/링크).
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          BRANCH_RAW: ${{ github.ref_name }}
         run: |
-          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
-          RUN_URL="$REPO_URL/actions/runs/${{ github.run_id }}"
-          SHA="${{ github.sha }}"
-          BRANCH="${{ github.ref_name }}"
+          REPO_URL="$SERVER_URL/$REPOSITORY"
+          RUN_URL="$REPO_URL/actions/runs/$RUN_ID"
+          SHA="$COMMIT_SHA"
+          BRANCH="$BRANCH_RAW"
           FAILED_JOBS=""
           add_failed() {
             if [ -z "$FAILED_JOBS" ]; then
@@ -1137,11 +1859,28 @@ jobs:
           if [ "$FRONTEND_DEPLOY_RESULT" = "failure" ]; then
             add_failed "frontend-deploy-production"
           fi
+          if [ "$ADMIN_TEST_RESULT" = "failure" ]; then
+            add_failed "frontend-admin-build-test"
+          fi
+          if [ "$ADMIN_SCAN_RESULT" = "failure" ]; then
+            add_failed "frontend-admin-image-scanning"
+          fi
+          if [ "$ADMIN_DEPLOY_RESULT" = "failure" ]; then
+            add_failed "frontend-admin-deploy-production"
+          fi
+          # 2026-07-24, JSON을 문자열 결합으로 만들던 것을 jq로 바꾼다. 기존
+          # `--data "{\"text\": \"$TEXT\"}"` 는 $TEXT에 큰따옴표나 역슬래시가
+          # 섞이면 JSON이 깨져 알람이 통째로 안 나간다 - 실패를 알리는 경로가
+          # 실패 내용 때문에 죽는 구조였다. 브랜치명에는 큰따옴표가 들어갈 수
+          # 있고(git이 ref에서 금지하는 문자에 " 는 없음), 이 알람은 하필
+          # 브랜치명을 본문에 넣는다. jq가 이스케이프를 책임지게 한다.
+          # (ubuntu-latest 러너에 jq 기본 포함 - 공식 러너 이미지 문서)
           TEXT=":x: *${FAILED_JOBS^}* failed on \`$BRANCH\` ($SHA)"
-          TEXT="$TEXT\n<$RUN_URL|결과 보기>"
+          TEXT="$TEXT"$'\n'"<$RUN_URL|결과 보기>"
+          jq -nc --arg t "$TEXT" '{text: $t}' > slack-payload.json
           curl -sf -X POST \
             -H 'Content-type: application/json' \
-            --data "{\"text\": \"$TEXT\"}" \
+            --data @slack-payload.json \
             "$SLACK_WEBHOOK_URL"
 
   # 2026-07-20, 배포 "성공" 알림. 그동안 실패만 Slack에 오고 성공 배포는
@@ -1151,15 +1890,24 @@ jobs:
   # 노이즈가 아니라 팀 전체가 알아야 할 신호이므로, 성공 시에도 무엇이
   # 어떤 커밋으로 나갔는지 한 줄 통보해 Actions 화면을 볼 필요 자체를
   # 없앤다.
+  #
+  # 2026-07-24, frontend-admin-deploy-production 추가. 요청서에는
+  # notify-on-failure만 언급됐지만 이쪽도 needs가 배포 job 목록으로 고정이라,
+  # 안 넣으면 admin만 배포된 실행에서 성공 알림이 아예 안 온다. 그러면 위
+  # 2026-07-20 사례("배포됐는지 확인하려고 Actions를 뒤지다 skipped를 보고
+  # 배포 안 된 줄 안다")가 admin에서 그대로 재현되므로 실패 알람과 세트로
+  # 같이 넣는다.
   notify-on-deploy:
     needs:
       - backend-deploy-production
       - frontend-deploy-production
+      - frontend-admin-deploy-production
       - bgateway-cutover
     if: |
       always() &&
       (needs.backend-deploy-production.result == 'success' ||
         needs.frontend-deploy-production.result == 'success' ||
+        needs.frontend-admin-deploy-production.result == 'success' ||
         needs.bgateway-cutover.result == 'success')
     runs-on: ubuntu-latest
     steps:
@@ -1168,20 +1916,30 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           BACKEND_R: ${{ needs.backend-deploy-production.result }}
           FRONTEND_R: ${{ needs.frontend-deploy-production.result }}
+          ADMIN_R: ${{ needs.frontend-admin-deploy-production.result }}
           BGATEWAY_R: ${{ needs.bgateway-cutover.result }}
+          # notify-on-failure와 동일한 이유로 env 경유(2026-07-24).
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          BRANCH_RAW: ${{ github.ref_name }}
         run: |
-          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
-          RUN_URL="$REPO_URL/actions/runs/${{ github.run_id }}"
-          SHA_SHORT="$(echo '${{ github.sha }}' | cut -c1-8)"
+          REPO_URL="$SERVER_URL/$REPOSITORY"
+          RUN_URL="$REPO_URL/actions/runs/$RUN_ID"
+          SHA_SHORT="$(printf '%s' "$COMMIT_SHA" | cut -c1-8)"
           DEPLOYED=""
           add() { DEPLOYED="${DEPLOYED:+$DEPLOYED, }$1"; }
           [ "$BACKEND_R" = "success" ] && add "backend"
           [ "$FRONTEND_R" = "success" ] && add "frontend"
+          [ "$ADMIN_R" = "success" ] && add "frontend-admin"
           [ "$BGATEWAY_R" = "success" ] && add "b-gateway"
+          # JSON 조립은 notify-on-failure와 동일하게 jq로(2026-07-24, 그쪽 주석 참고).
           TEXT=":white_check_mark: *$DEPLOYED* 프로덕션 배포 완료"
-          TEXT="$TEXT (\`${{ github.ref_name }}\` @ $SHA_SHORT)"
-          TEXT="$TEXT\n<$RUN_URL|실행 보기>"
+          TEXT="$TEXT (\`$BRANCH_RAW\` @ $SHA_SHORT)"
+          TEXT="$TEXT"$'\n'"<$RUN_URL|실행 보기>"
+          jq -nc --arg t "$TEXT" '{text: $t}' > slack-payload.json
           curl -sf -X POST \
             -H 'Content-type: application/json' \
-            --data "{\"text\": \"$TEXT\"}" \
+            --data @slack-payload.json \
             "$SLACK_WEBHOOK_URL"
