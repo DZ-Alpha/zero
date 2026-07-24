@@ -1819,6 +1819,60 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           $SSH "echo $TAG > ~/frontend-admin/.last-deployed-tag"
 
+  # 2026-07-24, self-hosted 러너의 로컬 이미지 정리. 이게 없어서 실제로 디스크가
+  # 찼다 - 이날 harbor VM 루트 파티션이 82% -> 94%까지 올라 Grafana의
+  # "High Disk Usage"(>85%)가 06:50 UTC에 발화했고, 남은 여유가 4.2GB였다.
+  # 원인은 image-scanning job들이 매 실행마다 <이름>:<커밋SHA> 이미지를 러너에
+  # 남기는데 아무도 지우지 않는 것이었다(실측: SHA 태그 이미지 392개, 로컬 이미지
+  # 204개/24.9GB 중 15.2GB가 회수 가능). PR 하나당 약 280MB씩 영구 적재됐다.
+  # 디스크가 차면 Harbor push가 실패해 파이프라인 전체가 멈춘다.
+  #
+  # 태그 목록을 하드코딩하지 않고 "이번 실행의 SHA가 붙은 로컬 태그"를 통째로
+  # 지운다 - 이 저장소에서 반복된 실패 원인이 하드코딩 목록 누락이라, 새 이미지
+  # 태그가 추가돼도 자동으로 커버되는 방식을 택했다.
+  #
+  # 별도 job인 이유(각 image job 안에 넣지 않은 이유): backend는 서비스별 매트릭스라
+  # 9개가 같은 SHA로 병렬 실행된다. 각자 :<SHA> 패턴으로 지우면 먼저 끝난 job이
+  # 아직 스캔 중인 다른 서비스의 이미지를 지워버린다. 모든 image job이 끝난 뒤
+  # 한 번만 도는 게 안전하다.
+  #
+  # 두 번째 스텝은 안전망이다 - 취소/중단된 실행이 남긴 잔여물은 위 SHA 기준으로
+  # 안 잡히므로, 48시간 지난 미사용 이미지를 함께 정리한다(48h면 진행 중인 어떤
+  # 실행의 산출물도 대상이 아니다). 빌드 속도는 영향받지 않는다 - 캐시는 로컬
+  # 이미지가 아니라 Harbor registry 캐시(cache-from=type=registry)를 쓰고,
+  # 베이스 이미지도 build-push-action의 pull:true로 매번 새로 받는다.
+  runner-cleanup:
+    needs:
+      - backend-image-scanning
+      - frontend-image-scanning
+      - frontend-admin-image-scanning
+    if: always()
+    runs-on: self-hosted
+    steps:
+      - name: Remove this run's local build artifacts
+        env:
+          RUN_SHA: ${{ github.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          SHAS="$RUN_SHA"
+          if [ -n "$PR_HEAD_SHA" ] && [ "$PR_HEAD_SHA" != "$RUN_SHA" ]; then
+            SHAS="$SHAS $PR_HEAD_SHA"
+          fi
+          for s in $SHAS; do
+            docker images --format '{{.Repository}}:{{.Tag}}' \
+              | grep -E ":${s}$" \
+              | while read -r img; do
+                  docker image rm "$img" >/dev/null 2>&1 || true
+                done
+          done
+          echo "cleaned local tags for: $SHAS"
+      - name: Safety net - prune unused images older than 48h
+        run: |
+          docker image prune -a --force --filter until=48h >/dev/null 2>&1 \
+            || true
+          echo "--- runner disk after cleanup ---"
+          df -h / | tail -1
+
   # needs에 없는 job이 실패하면 GitHub 기본 동작상 그 job에 의존하는 하위 job들은
   # "실패"가 아니라 "스킵"으로 처리된다 - 그러면 이 job의 needs 안에 실제 실패가
   # 하나도 안 잡혀서 failure()가 false가 되고, notify-on-failure 자체가 조용히
