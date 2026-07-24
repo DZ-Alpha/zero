@@ -14,6 +14,13 @@ on:
     - cron: '*/15 * * * *'
   workflow_dispatch: {}
 
+# 2026-07-24, 명시적 권한 최소화(공식 하드닝 가이드). 이 워크플로우는 체크아웃도
+# 하지 않고 저장소 리소스를 전혀 건드리지 않으므로 GITHUB_TOKEN에 아무 권한도
+# 주지 않는다 - 저장소 기본값이 나중에 write로 바뀌어도 영향받지 않는다.
+# yamllint disable-line rule:line-length
+# https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+permissions: {}
+
 jobs:
   watchdog:
     runs-on: self-hosted
@@ -44,8 +51,14 @@ jobs:
             TEXT=":rotating_light: [워치독] monitoring VM 관측 스택 응답 없음:"
             TEXT="$TEXT$FAILED - Grafana 알람 자체가 못 나가는 상태일 수"
             TEXT="$TEXT 있습니다. VM/컨테이너 확인 필요 (ssh bruce@$M)"
+            # 2026-07-24, build-test.yml의 알람과 동일하게 jq로 JSON을 만든다.
+            # 문자열 결합 방식은 본문($FAILED에 상태코드/이름이 들어감)에
+            # 따옴표류가 섞이면 payload가 깨져 알람이 통째로 안 나간다 -
+            # 하필 "알람이 못 나가는 상황"을 알리는 워치독이라 치명적이다.
+            # harbor VM(self-hosted 러너)에 jq 설치 확인함.
+            jq -nc --arg t "$TEXT" '{text: $t}' > slack-payload.json
             curl -s -X POST -H 'Content-Type: application/json' \
-              -d "{\"text\": \"$TEXT\"}" "$SLACK_WEBHOOK_URL" || true
+              --data @slack-payload.json "$SLACK_WEBHOOK_URL" || true
             exit 1
           fi
           echo "all healthy"
