@@ -3,11 +3,7 @@
 // 쓰지만, admin/product/ingredients의 관리자 엔드포인트(get_current_admin)는
 // Authorization: Bearer 헤더만 받는다(기능명세서 API-Spec 시트 AD-01xx 기준,
 // backend/admin-service/app/core/security.py 확인).
-// basePath("/admin", next.config.ts)는 next/link·useRouter 같은 Next.js 자체
-// 내비게이션에만 자동 적용되고, 이 raw fetch() 호출엔 안 붙는다 - 직접 붙여줘야
-// app/b/[...path]/route.ts(실제로는 app/admin/b/[...path]로 서빙됨)에 닿는다.
-// basePath 걷어내는 복구 작업(next.config.ts 주석 참고) 때 "/b"로 같이 되돌릴 것.
-export const API_PREFIX = "/admin/b";
+export const API_PREFIX = "/b";
 export const ADMIN_TOKEN_KEY = "dangdang-admin-access-token";
 
 export class ApiError extends Error {
