@@ -36,6 +36,19 @@
 # 패턴으로 git 추적 + 자동 동기화하도록 전환 - 새 서비스 추가가 계속
 # 있을 예정이라, 다음부터는 이 파일을 고치는 PR 리뷰에서 누락이 바로
 # 보이고, CI가 production에 자동으로 반영한다.
+# 2026-07-24, 이 앵커를 9개 서비스가 실제로 쓰도록 정리했다. 그전에는 앵커가
+# 정의만 되어 있고 ai 하나만 참조했으며, 나머지 8개는 같은 내용을 인라인으로
+# 복붙해 갖고 있었다. 새 서비스는 기존 블록을 복사해 만들어지므로, 복사 시점에
+# 항목 하나(pids_limit 등)를 빠뜨리면 그 서비스만 조용히 약한 설정으로
+# 배포된다 - 이 저장소에서 반복돼온 "새 항목 추가 시 누락" 계열과 같은 형태다.
+# 이제 하드닝 기준이 한 곳에만 존재하므로, 기준을 바꾸면 9개에 동시에 적용되고
+# 새 서비스는 `<<: *hardening` 한 줄만 쓰면 된다.
+#
+# 등가성 검증(2026-07-24, harbor VM에서 `docker compose config`로 리팩터링
+# 전/후 정규화 출력을 비교): 차이 0. 런타임 동작은 바뀌지 않는다.
+# 각 서비스가 로컬 environment를 갖고 있어 앵커의 environment는 덮이는데,
+# 9개 전부 로컬에 PYTHONDONTWRITEBYTECODE=1을 이미 갖고 있어 결과가 같다
+# (YAML 병합키 <<는 깊은 병합이 아니라 키 단위 치환이라는 점이 근거).
 x-hardening: &hardening
   restart: unless-stopped
   cap_drop:
@@ -82,22 +95,7 @@ services:
       - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "127.0.0.1:8000:8000"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *hardening
 
   admin-service:
     image: 192.168.0.53/dangdang-backend/admin-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
@@ -120,22 +118,7 @@ services:
       - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "127.0.0.1:8008:8008"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *hardening
 
   # 2026-07-20, PR #52(MN-0111)로 추가된 AI 챗봇 서비스. 필요 env는
   # backend/ai/.env.example 참고(JWT_SECRET/BEDROCK_*/POSTGRES_* 등) -
@@ -187,22 +170,7 @@ services:
       - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "127.0.0.1:8010:8010"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *hardening
 
   community-service:
     image: 192.168.0.53/dangdang-backend/community-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
@@ -225,22 +193,7 @@ services:
       - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "127.0.0.1:8012:8012"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *hardening
 
   recipe-service:
     image: 192.168.0.53/dangdang-backend/recipe-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
@@ -263,22 +216,7 @@ services:
       - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "127.0.0.1:8014:8014"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *hardening
 
   product-service:
     image: 192.168.0.53/dangdang-backend/product-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
@@ -301,22 +239,7 @@ services:
       - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "127.0.0.1:8016:8016"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *hardening
 
   ingredients-service:
     image: 192.168.0.53/dangdang-backend/ingredients-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
@@ -339,22 +262,7 @@ services:
       - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
       - "127.0.0.1:8018:8018"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *hardening
 
   diet-service:
     image: 192.168.0.53/dangdang-backend/diet-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
@@ -383,22 +291,7 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8020:8020"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *hardening
 
 # 2026-07-24, b-gateway 서비스 정의를 이 파일에서 제거했다.
 #
