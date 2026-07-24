@@ -60,6 +60,16 @@ services:
       # VM은 8080이 비어있지만 production VM은 b-gateway가 이미 8080을 쓰고
       # 있어서(실측, "port is already allocated") 그 VM만 CADVISOR_PORT
       # 환경변수로 다른 호스트 포트를 지정한다.
+      #
+      # 2026-07-24 실측 - production VM에는 이 값이 **어디에도 저장돼 있지
+      # 않았다**. 최초 실행 때 환경변수로 한 번 넘겨 8090으로 떠 있었을 뿐,
+      # 디렉터리에 .env가 없었다. 그 상태에서 누구든(재부팅 후 복구, 다른
+      # 팀원 작업, 이번 같은 설정 변경) `docker compose up -d`를 하면 기본값
+      # 8080으로 떨어지는데, production의 8080은 b-gateway가 점유 중이라
+      # 포트가 옮겨지는 게 아니라 컨테이너가 아예 뜨지 못한다.
+      # 그래서 이 스택을 8080 이외 포트로 배포하는 VM은 반드시 같은
+      # 디렉터리에 .env(CADVISOR_PORT=<포트>)를 두고, 환경변수 일회성
+      # 전달에 의존하지 않는다. production VM에는 2026-07-24에 생성했다.
       - "${CADVISOR_PORT:-8080}:8080"
     # cAdvisor 공식 문서에는 전용 헬스 엔드포인트가 문서화되어 있지 않지만
     # (UI 루트 "/"만 안내), 이 이미지엔 wget이 있는 것을 확인(docker exec) -
