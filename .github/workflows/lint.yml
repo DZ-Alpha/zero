@@ -36,10 +36,18 @@ jobs:
       # 추가한다. relaxed 프로파일: 문법 오류(syntax)는 exit 1로 차단하되
       # 스타일(중괄호 공백/80자 등)은 warning이라 기존 파일들이 안 깨짐을
       # 실측 확인함(기존 4개 파일 exit 0, PR#54 재현본 exit 1).
+      # 2026-07-24, 파일 목록 하드코딩을 글롭으로 바꾼다. Admin Frontend
+      # (frontend-admin/compose.production.example.yaml)를 추가하면서 보니,
+      # 새 앱의 compose를 여기 손으로 안 넣으면 그 파일만 문법 게이트 밖에
+      # 남는다 - 바로 위 PR #54 사고가 새 파일에서 그대로 재현되는 경로다.
+      # detect-backend의 서비스 allowlist와 같은 "수동 목록" 한계라, 글롭으로
+      # 바꿔 앞으로 추가되는 앱은 자동으로 포함되게 한다.
+      # backend/와 frontend*/ 아래 compose 파일이 항상 최소 한 개는 있으므로,
+      # 글롭이 매칭 없이 문자 그대로 남아 yamllint가 없는 파일을 열려다
+      # 실패하는 경우는 없다.
       - name: Run yamllint (deploy YAML syntax gate, relaxed)
         run: |
           yamllint -d relaxed \
-            backend/compose.production.example.yaml \
-            frontend/compose.frontend.yaml \
-            frontend/compose.production.example.yaml \
+            backend/compose*.yaml \
+            frontend*/compose*.yaml \
             infra/

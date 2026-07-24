@@ -34,6 +34,19 @@ on:
         description: '프론트 배포 태그 (비우면 현재 커밋 sha)'
         required: false
         default: ''
+      frontend_admin_tag:
+        # 2026-07-24, Admin Frontend(frontend-admin/) 추가. frontend_tag와 완전히
+        # 같은 규칙 - admin compose도 불변 태그를 요구하므로 기본값을 latest로
+        # 두지 않고, 비우면 이번 실행의 커밋 sha로 폴백한다(job 내부에서 처리).
+        # 별도 입력을 둔 이유: frontend_tag를 공유하면 쇼핑몰 프론트를 특정
+        # 태그로 롤백할 때 admin도 그 태그로 강제 배포되는데, 두 앱은 서로
+        # 독립적으로 빌드되므로(각자 paths-filter) 그 sha의 admin 이미지가
+        # 레지스트리에 없어 pull 실패 → 배포 실패 + 오탐 알람이 난다.
+        # 2026-07-19에 backend_tag만 넣었다가 frontend까지 딸려 돌아 실측된
+        # 사고와 동일한 패턴이라, 처음부터 태그도 대상도 분리한다.
+        description: 'Admin 프론트 배포 태그 (비우면 현재 커밋 sha)'
+        required: false
+        default: ''
       deploy_target:
         # 2026-07-19, backend_tag만 넣고 백엔드만 수동 재배포하려 했는데
         # frontend-deploy-production까지 무조건 같이 돌아서, frontend/가 아직
@@ -52,7 +65,16 @@ on:
         # 명시적으로 선택하게 하는 게 안전하다(자동 push 배포 경로는 이 입력을
         # 참조하지 않는 별도 조건이라 영향 없음). 하루 종일 적용해온 "production을
         # 건드리는 건 명시적 opt-in" 원칙과도 일관됨.
-        description: '수동 배포 대상 (기본 none - 배포하려면 명시적으로 선택)'
+        # 2026-07-24, frontend-admin 추가. frontend에 묶지 않고 별도 옵션으로
+        # 둔 이유는 frontend_admin_tag 주석 참고(대상 분리가 이 입력의 존재
+        # 이유 그 자체). both의 의미는 기존 그대로 backend + frontend(쇼핑몰)로
+        # 유지한다 - 이미 문서화되어 쓰이고 있는 옵션의 폭발 반경을 조용히
+        # 넓히는 건, 07-20에 기본값을 both -> none으로 바꾼 "production을
+        # 건드리는 건 명시적 opt-in" 원칙과 어긋난다. 3개를 한 번에 배포할
+        # 일이 생기면 dispatch를 두 번 돌린다.
+        description: >-
+          수동 배포 대상 (기본 none - 배포하려면 명시적으로 선택.
+          both = backend + frontend(쇼핑몰), admin은 별도 선택)
         required: false
         default: 'none'
         type: choice
@@ -61,6 +83,7 @@ on:
           - both
           - backend
           - frontend
+          - frontend-admin
       run_bgateway_cutover:
         # 2026-07-19, b-gateway non-root/read-only 전환 검증차 처음 추가했으나
         # prod-env-fix류 일회성 job과 달리, b-gateway는 이 job 전엔 자동화된
@@ -213,6 +236,16 @@ jobs:
       changed: >-
         ${{ github.event_name == 'workflow_dispatch' && 'false' ||
         steps.filter.outputs.frontend }}
+      # 2026-07-24, Admin Frontend(frontend-admin/) 추가. 별도 detect job을
+      # 새로 만들지 않고 이 job에 얹은 이유는 detect-backend가 이미 같은
+      # 구조이기 때문(서비스 필터 + 별도 filter-bgateway 스텝).
+      # 두 앱이 서로를 끌고 돌지 않는 근거: dorny/paths-filter의 글롭은 경로
+      # 구분자를 문자 그대로 매칭하므로 'frontend/**'는 'frontend-admin/...'을
+      # 잡지 않는다(그 반대도 마찬가지). 즉 쇼핑몰 프론트만 고친 커밋에서
+      # admin 파이프라인이 도는 일은 없다.
+      admin_changed: >-
+        ${{ github.event_name == 'workflow_dispatch' && 'false' ||
+        steps.filter-admin.outputs.admin }}
     steps:
       # v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -222,6 +255,42 @@ jobs:
         with:
           filters: |
             frontend: 'frontend/**'
+      # detect-backend의 filter-bgateway와 같은 이유로 반드시 별도 스텝이다.
+      # 지금은 이 job이 changes가 아니라 이름 있는 출력만 읽어서 한 스텝에
+      # 합쳐도 동작하지만, PR #61에서 필터를 한 스텝에 섞었다가 changes 출력이
+      # 오염돼 매트릭스가 깨진 전례가 있어 구조를 통일해 둔다.
+      # v4
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706
+        id: filter-admin
+        with:
+          filters: |
+            admin: 'frontend-admin/**'
+      # 2026-07-24, detect-backend의 "Fail loudly" 가드를 프론트에도 복제한다.
+      # 그동안 프론트는 앱이 하나뿐이라 안 만들었지만, frontend-admin이 생기며
+      # 백엔드와 똑같은 구조적 한계(수동 allowlist)를 갖게 됐다. PR #52에서
+      # backend/ai가 파이프라인 어디에도 안 걸려 조용히 skip된 사고와 같은
+      # 일이, 앞으로 frontend-<앱>이 추가될 때 그대로 재현될 수 있다.
+      # 새 프론트 앱 디렉터리가 생기면 이 job이 즉시 실패하면서 어디를
+      # 고쳐야 하는지 알려준다.
+      - name: Fail loudly if a frontend app dir is unknown to this workflow
+        run: |
+          KNOWN="frontend frontend-admin"
+          for dir in frontend*/; do
+            [ -d "$dir" ] || continue
+            name="$(basename "$dir")"
+            match=0
+            for k in $KNOWN; do
+              [ "$k" = "$name" ] && match=1 && break
+            done
+            if [ "$match" = "0" ]; then
+              echo "::error::$name/ exists but isn't wired into this" \
+                "workflow. Add it to detect-frontend's paths-filter," \
+                "its own build-test/image-scanning/deploy jobs," \
+                "code-scanning's sonar sources, and both notify jobs" \
+                "before it can build/scan/deploy."
+              exit 1
+            fi
+          done
 
   # Node.js 22.15.0/npm 10.9.2 고정(프론트 인수 조건 명시값). tsc --noEmit 기반 typecheck를
   # lint로도 겸용한다(frontend/package.json 기준, 별도 ESLint 아직 미도입).
@@ -247,6 +316,36 @@ jobs:
         run: npm run typecheck
       - name: Build
         working-directory: frontend
+        run: npm run build
+
+  # 2026-07-24, Admin Frontend. frontend-build-test와 동일한 구성이며
+  # (Node 22.15.0/npm 10.9.2 고정, tsc --noEmit 겸용 typecheck), 다른 점은
+  # 작업 디렉터리와 캐시 키(frontend-admin/package-lock.json)뿐이다.
+  # 별도 job으로 둔 이유: 두 앱은 각자의 paths-filter로 독립 실행돼야 하고
+  # (한쪽만 고친 커밋에서 다른 쪽까지 빌드하면 러너 낭비), 브랜치 보호의
+  # 필수 체크에도 각각 고정된 이름으로 등록할 수 있어야 한다.
+  frontend-admin-build-test:
+    needs: detect-frontend
+    if: needs.detect-frontend.outputs.admin_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up Node.js
+        # v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.15.0'
+          cache: 'npm'
+          cache-dependency-path: frontend-admin/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend-admin
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend-admin
+        run: npm run typecheck
+      - name: Build
+        working-directory: frontend-admin
         run: npm run build
 
   # backend/*-service는 아직 자체 테스트가 없어서(재헌님 인계 메모 확인, 2026-07-16 기준)
@@ -328,16 +427,27 @@ jobs:
       # 전부 ZeroCheck Launch Gate(기본 게이트로 지정 완료)를 물려받는다.
       - name: Determine sonar sources and project key
         id: sonar-sources
+        #
+        # 2026-07-24, frontend-admin 추가. 이 목록이 하드코딩이라, 새 앱을 여기
+        # 안 넣으면 그 앱은 SonarQube 분석 대상에서 통째로 빠진다. 그런데
+        # <앱>-deploy-production은 needs에 code-scanning을 넣으므로, 결과적으로
+        # "그 앱 코드를 한 줄도 안 본 Quality Gate"가 초록불로 배포를 승인하게
+        # 된다 - 관리자 권한을 다루는 앱에서는 특히 위험한 사각지대라 파이프라인
+        # 복제와 같은 PR에서 반드시 함께 넣어야 한다(detect-frontend의 Fail
+        # loudly 가드가 이걸 잊었을 때 잡아준다).
         run: |
           SOURCES=""
-          if [ -d frontend ]; then SOURCES="frontend"; fi
-          if [ -d backend ]; then
+          add_source() {
+            [ -d "$1" ] || return 0
             if [ -n "$SOURCES" ]; then
-              SOURCES="$SOURCES,backend"
+              SOURCES="$SOURCES,$1"
             else
-              SOURCES="backend"
+              SOURCES="$1"
             fi
-          fi
+          }
+          add_source frontend
+          add_source frontend-admin
+          add_source backend
           echo "sources=$SOURCES" >> "$GITHUB_OUTPUT"
 
           BRANCH="${{ github.head_ref || github.ref_name }}"
@@ -910,6 +1020,73 @@ jobs:
           docker push "$IMAGE:$SHA"
           docker push "$IMAGE:latest"
 
+  # 2026-07-24, Admin Frontend 이미지 빌드+스캔+push. frontend-image-scanning과
+  # 동일한 구성(빌더/캐시/Trivy/push 가드)이고 달라지는 건 컨텍스트 경로와
+  # 이미지·캐시 repo 이름뿐이라, 각 스텝의 상세 근거는 위 job 주석을 참고할 것.
+  #
+  # Harbor는 같은 dangdang 프로젝트 안에 repo만 새로 만든다
+  # (dangdang/frontend-admin, dangdang/buildcache-frontend-admin). robot 계정
+  # 권한이 프로젝트 스코프라 별도 프로젝트로 빼면 자격증명을 새로 발급해야
+  # 하는데, 같은 프로젝트면 기존 HARBOR_ROBOT_USER/TOKEN이 그대로 쓰인다.
+  # 주의: 07-20에 넣은 쿼터/리텐션(태그 15개 유지)/주간 GC 규칙이 새 repo에도
+  # 적용되는지 확인이 필요하다 - 리텐션 규칙이 repository 패턴으로 걸려 있으면
+  # 신규 repo가 누락돼 무한 증식할 수 있고, mode=max 빌드 캐시는 GB 단위다.
+  frontend-admin-image-scanning:
+    needs: detect-frontend
+    if: needs.detect-frontend.outputs.admin_changed == 'true'
+    runs-on: self-hosted
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # yamllint disable-line rule:line-length
+        with:
+          driver-opts: |
+            network=host
+            image=harbor.hizero.local/dangdang/buildkit-harbor:v1
+      - name: Log in to Harbor
+        # v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: harbor.hizero.local
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
+          logout: false
+      - name: Build image
+        # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: frontend-admin
+          file: frontend-admin/Dockerfile
+          pull: true
+          tags: frontend-admin:${{ github.sha }}
+          load: true
+          cache-from: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend-admin:cache  # yamllint disable-line rule:line-length
+          cache-to: type=registry,ref=harbor.hizero.local/dangdang/buildcache-frontend-admin:cache,mode=max,image-manifest=true,oci-mediatypes=true  # yamllint disable-line rule:line-length
+      - name: Install Trivy (per-runner path)
+        # v0.2.6
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514
+        with:
+          path: /home/bruce/.trivy-bin/${{ runner.name }}
+      - name: Trivy vulnerability scan
+        # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: frontend-admin:${{ github.sha }}
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          cache-dir: /home/bruce/.trivy-cache/${{ runner.name }}
+          skip-setup-trivy: true
+      - name: Tag and push (sha + latest)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          IMAGE="harbor.hizero.local/dangdang/frontend-admin"
+          SHA="${{ github.sha }}"
+          docker tag "frontend-admin:$SHA" "$IMAGE:$SHA"
+          docker tag "frontend-admin:$SHA" "$IMAGE:latest"
+          docker push "$IMAGE:$SHA"
+          docker push "$IMAGE:latest"
+
   # frontend도 backend-deploy-production과 같은 이유로 production VM(10.10.10.30)에
   # SSH로 배포한다 - frontend가 dangdang-edge에서 b-gateway:8080에 닿으려면 같은
   # Docker 호스트/네트워크에 있어야 하는데, harbor VM은 그 네트워크가 아니다.
@@ -1060,6 +1237,175 @@ jobs:
           SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
           $SSH "echo $TAG > ~/frontend/.last-deployed-tag"
 
+  # 2026-07-24, Admin Frontend production 배포. frontend-deploy-production과
+  # 같은 방식(self-hosted 러너에서 production VM으로 SSH → 그쪽 compose로
+  # pull/up)이며 트리거/always() 필요성도 동일하므로 그 job 주석을 참고할 것.
+  #
+  # 쇼핑몰 프론트와 결정적으로 다른 점은 "외부 노출"이다(2026-07-24 지훈 결정).
+  # 요청서에는 frontend가 "호스트 포트 없이 dangdang-edge로만 열려 있다"고
+  # 되어 있었지만 실제 배포 상태는 다르다 - frontend/compose.production.
+  # example.yaml 원본은 expose만 있는 게 맞으나, 배포 시 항상
+  # infra/frontend/compose.lan-test-override.yaml을 -f로 겹쳐 올리고 그
+  # override가 3001을 호스트에 publish한다(현재 사용자 접속 경로
+  # 192.168.0.56:3001이 이것). 또 b-gateway의 nginx.conf에는 프론트로 가는
+  # location이 하나도 없다 - /b/*를 백엔드로 보낼 뿐이고, 오히려 프론트가
+  # b-gateway를 호출하는 방향이다. 즉 프론트 구성을 문자 그대로 복제하면
+  # admin도 같은 NAT 경로로 인터넷에서 닿는다.
+  # 그래서 admin은 loopback(127.0.0.1)에만 publish한다 - Docker의 publish는
+  # iptables DOCKER 체인에 규칙을 직접 넣어 호스트 방화벽(ufw)을 우회하므로
+  # 방화벽으로 막는 접근은 신뢰할 수 없고, 공식 문서가 권고하는 해법 자체가
+  # 바인딩 주소를 특정하는 것이다:
+  # yamllint disable-line rule:line-length
+  # https://docs.docker.com/engine/network/packet-filtering-firewalls/
+  # 관리자 접속은 SSH 터널로 한다(infra/frontend-admin/ 파일 헤더 참고).
+  frontend-admin-deploy-production:
+    needs: [frontend-admin-image-scanning, code-scanning]
+    if: |
+      always() &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+          inputs.deploy_target == 'frontend-admin') ||
+        (
+          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          needs.frontend-admin-image-scanning.result == 'success' &&
+          needs.code-scanning.result == 'success'
+        )
+      )
+    runs-on: self-hosted
+    env:
+      PROD_HOST: bruce@10.10.10.30
+      FRONTEND_ADMIN_TAG: ${{ inputs.frontend_admin_tag }}
+    steps:
+      # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Determine tag
+        run: |
+          TAG="$FRONTEND_ADMIN_TAG"
+          if [ -z "$TAG" ]; then TAG="${{ github.sha }}"; fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+      - name: Copy compose files to production VM
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          SCP="sshpass -e scp -o StrictHostKeyChecking=accept-new"
+          $SSH "mkdir -p ~/frontend-admin"
+          $SCP frontend-admin/compose.production.example.yaml \
+            "$PROD_HOST":~/frontend-admin/docker-compose.yaml
+          # 이 override가 loopback 바인딩을 담당한다. 쇼핑몰 프론트의
+          # lan-test-override와 달리 "도메인 생기면 삭제"할 임시 파일이
+          # 아니라, admin의 노출 정책 그 자체라 상시 유지한다.
+          $SCP infra/frontend-admin/compose.loopback-override.yaml \
+            "$PROD_HOST":~/frontend-admin/compose.loopback-override.yaml
+      - name: Ensure dangdang-edge network exists
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          $SSH "docker network inspect dangdang-edge >/dev/null 2>&1 \
+            || docker network create dangdang-edge"
+      - name: Record previous tag
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          PREV=$($SSH "cat ~/frontend-admin/.last-deployed-tag 2>/dev/null" \
+            || true)
+          echo "PREV_TAG=$PREV" >> "$GITHUB_ENV"
+          echo "Previous deployed tag: ${PREV:-<none>}"
+      - name: Log in to Harbor (production VM)
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          # 작은따옴표 대입 - robot 계정명의 '$'가 bash 변수 참조로
+          # 오해석되는 것 방지(frontend-deploy-production 주석 참고).
+          TOKEN='${{ secrets.HARBOR_ROBOT_TOKEN }}'
+          USR='${{ secrets.HARBOR_ROBOT_USER }}'
+          echo "$TOKEN" | $SSH "docker login harbor.hizero.local -u '$USR' \
+            --password-stdin"
+      - name: Deploy via Docker Compose (SSH)
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          IMAGE="harbor.hizero.local/dangdang/frontend-admin:$TAG"
+          # ADMIN_PUBLIC_APP_URL Secret은 아직 없어도 된다 - admin compose가
+          # 이 값에 기본값(loopback)을 두기로 했으므로, 비어 있으면 compose의
+          # :- 기본값이 적용된다. 실제 도메인/edge proxy가 생기면 그때
+          # Secret을 추가하면 이 job은 수정 없이 그대로 동작한다.
+          PUB="${{ secrets.ADMIN_PUBLIC_APP_URL }}"
+          GW="${{ secrets.BACKEND_GATEWAY_URL }}"
+          FILES="-f docker-compose.yaml -f compose.loopback-override.yaml"
+          CMD="cd ~/frontend-admin && FRONTEND_ADMIN_IMAGE=$IMAGE"
+          CMD="$CMD ADMIN_PUBLIC_APP_URL='$PUB' BACKEND_GATEWAY_URL='$GW'"
+          CMD="$CMD docker compose $FILES pull"
+          CMD="$CMD && FRONTEND_ADMIN_IMAGE=$IMAGE ADMIN_PUBLIC_APP_URL='$PUB'"
+          CMD="$CMD BACKEND_GATEWAY_URL='$GW'"
+          CMD="$CMD docker compose $FILES up -d"
+          $SSH "$CMD"
+      - name: Health check (container status + gateway reachability)
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          FMT='{{.State.Health.Status}}'
+          OK=""
+          for i in $(seq 1 10); do
+            STATUS=$($SSH "docker inspect --format '$FMT' \
+              dangdang-frontend-admin" 2>/dev/null || true)
+            if [ "$STATUS" = "healthy" ]; then
+              OK=1
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "$OK" ]; then
+            echo "Container health check failed"
+            exit 1
+          fi
+          echo "Container healthy, checking b-gateway reachability..."
+          # frontend의 /b/search 체크를 그대로 복제하면 안 된다 - admin이
+          # 쓰는 엔드포인트(/b/admin/me 등)는 로그인 없이는 401이라 r.ok가
+          # false가 되고, 정상 배포가 실패로 판정돼 롤백된다. bgateway-cutover의
+          # 라우트 검증에서 2xx가 확인된 무인증 GET으로, "edge 네트워크에
+          # 붙었고 게이트웨이가 응답한다"만 확인한다.
+          URL="http://b-gateway:8080/b/tags/category"
+          CHECK="node -e \"fetch('$URL')"
+          CHECK="$CHECK .then(r=>{if(!r.ok)process.exit(1)})"
+          CHECK="$CHECK .catch(()=>process.exit(1))\""
+          if ! $SSH "docker exec dangdang-frontend-admin $CHECK"; then
+            echo "b-gateway not reachable from admin container"
+            exit 1
+          fi
+          echo "All checks passed"
+      - name: Rollback on failed health check
+        if: failure()
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          if [ -n "$PREV_TAG" ]; then
+            echo "Rolling back to previous tag: $PREV_TAG"
+            IMAGE="harbor.hizero.local/dangdang/frontend-admin:$PREV_TAG"
+            PUB="${{ secrets.ADMIN_PUBLIC_APP_URL }}"
+            GW="${{ secrets.BACKEND_GATEWAY_URL }}"
+            FILES="-f docker-compose.yaml -f compose.loopback-override.yaml"
+            CMD="cd ~/frontend-admin && FRONTEND_ADMIN_IMAGE=$IMAGE"
+            CMD="$CMD ADMIN_PUBLIC_APP_URL='$PUB' BACKEND_GATEWAY_URL='$GW'"
+            CMD="$CMD docker compose $FILES up -d"
+            $SSH "$CMD"
+          else
+            echo "No previous tag recorded - nothing to roll back to"
+          fi
+      - name: Record this deploy as last-deployed
+        if: success()
+        env:
+          SSHPASS: ${{ secrets.PROD_VM_SSH_PASSWORD }}
+        run: |
+          SSH="sshpass -e ssh -o StrictHostKeyChecking=accept-new $PROD_HOST"
+          $SSH "echo $TAG > ~/frontend-admin/.last-deployed-tag"
+
   # needs에 없는 job이 실패하면 GitHub 기본 동작상 그 job에 의존하는 하위 job들은
   # "실패"가 아니라 "스킵"으로 처리된다 - 그러면 이 job의 needs 안에 실제 실패가
   # 하나도 안 잡혀서 failure()가 false가 되고, notify-on-failure 자체가 조용히
@@ -1077,6 +1423,13 @@ jobs:
       - frontend-image-scanning
       - backend-deploy-production
       - frontend-deploy-production
+      # 2026-07-24, Admin Frontend job 3개. 위 2026-07-19 사각지대와 정확히
+      # 같은 이유로 신규 job은 반드시 여기 같이 넣어야 한다 - 빠뜨리면 admin
+      # 파이프라인이 실패해도 Slack이 조용하다. (detect-frontend는 이미 위에
+      # 있고 admin 감지도 그 job이 겸하므로 추가 항목이 없다.)
+      - frontend-admin-build-test
+      - frontend-admin-image-scanning
+      - frontend-admin-deploy-production
       # 2026-07-20, bgateway-cutover 자동배포 전환에 맞춰 추가 - 자동 cutover가
       # (롤백까지 실패하는 등으로) 죽었을 때도 Slack 알람이 울리게 한다.
       - bgateway-cutover
@@ -1096,6 +1449,10 @@ jobs:
           FRONTEND_SCAN_RESULT: ${{ needs.frontend-image-scanning.result }}
           BACKEND_DEPLOY_RESULT: ${{ needs.backend-deploy-production.result }}
           FRONTEND_DEPLOY_RESULT: ${{ needs.frontend-deploy-production.result }}
+          ADMIN_TEST_RESULT: ${{ needs.frontend-admin-build-test.result }}
+          ADMIN_SCAN_RESULT: ${{ needs.frontend-admin-image-scanning.result }}
+          ADMIN_DEPLOY_RESULT: >-
+            ${{ needs.frontend-admin-deploy-production.result }}
         run: |
           REPO_URL="${{ github.server_url }}/${{ github.repository }}"
           RUN_URL="$REPO_URL/actions/runs/${{ github.run_id }}"
@@ -1137,6 +1494,15 @@ jobs:
           if [ "$FRONTEND_DEPLOY_RESULT" = "failure" ]; then
             add_failed "frontend-deploy-production"
           fi
+          if [ "$ADMIN_TEST_RESULT" = "failure" ]; then
+            add_failed "frontend-admin-build-test"
+          fi
+          if [ "$ADMIN_SCAN_RESULT" = "failure" ]; then
+            add_failed "frontend-admin-image-scanning"
+          fi
+          if [ "$ADMIN_DEPLOY_RESULT" = "failure" ]; then
+            add_failed "frontend-admin-deploy-production"
+          fi
           TEXT=":x: *${FAILED_JOBS^}* failed on \`$BRANCH\` ($SHA)"
           TEXT="$TEXT\n<$RUN_URL|결과 보기>"
           curl -sf -X POST \
@@ -1151,15 +1517,24 @@ jobs:
   # 노이즈가 아니라 팀 전체가 알아야 할 신호이므로, 성공 시에도 무엇이
   # 어떤 커밋으로 나갔는지 한 줄 통보해 Actions 화면을 볼 필요 자체를
   # 없앤다.
+  #
+  # 2026-07-24, frontend-admin-deploy-production 추가. 요청서에는
+  # notify-on-failure만 언급됐지만 이쪽도 needs가 배포 job 목록으로 고정이라,
+  # 안 넣으면 admin만 배포된 실행에서 성공 알림이 아예 안 온다. 그러면 위
+  # 2026-07-20 사례("배포됐는지 확인하려고 Actions를 뒤지다 skipped를 보고
+  # 배포 안 된 줄 안다")가 admin에서 그대로 재현되므로 실패 알람과 세트로
+  # 같이 넣는다.
   notify-on-deploy:
     needs:
       - backend-deploy-production
       - frontend-deploy-production
+      - frontend-admin-deploy-production
       - bgateway-cutover
     if: |
       always() &&
       (needs.backend-deploy-production.result == 'success' ||
         needs.frontend-deploy-production.result == 'success' ||
+        needs.frontend-admin-deploy-production.result == 'success' ||
         needs.bgateway-cutover.result == 'success')
     runs-on: ubuntu-latest
     steps:
@@ -1168,6 +1543,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           BACKEND_R: ${{ needs.backend-deploy-production.result }}
           FRONTEND_R: ${{ needs.frontend-deploy-production.result }}
+          ADMIN_R: ${{ needs.frontend-admin-deploy-production.result }}
           BGATEWAY_R: ${{ needs.bgateway-cutover.result }}
         run: |
           REPO_URL="${{ github.server_url }}/${{ github.repository }}"
@@ -1177,6 +1553,7 @@ jobs:
           add() { DEPLOYED="${DEPLOYED:+$DEPLOYED, }$1"; }
           [ "$BACKEND_R" = "success" ] && add "backend"
           [ "$FRONTEND_R" = "success" ] && add "frontend"
+          [ "$ADMIN_R" = "success" ] && add "frontend-admin"
           [ "$BGATEWAY_R" = "success" ] && add "b-gateway"
           TEXT=":white_check_mark: *$DEPLOYED* 프로덕션 배포 완료"
           TEXT="$TEXT (\`${{ github.ref_name }}\` @ $SHA_SHORT)"
