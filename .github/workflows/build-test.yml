@@ -503,6 +503,47 @@ jobs:
             PROJECT_KEY="zerocheck-branch-$SAFE_BRANCH"
           fi
           echo "project_key=$PROJECT_KEY" >> "$GITHUB_OUTPUT"
+      # 2026-07-24, 브랜치용 임시 프로젝트를 분석 전에 초기화한다.
+      #
+      # 문제: Community Edition에 브랜치 분석이 없어서 브랜치마다 별도 프로젝트
+      # (zerocheck-branch-<브랜치명>)를 쓰는데, 이 프로젝트에 분석이 2회 이상
+      # 쌓이면 "신규 코드"의 분모가 직전 분석 이후 변경분으로 확 줄어든다.
+      # 그러면 코드가 전혀 안 바뀌었는데도 비율 기반 조건이 터진다.
+      # 2026-07-24 PR #152 실측: 1차 분석은 통과했는데, 커밋을 하나 더 올린 뒤
+      # 2차 분석에서 new_lines=69 / new_duplicated_lines=15 ->
+      # new_duplicated_lines_density 21.7% > 3%로 Quality Gate 실패.
+      # 중복 자체는 frontend-admin/app/b/[...path]/route.ts(프론트 앱 두 개가
+      # 각자 갖는 프록시 라우트 보일러플레이트)로 main의 zerocheck 프로젝트에서는
+      # 같은 코드가 정상 통과한다 - 즉 코드 결함이 아니라 우회책의 부작용이다.
+      # 결과적으로 "PR에 커밋을 두 번 이상 올리면 게이트가 터진다"는, 재현되지만
+      # 아무도 원인을 모르는 실패가 만들어진다.
+      #
+      # 조치: 브랜치 프로젝트는 애초에 일회용이므로 분석 전에 지운다. 그러면 매
+      # 실행이 항상 "첫 분석"이 되어 브랜치의 전체 코드가 동일한 기준으로 평가된다
+      # (main의 zerocheck는 히스토리를 보존해야 하므로 건드리지 않는다).
+      # 덤으로 SonarQube에 죽은 브랜치 프로젝트가 무한히 쌓이는 것도 막는다.
+      # 게이트를 느슨하게 만드는 게 아니다 - 평가 대상이 "직전 push 이후 몇 줄"에서
+      # "이 브랜치 코드 전체"로 넓어지므로 오히려 더 엄격하다.
+      # 삭제 권한이 없거나 실패해도 분석 자체는 진행한다(경고만).
+      - name: Reset ephemeral branch project (non-main only)
+        if: steps.sonar-sources.outputs.project_key != 'zerocheck'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          PROJECT_KEY: ${{ steps.sonar-sources.outputs.project_key }}
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -u "$SONAR_TOKEN:" \
+            -X POST "$SONAR_HOST_URL/api/projects/delete?project=$PROJECT_KEY" \
+            || echo "000")
+          case "$CODE" in
+            204) echo "브랜치 프로젝트 초기화 완료: $PROJECT_KEY" ;;
+            404) echo "브랜치 프로젝트 없음(첫 분석): $PROJECT_KEY" ;;
+            *)
+              echo "::warning::브랜치 프로젝트 초기화 실패(HTTP $CODE)." \
+                "분석은 계속하지만, 2회차 이상 분석이면 신규코드 분모 축소로" \
+                "Quality Gate가 오탐할 수 있음."
+              ;;
+          esac
       - name: SonarQube scan
         # v6
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602  # yamllint disable-line rule:line-length
@@ -1069,8 +1110,22 @@ jobs:
           # 전혀 반영하지 않고 있었다. /b/admin은 이 게이트웨이에서 유일하게
           # Lua 분기(menu 값에 따라 product-service / ingredients-service)를
           # 타는 경로라 가장 깨지기 쉬운데, 정작 그 경로가 500이 나도 라우트
-          # 검증은 통과하고 자동 롤백도 안 걸렸다. 위 GET들과 같은 판정 로직을
-          # 태워 실제 게이트로 만든다.
+          # 검증은 통과하고 자동 롤백도 안 걸렸다. 판정에 반영한다.
+          #
+          # 다만 판정 기준은 GET들과 달라야 한다. /b/admin은 인증이 필요한
+          # 관리자 API라 토큰 없이 호출하면 401이 정상이다(2026-07-24 프로덕션
+          # 실측: product/create-tag 두 분기 모두 401). 401은 "요청이 Lua 분기를
+          # 타고 백엔드까지 도달했고 앱이 인증 없음을 이유로 거부했다"는 뜻이라
+          # 라우팅이 정상이라는 증거다. 이걸 2xx/3xx 기준으로 판정하면 정상
+          # 상태에서 cutover가 실패하고 자동 롤백이 돌아, 게이트웨이만 두 번
+          # 재기동되고 배포는 영원히 성공하지 못한다(처음 이 검증을 강화할 때
+          # 이 점을 놓쳐서, 실제로 머지 전 사전점검에서 발견해 바로잡음).
+          #
+          # 따라서 라우팅 성공을 뜻하는 코드(2xx/3xx/401/403)는 통과시키고,
+          # 게이트웨이·업스트림 장애를 뜻하는 코드만 실패로 본다:
+          #   5xx  = 업스트림 오류 / Lua 분기 실패
+          #   000  = 연결 자체 실패(게이트웨이 다운)
+          #   404  = 라우트가 백엔드의 /admin에 안 붙음(설정 오류)
           check_post() {
             label="$1"; menu="$2"
             CMD="curl -s -X POST -H 'Content-Type: application/json'"
@@ -1080,7 +1135,7 @@ jobs:
             CODE=$($SSH "$CMD" || echo "000")
             echo "$label -> $CODE"
             case "$CODE" in
-              2*|3*) : ;;
+              2*|3*|401|403) : ;;
               *) FAIL="1" ;;
             esac
           }
