@@ -41,6 +41,9 @@ USER node
 EXPOSE 3000
 # 배포 검증 스크립트가 docker exec ... node -e ... 로 헬스체크를 겸하므로
 # node 바이너리는 지우지 않는다(npm/npx만 제거, 위 참고).
+# next.config.ts의 basePath: "/admin" 임시 설정(2026-07-24, 복구 방법 그쪽 주석 참고) 때문에
+# 이 앱이 서비스하는 모든 경로 앞에 /admin이 붙는다 - health route도 예외 아님.
+# basePath를 걷어내는 시점에 이 경로도 /api/health로 같이 되돌릴 것.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/admin/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 CMD ["node", "server.js"]

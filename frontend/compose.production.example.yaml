@@ -6,6 +6,10 @@ services:
     environment:
       BACKEND_GATEWAY_URL: ${BACKEND_GATEWAY_URL:-http://b-gateway:8080}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL to the public HTTPS origin}
+      # TEMPORARY (2026-07-24) - app/admin/[...path]/route.ts의 리버스프록시가 쓴다.
+      # frontend-admin 컨테이너 이름으로 dangdang-edge 네트워크 내부 DNS로 접근.
+      # 복구 방법은 그 route.ts 파일 주석 참고.
+      ADMIN_APP_URL: ${ADMIN_APP_URL:-http://dangdang-frontend-admin:3000}
     expose:
       - "3000"
     volumes:
