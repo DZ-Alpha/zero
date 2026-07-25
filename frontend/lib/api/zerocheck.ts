@@ -410,10 +410,13 @@ function chatSessionParams(token?: string | null) {
 }
 
 // MN-0111: 요청 키는 명세대로 msg/template, 응답은 cs-partner/time/msg/is-img.
-export function sendChatbotMessage(msg: string, token?: string | null, template?: string) {
+// img는 "data:image/...;base64,...." 형태의 data URL 그대로 넘긴다 - 백엔드
+// ChatbotRequest.img가 문자열 하나만 받는 구조라 별도 멀티파트 업로드 없이
+// 이 필드 하나로 보낸다.
+export function sendChatbotMessage(msg: string, token?: string | null, template?: string, img?: string | null) {
   return apiRequest<ChatbotResponse>("/ai/chatbot", {
     method: "POST",
-    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}) }),
+    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}), ...(img ? { img } : {}) }),
   });
 }
 
@@ -437,12 +440,13 @@ export async function streamChatbotMessage(
   token: string | null | undefined,
   onEvent: (event: ChatbotStreamEvent) => void,
   template?: string,
+  img?: string | null,
 ): Promise<void> {
   const response = await fetch(`${API_PREFIX}/ai/chatbot/stream`, {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}) }),
+    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}), ...(img ? { img } : {}) }),
   });
 
   if (!response.ok || !response.body) {
