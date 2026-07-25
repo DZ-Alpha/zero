@@ -49,11 +49,12 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   const [loading, setLoading] = useState(Boolean(productId));
   const [unavailable, setUnavailable] = useState(!catalogDetail && !productId);
 
+  // 기본 상품 정보(가격/영양성분 등)는 AI 요약 3종과 분리해서 먼저 불러온다 —
+  // 전부 Promise.all로 묶으면 상품 정보가 다 준비돼도 가장 느린 AI 호출(매번
+  // 실시간으로 Claude를 부르는 캐싱 없는 요청)이 끝날 때까지 로딩 스피너에
+  // 막혀 있었다. AI 3종은 각자 도착하는 대로 해당 섹션만 채운다.
   useEffect(() => {
     setLiveDetail(null);
-    setLiveSummary(null);
-    setLiveSweetenerInfo(null);
-    setLivePersonalInfo(null);
     if (!productId) {
       setLoading(false);
       setUnavailable(!catalogDetail);
@@ -63,17 +64,9 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     setLoading(true);
     setUnavailable(false);
 
-    Promise.all([
-      getProductDetail(productId),
-      getProductAiSummary(productId).catch(() => null),
-      getProductSweetenerInfo(productId).catch(() => null),
-      token ? getProductUserFeatureInfo(productId, token).catch(() => null) : Promise.resolve(null),
-    ]).then(([base, summary, sweetener, personal]) => {
+    getProductDetail(productId).then((base) => {
       if (!active) return;
       setLiveDetail(base);
-      setLiveSummary(summary?.["ai-oneline"] ?? null);
-      setLiveSweetenerInfo(sweetener?.["gammi-info"] ?? null);
-      setLivePersonalInfo(personal?.["user-feature-info"] ?? null);
     }).catch(() => {
       if (active) setUnavailable(!catalogDetail);
     }).finally(() => {
@@ -83,7 +76,31 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     return () => {
       active = false;
     };
-  }, [catalogDetail, productId, token]);
+  }, [catalogDetail, productId]);
+
+  useEffect(() => {
+    setLiveSummary(null);
+    setLiveSweetenerInfo(null);
+    setLivePersonalInfo(null);
+    if (!productId) return;
+    let active = true;
+
+    getProductAiSummary(productId).then((summary) => {
+      if (active) setLiveSummary(summary?.["ai-oneline"] ?? null);
+    }).catch(() => {});
+    getProductSweetenerInfo(productId).then((sweetener) => {
+      if (active) setLiveSweetenerInfo(sweetener?.["gammi-info"] ?? null);
+    }).catch(() => {});
+    if (token) {
+      getProductUserFeatureInfo(productId, token).then((personal) => {
+        if (active) setLivePersonalInfo(personal?.["user-feature-info"] ?? null);
+      }).catch(() => {});
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [productId, token]);
 
   const detail = useMemo(() => ({
     ...fallbackDetail,
@@ -128,7 +145,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
         <div className="product-detail-photo"><SafeImage src={detail.image} alt={`${detail.title} 제품 이미지`} loading="eager" fallbackLabel="제품 이미지 준비 중" /></div>
         <div className="product-detail-copy">
           <h1>{detail.title}</h1>
-          <p>{detail.summary}</p>
+          <p>{liveSummary && <span className="ai-summary-badge">AI 요약</span>}{detail.summary}</p>
           <div className="product-key-nutrients"><div><span>당류</span><strong>{format(detail.sugar)}g</strong></div><div><span>열량</span><strong>{format(detail.calories)}kcal</strong></div><div><span>단백질</span><strong>{format(detail.protein)}g</strong></div><div><span>탄수화물</span><strong>{format(detail.carbs)}g</strong></div></div>
           <FavoriteButton label={detail.title} id={productId} kind="product" checkInitial />
         </div>
@@ -143,13 +160,13 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
         <article>
           <p className="eyebrow">단맛을 낸 원재료</p>
           <h2>{sweetenerTitle}</h2>
-          <p>{liveSweetenerInfo || (detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "원재료명에서 특정 대체 감미료를 바로 확인하기 어려워요. 구매한 제품의 최신 원재료명을 한 번 더 확인해 주세요.")}</p>
+          <p>{liveSweetenerInfo && <span className="ai-summary-badge">AI 요약</span>}{liveSweetenerInfo || (detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "원재료명에서 특정 대체 감미료를 바로 확인하기 어려워요. 구매한 제품의 최신 원재료명을 한 번 더 확인해 주세요.")}</p>
           <Link href="/search">다른 제품과 비교하기 →</Link>
         </article>
         <div className="personal-product-analysis">
           <p className="eyebrow">오늘 기록을 바탕으로 한 안내</p>
           <h3>{withinGoal ? "오늘 목표 안에서 선택할 수 있어요." : "오늘은 먹는 양을 조금 조절해보세요."}</h3>
-          <p>{livePersonalInfo || (withinGoal ? `${detail.serving}을 더해도 설정한 당류 목표까지 ${format(remainingSugar)}g 남아요. 간식으로 먹는다면 실제 섭취량만 기록해 주세요.` : `${detail.serving}을 모두 먹으면 설정한 당류 목표를 ${format(Math.abs(remainingSugar))}g 넘어요. 절반만 먹거나 다음 식사의 당류를 가볍게 골라도 좋아요.`)}</p>
+          <p>{livePersonalInfo && <span className="ai-summary-badge">AI 요약</span>}{livePersonalInfo || (withinGoal ? `${detail.serving}을 더해도 설정한 당류 목표까지 ${format(remainingSugar)}g 남아요. 간식으로 먹는다면 실제 섭취량만 기록해 주세요.` : `${detail.serving}을 모두 먹으면 설정한 당류 목표를 ${format(Math.abs(remainingSugar))}g 넘어요. 절반만 먹거나 다음 식사의 당류를 가볍게 골라도 좋아요.`)}</p>
           <div className="analysis-points">
             <span><b>{format(detail.sugar)}g</b>이 제품의 당류</span>
             <span><b>{format(detail.calories)}kcal</b>이 제품의 열량</span>
