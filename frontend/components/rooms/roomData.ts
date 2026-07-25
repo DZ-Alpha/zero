@@ -70,21 +70,6 @@ export const rooms: Room[] = [
     inviteExpiresAt: "2026-07-29T23:59:59+09:00",
     role: "member",
   },
-  {
-    id: "lunch-club",
-    name: "점심은 제대로",
-    emoji: "🥗",
-    members: 3,
-    recordedToday: 3,
-    days: 4,
-    averageSugar: 28.4,
-    recordRate: 67,
-    myDays: 4,
-    rankingOptIn: true,
-    inviteCode: "LUNCH7",
-    inviteExpiresAt: "2026-07-30T23:59:59+09:00",
-    role: "member",
-  },
 ];
 
 export const teamRanking: TeamRank[] = [

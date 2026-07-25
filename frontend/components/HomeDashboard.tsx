@@ -221,18 +221,18 @@ export function HomeDashboard() {
           </div>
 
           <div className="number-metric">
-            <div className="metric-heading"><div><span>당류</span><p>{signedIn ? "설정한" : "기본"} 하루 목표 {sugarText(sugarGoal)}g</p></div><strong>{sugarText(totals.sugar)}<small>g</small></strong></div>
+            <div className="metric-heading"><span>당류</span><strong>{sugarText(totals.sugar)}<small>g</small></strong></div>
             <div className="metric-bar"><i style={{ clipPath: `inset(0 ${100 - sugarRate}% 0 0)` }} /></div>
-            <small>{sugarRate < 100 ? `${sugarText(sugarGoal - totals.sugar)}g 남음` : `${sugarText(totals.sugar - sugarGoal)}g 초과`}</small>
+            <small>하루 목표 {sugarText(sugarGoal)}g</small>
           </div>
 
           <div className="number-metric calorie">
-            <div className="metric-heading"><div><span>칼로리</span><p>{signedIn ? "설정한" : "기본"} 하루 목표 {calorieGoal.toLocaleString()}kcal</p></div><strong>{totals.calories.toLocaleString()}<small>kcal</small></strong></div>
+            <div className="metric-heading"><span>칼로리</span><strong>{totals.calories.toLocaleString()}<small>kcal</small></strong></div>
             <div className="metric-bar"><i style={{ clipPath: `inset(0 ${100 - calorieRate}% 0 0)` }} /></div>
-            <small>{totals.calories <= calorieGoal ? `${(calorieGoal - totals.calories).toLocaleString()}kcal 남음` : `${(totals.calories - calorieGoal).toLocaleString()}kcal 초과`}</small>
+            <small>하루 목표 {calorieGoal.toLocaleString()}kcal</small>
           </div>
 
-          <p className="today-comment">{feedback || (state === "over" ? `설정한 목표보다 ${sugarText(totals.sugar - sugarGoal)}g 높아요.` : `설정한 목표까지 ${sugarText(Math.max(0, sugarGoal - totals.sugar))}g 남았어요.`)}</p>
+          {feedback && <p className="today-comment">{feedback}</p>}
         </div>
 
         <div className="meal-slots">

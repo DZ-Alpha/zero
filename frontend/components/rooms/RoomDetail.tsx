@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SafeImage } from "@/components/SafeImage";
 import styles from "@/components/rooms/Rooms.module.css";
 import { badges, mealPhotos, members, rooms } from "@/components/rooms/roomData";
@@ -114,9 +114,26 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     "meal-junho": ["민지 · 아침 챙긴 것부터 성공 👏"],
   });
 
+  const tabsRef = useRef<HTMLElement>(null);
+  const didInitialScroll = useRef(false);
+
   useEffect(() => {
     setTodayView(getCurrentMealView());
   }, []);
+
+  // 방에 처음 들어오면 방 헤더를 지나 탭(오늘/현황/멤버) 지점으로 스크롤을
+  // 맞춰, 셋로그처럼 식탁 피드가 바로 보이게 한다. 탭은 sticky라 상단 글로벌
+  // 내비 바로 아래에 붙는다(모바일 62px / 데스크톱 72px).
+  useEffect(() => {
+    if (didInitialScroll.current) return;
+    if (!authReady || !signedIn) return;
+    const el = tabsRef.current;
+    if (!el) return;
+    didInitialScroll.current = true;
+    const stickyNavOffset = window.matchMedia("(max-width: 700px)").matches ? 62 : 72;
+    const top = el.getBoundingClientRect().top + window.scrollY - stickyNavOffset;
+    window.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+  }, [authReady, signedIn]);
 
   useEffect(() => {
     if (!toast) return;
@@ -222,7 +239,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
           </div>
         </header>
 
-        <nav className={styles.roomTabs} aria-label="모임 메뉴">
+        <nav className={styles.roomTabs} aria-label="모임 메뉴" ref={tabsRef}>
           {tabs.map((item) => (
             <button
               type="button"
