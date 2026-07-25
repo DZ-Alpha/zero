@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import date
 
@@ -14,7 +15,7 @@ _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 300
 
 
-async def _call_claude(prompt: str) -> str:
+async def _call_claude_anthropic(prompt: str) -> str:
     if not settings.anthropic_api_key:
         return "AI 요약 기능을 사용하려면 ANTHROPIC_API_KEY 설정이 필요합니다."
     headers = {
@@ -32,6 +33,32 @@ async def _call_claude(prompt: str) -> str:
         resp.raise_for_status()
         data = resp.json()
     return data["content"][0]["text"].strip()
+
+
+def _call_claude_bedrock_sync(prompt: str) -> str:
+    import boto3
+
+    client = boto3.client("bedrock-runtime", region_name=settings.bedrock_region)
+    resp = client.converse(
+        modelId=settings.bedrock_model_id,
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig={"maxTokens": _MAX_TOKENS},
+    )
+    return resp["output"]["message"]["content"][0]["text"].strip()
+
+
+async def _call_claude(prompt: str) -> str:
+    # ai_provider="bedrock"이어도 이 함수만 영향받는다 - 챗봇(backend/ai)과
+    # diet-service의 Vision 분석은 각자 자기 설정을 따로 쓰므로 이 스위치와
+    # 무관하다. boto3는 동기 SDK라 스레드로 돌린다(tools/model-eval의
+    # call_bedrock, backend/ai의 BedrockClient와 동일한 패턴).
+    if settings.ai_provider == "bedrock":
+        try:
+            return await asyncio.to_thread(_call_claude_bedrock_sync, prompt)
+        except Exception:
+            logger.exception("Bedrock 호출 실패")
+            return "AI 요약을 생성하지 못했습니다. 잠시 후 다시 시도해주세요."
+    return await _call_claude_anthropic(prompt)
 
 
 async def generate_product_summary(product: Product, tags: list[Tag]) -> str:
