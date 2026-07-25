@@ -171,6 +171,10 @@
 .primaryButton,
 .secondaryButton,
 .textButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   min-height: 46px;
   padding: 0 18px;
   border: 1px solid var(--room-ink);
@@ -3035,23 +3039,53 @@
   }
 
   .roomHeader {
-    padding-top: 36px;
+    padding-top: 16px;
+    padding-bottom: 8px;
+    gap: 14px;
     align-items: flex-start;
     flex-direction: column;
   }
 
+  .roomHeader h1 {
+    font-size: 22px;
+  }
+
+  .roomHeader .eyebrow {
+    margin-bottom: 4px;
+    font-size: 11px;
+  }
+
+  .roomHeaderMeta {
+    margin-top: 4px;
+    font-size: 13px;
+  }
+
   .roomHeaderActions {
     width: 100%;
+    gap: 6px;
   }
 
   .roomHeaderActions button,
   .roomHeaderActions a {
     flex: 1;
+    min-height: 38px;
+    padding-inline: 10px;
+    font-size: 12px;
+  }
+
+  .roomIdentity {
+    gap: 12px;
   }
 
   .roomIdentity .roomEmoji {
-    width: 58px;
-    height: 58px;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    font-size: 20px;
+  }
+
+  .tabContent {
+    padding-top: 16px;
   }
 
   .roomTabs {
@@ -3062,6 +3096,10 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .todayHeading h2 {
+    font-size: 24px;
   }
 
   .mealOverview {
@@ -3109,7 +3147,7 @@
   }
 
   .mealViewTabs {
-    margin-right: 0;
+    margin: 0 0 20px;
     padding-right: 0;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -3123,13 +3161,18 @@
   }
 
   .mealMomentHeader {
+    margin-bottom: 16px;
     align-items: flex-start;
     flex-direction: column;
-    gap: 16px;
+    gap: 10px;
   }
 
   .mealMomentHeader h2 {
-    font-size: 34px;
+    font-size: 21px;
+  }
+
+  .mealMomentHeader .eyebrow {
+    margin-bottom: 4px;
   }
 
   .mealUploadButton {
@@ -3177,7 +3220,7 @@
   }
 
   .statusLead h2 {
-    font-size: 31px;
+    font-size: 25px;
   }
 
   .statusLeadRate {
@@ -3191,7 +3234,7 @@
 
   .statusLeadRate strong {
     margin-top: 0;
-    font-size: 31px;
+    font-size: 25px;
   }
 
   .statusStats {
