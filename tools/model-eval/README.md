@@ -10,7 +10,7 @@
 ## 준비
 
 ```
-cd backend/model-eval
+cd tools/model-eval
 pip install -r requirements.txt
 cp .env.example .env
 ```
