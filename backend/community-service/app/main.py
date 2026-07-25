@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(nam
 from app.core.config import settings  # noqa: E402
 from app.core.database import Base, engine  # noqa: E402
 from app.models import OWNED_TABLES  # noqa: E402, F401 (import registers Notice/NoticeLike/Tag on Base.metadata)
-from app.routers import health, notice, sweetener  # noqa: E402
+from app.routers import health, notice, rooms, sweetener  # noqa: E402
 
 logger = logging.getLogger("community_service")
 
@@ -35,7 +35,10 @@ app = FastAPI(title="Community Service", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    # PATCH 추가 - 얌로그(rooms)의 방 설정 수정(PATCH /rooms/{id}, PATCH
+    # /rooms/{id}/notifications)에 필요하다. 기존 notice 쪽엔 PATCH를 쓰는
+    # 엔드포인트가 없어서 지금까지 빠져 있었다.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -49,4 +52,5 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 app.include_router(health.router)
 app.include_router(notice.router)
+app.include_router(rooms.router)
 app.include_router(sweetener.router)

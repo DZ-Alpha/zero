@@ -5,13 +5,15 @@ import uuid
 from datetime import date as date_cls
 from datetime import datetime, time, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
+from app.core.config import settings
 from app.core.database import get_db
 from app.services.diet_store import (
     MealLogNotConfirmableError,
@@ -27,15 +29,20 @@ from app.services.diet_store import (
     get_meal_items,
     get_meal_log_for_user,
     get_product_ref,
+    get_product_refs_bulk,
     get_records_for_range,
+    get_records_for_users_on_date,
     get_recipe_ref,
+    get_recipe_refs_bulk,
     list_meal_logs_by_month,
     make_meal_item_from_analysis,
     make_meal_item_from_product,
     update_record,
 )
-from app.services.storage import StorageUploadError, validate_diet_photo_key
+from app.services.storage import StorageUploadError, presign_diet_photo_url, validate_diet_photo_key
 from app.services.vision_service import analyze_meal_photo
+
+_KST = ZoneInfo("Asia/Seoul")
 
 logger = logging.getLogger("diet_service.diet")
 
@@ -581,6 +588,104 @@ async def cancel_diet_upload(
 
     if log.analysis_status == "COMPLETED":
         raise HTTPException(status_code=409, detail="이미 확정된 기록입니다. /diet/records/{id}로 삭제해주세요.")
+
+
+def _verify_internal_secret(x_internal_service_secret: str | None) -> None:
+    # admin_signup_secret과 같은 이유로 빈 값이면 무조건 거부한다 — 값이
+    # 비어있는데 헤더도 없는 요청을 통과시키면 "설정을 깜빡함"이 "누구나 통과"가
+    # 되는 사고로 이어진다.
+    if not settings.internal_service_secret or x_internal_service_secret != settings.internal_service_secret:
+        raise HTTPException(status_code=403, detail="internal service 인증에 실패했습니다.")
+
+
+# 얌로그(rooms) 전용 서버간 내부 엔드포인트 — community-service만 호출한다.
+# 사용자 자신의 JWT로 인가되는 게 아니라 임의의 user_id 목록을 받아서 그
+# 사용자들의 식단을 반환하므로, 공개 게이트웨이(infra/b-gateway/nginx.conf)에서
+# /b/diet/internal은 /b/diet(/.*)? 와일드카드보다 먼저 명시적으로 차단해야
+# 한다 - 그쪽 주석 참고. 여기서도 공유 시크릿으로 한 번 더 막는다(방어 계층 이중화).
+@router.get("/internal/meal-records")
+async def internal_meal_records(
+    userIds: str = Query(..., description="콤마로 구분된 user_id 목록"),
+    date: str = Query(..., description="YYYY-MM-DD (Asia/Seoul 기준 날짜)"),
+    db: AsyncSession = Depends(get_db),
+    x_internal_service_secret: str | None = Header(None),
+) -> dict[str, object]:
+    _verify_internal_secret(x_internal_service_secret)
+
+    try:
+        user_ids = [int(part) for part in userIds.split(",") if part.strip()]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="userIds는 콤마로 구분된 정수여야 합니다.")
+    if not user_ids:
+        raise HTTPException(status_code=422, detail="userIds가 비어 있습니다.")
+
+    try:
+        day = date_cls.fromisoformat(date[:10])
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date 형식이 올바르지 않습니다 (YYYY-MM-DD).")
+
+    start_kst = datetime.combine(day, time.min, tzinfo=_KST)
+    end_kst = datetime.combine(day, time.max, tzinfo=_KST)
+    rows = await get_records_for_users_on_date(db, user_ids, start_kst.astimezone(timezone.utc), end_kst.astimezone(timezone.utc))
+
+    # (user_id, meal_type) 별로 여러 meal_log(사진/레시피/저당픽이 각각 별도
+    # 행일 수 있음, 얌로그 문서 §2 참고)를 하나로 묶는다.
+    groups: dict[tuple[int, str], list[tuple]] = {}
+    for log, item in rows:
+        groups.setdefault((log.user_id, log.meal_type), []).append((log, item))
+
+    product_ids = [item.product_id for _, item in rows if item.product_id is not None]
+    recipe_ids = [int(item.external_recipe_id) for _, item in rows if item.external_recipe_id is not None]
+    products = await get_product_refs_bulk(db, product_ids)
+    recipes = await get_recipe_refs_bulk(db, recipe_ids)
+
+    records = []
+    for (user_id, meal_type), group_rows in groups.items():
+        photo_object_keys: list[str] = []
+        seen_logs: set[uuid.UUID] = set()
+        connected_items: list[dict[str, object]] = []
+        sugar_total = 0.0
+        calories_total = 0.0
+
+        for log, item in group_rows:
+            if log.meal_log_id not in seen_logs:
+                seen_logs.add(log.meal_log_id)
+                if log.image_object_key:
+                    photo_object_keys.append(log.image_object_key)
+
+            sugar_total += float(item.sugars) if item.sugars is not None else 0.0
+            calories_total += float(item.calories) if item.calories is not None else 0.0
+
+            if item.product_id is not None:
+                product = products.get(item.product_id)
+                connected_items.append({
+                    "source": "product",
+                    "id": str(item.product_id),
+                    "name": product.product_name if product else item.item_name,
+                    "imageUrl": product.image_url if product else None,
+                })
+            elif item.external_recipe_id is not None:
+                recipe = recipes.get(int(item.external_recipe_id))
+                connected_items.append({
+                    "source": "recipe",
+                    "id": item.external_recipe_id,
+                    "name": recipe.name if recipe else item.item_name,
+                    # RecipeRef는 id/name만 미러링한다 - 이미지가 필요해지면
+                    # recipe-service 쪽 image_url 컬럼을 여기에도 추가해야 한다.
+                    "imageUrl": None,
+                })
+
+        records.append({
+            "userId": user_id,
+            "mealType": meal_type,
+            "sugar": sugar_total,
+            "calories": calories_total,
+            # 만료 5분짜리 서명 URL - 캐시하지 말고 매 조회마다 새로 받아써야 한다.
+            "photoUrls": [presign_diet_photo_url(key) for key in photo_object_keys],
+            "connectedItems": connected_items,
+        })
+
+    return {"date": day.isoformat(), "records": records}
 
     await delete_meal_log(db, log)
     return {"status": "SUCCESS"}

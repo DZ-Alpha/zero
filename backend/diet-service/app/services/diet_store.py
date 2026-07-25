@@ -287,6 +287,31 @@ async def get_records_for_range(
     return list(result.all())
 
 
+async def get_records_for_users_on_date(
+    db: AsyncSession, user_ids: list[int], start_utc: datetime, end_utc: datetime
+) -> list[tuple[MealLog, MealItem]]:
+    """얌로그(rooms) 내부 조회용 — 여러 사용자의 한 KST 날짜 구간 기록을 한 번에
+    가져온다. [start_utc, end_utc]는 호출 측(app/routers/diet.py)이 그 KST
+    날짜를 UTC로 환산해서 넘긴다 — get_today_totals처럼 여기서 AT TIME ZONE을
+    쓰지 않는 이유는, 이 쿼리는 여러 사용자를 한 번에 묶어야 해서 IN 절이
+    필요한데 그러면 raw SQL보다 파라미터화된 ORM 쪽이 다루기 쉽기 때문.
+    meal_type='OTHER'(하루 전체 업로드)는 얌로그 슬롯에 넣지 않는다 — 얌로그
+    문서의 BREAKFAST/LUNCH/DINNER/SNACK 4종 슬롯 설계와 일치."""
+    result = await db.execute(
+        select(MealLog, MealItem)
+        .join(MealItem, MealItem.meal_log_id == MealLog.meal_log_id)
+        .where(
+            MealLog.user_id.in_(user_ids),
+            MealLog.eaten_at >= start_utc,
+            MealLog.eaten_at <= end_utc,
+            MealLog.meal_type != "OTHER",
+            MealLog.analysis_status == "COMPLETED",
+        )
+        .order_by(MealLog.user_id, MealLog.meal_type, MealLog.eaten_at)
+    )
+    return list(result.all())
+
+
 async def create_manual_record(
     db: AsyncSession,
     *,
@@ -450,6 +475,20 @@ async def get_product_ref(db: AsyncSession, product_id: uuid.UUID) -> ProductRef
     if p is None:
         raise ProductNotFoundError(f"상품을 찾을 수 없습니다: {product_id}")
     return p
+
+
+async def get_product_refs_bulk(db: AsyncSession, product_ids: list[uuid.UUID]) -> dict[uuid.UUID, ProductRef]:
+    if not product_ids:
+        return {}
+    result = await db.execute(select(ProductRef).where(ProductRef.product_id.in_(set(product_ids))))
+    return {p.product_id: p for p in result.scalars().all()}
+
+
+async def get_recipe_refs_bulk(db: AsyncSession, recipe_ids: list[int]) -> dict[int, RecipeRef]:
+    if not recipe_ids:
+        return {}
+    result = await db.execute(select(RecipeRef).where(RecipeRef.id.in_(set(recipe_ids))))
+    return {r.id: r for r in result.scalars().all()}
 
 
 # ── 홈 당/칼로리 게이지 (MN-0106~0108) ────────────────────────────────────────

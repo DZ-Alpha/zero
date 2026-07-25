@@ -60,6 +60,18 @@ def upload_diet_photo(user_id: int, content_type: str, data: bytes) -> str:
     return object_key
 
 
+def presign_diet_photo_url(object_key: str, expires_in: int = 300) -> str:
+    """얌로그(rooms)가 다른 사용자의 식단 사진을 보여줄 때 쓴다 — 버킷이
+    비공개라 object_key를 그대로 내려주면 브라우저가 못 연다. 짧은 만료
+    시간의 서명 URL로 매 요청 새로 발급한다(캐시 안 함 — room_meal_threads.md
+    설계 메모의 "짧은 만료 signed URL" 요구사항과 일치)."""
+    return _client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": settings.minio_bucket, "Key": object_key},
+        ExpiresIn=expires_in,
+    )
+
+
 def validate_diet_photo_key(object_key: str, user_id: int) -> str:
     """diet-service /diet/upload가 받은 object_key가 이 사용자 소유인지 확인.
 
