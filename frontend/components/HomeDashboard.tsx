@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { HomeAdBanner } from "@/components/HomeAdBanner";
 import { RecordMealModal } from "@/components/RecordMealModal";
-import { ServiceBanner } from "@/components/ServiceBanner";
+import { SafeImage } from "@/components/SafeImage";
+import { LoginPromptDialog } from "@/components/SystemFeedback";
 import { products, recipes } from "@/data/catalog";
+import { mealPhotos, rooms, teamRanking } from "@/components/rooms/roomData";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useDailyGauge } from "@/hooks/useDailyGauge";
 import { DietRecord, getTodayKey, keyToDate, MealType, useDietRecords } from "@/hooks/useDietRecords";
@@ -18,13 +21,19 @@ const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 
 const recipeRanking: RankingItem[] = recipes.map((recipe) => ({ name: recipe.title, meta: `${recipe.time} · 등록 재료 당류 ${recipe.estimatedSugar}g`, saved: recipe.savedDemo, href: `/recipes/${recipe.slug}` }));
 const fallbackProductRanking: RankingItem[] = products.slice(0, 10).map((product) => ({ name: product.title, meta: `${product.serving} 기준 · 당류 ${product.sugar}g · ${product.calories}kcal`, saved: product.savedDemo, href: `/product/${product.slug}` }));
+const roomRanking: RankingItem[] = teamRanking.map((room, index) => ({
+  name: room.name,
+  meta: `멤버 ${room.members}명 · 기록률 ${room.recordRate}% · 평균 당류 ${room.averageSugar}g`,
+  saved: index + 1,
+  href: room.mine ? "/rooms/green-table" : "/rooms",
+}));
 
 function toRankingItems(items: HomeProductItem[], personalized: boolean): RankingItem[] {
   return items.map((item, index) => {
     const catalogItem = products.find((product) => product.title.trim() === item.name.trim());
     return {
       name: item.name,
-      meta: [item.brand, personalized ? "관심 기준에 맞춘 추천" : "많이 찾는 식품"].filter(Boolean).join(" · "),
+      meta: [item.brand, personalized ? "관심 기준에 맞춘 추천" : "많이 찾는 저당픽"].filter(Boolean).join(" · "),
       saved: item.rank ?? index + 1,
       href: catalogItem ? `/product/${catalogItem.slug}` : `/search?query=${encodeURIComponent(item.name)}`,
     };
@@ -94,10 +103,10 @@ export function HomeDashboard() {
   const { goals } = useUserSettings();
   const todayKey = useMemo(() => getTodayKey(), []);
   const [activeMeal, setActiveMeal] = useState<MealType | null>(null);
-  const [showAllRanking, setShowAllRanking] = useState(false);
+  const [loginPrompt, setLoginPrompt] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [productRanking, setProductRanking] = useState<RankingItem[]>(fallbackProductRanking);
-  const [productPanelTitle, setProductPanelTitle] = useState("식품 TOP");
+  const [productPanelTitle, setProductPanelTitle] = useState("저당픽 TOP");
 
   useEffect(() => {
     const today = keyToDate(todayKey);
@@ -115,16 +124,16 @@ export function HomeDashboard() {
       if (!active) return;
       if (token && recommend.listProducts.length > 0) {
         setProductRanking(toRankingItems(recommend.listProducts, true));
-        setProductPanelTitle("맞춤 식품");
+        setProductPanelTitle("맞춤 저당픽");
         return;
       }
       if (rank.listProducts.length > 0) {
         setProductRanking(toRankingItems(rank.listProducts, false));
-        setProductPanelTitle("식품 TOP");
+        setProductPanelTitle("저당픽 TOP");
         return;
       }
       setProductRanking(fallbackProductRanking);
-      setProductPanelTitle("식품 TOP");
+      setProductPanelTitle("저당픽 TOP");
     });
 
     return () => {
@@ -163,6 +172,11 @@ export function HomeDashboard() {
   const stateCopy = state === "roomy" ? "오늘은 아직 여유가 있어요" : state === "near" ? "오늘 목표에 거의 닿았어요" : "오늘 목표를 조금 넘었어요";
 
   function openMeal(meal: MealType) {
+    if (!authReady) return;
+    if (!signedIn) {
+      setLoginPrompt(true);
+      return;
+    }
     setActiveMeal(meal);
   }
 
@@ -179,12 +193,10 @@ export function HomeDashboard() {
 
   return (
     <main className="home-dashboard">
-      <ServiceBanner />
-
       {authReady && !signedIn && (
         <aside className="guest-preview-notice wrap" aria-label="로그인 전 미리보기 안내">
-          <div><span>로그인 전 미리보기</span><p>기본 기록으로 하루 화면을 보여드리고 있어요. 로그인하면 내 목표와 식단으로 바뀌어요.</p></div>
-          <Link href="/login">로그인하고 내 기록 보기</Link>
+          <div><span>예시 화면</span><p>내 기록은 로그인 후 보여요.</p></div>
+          <Link href="/login">로그인하기</Link>
         </aside>
       )}
 
@@ -193,11 +205,15 @@ export function HomeDashboard() {
         <div className="today-character-copy">
           <p className="day-label">{todayLabel} · {signedIn ? "나의 오늘" : "오늘의 미리보기"}</p>
           <h1>{stateCopy}</h1>
-          <p>식사를 기록할 때마다 설탕이와 오늘 수치가 바로 바뀌어요.</p>
+          <Link className="today-room-nudge" href="/rooms/green-table">
+            <span className="today-room-nudge-avatars" aria-hidden="true"><i>민</i><i>준</i><i>유</i></span>
+            <span><strong>초록 식탁에 새 사진이 올라왔어요</strong><small>멤버들의 오늘 식탁 보러가기</small></span>
+            <b aria-hidden="true">→</b>
+          </Link>
         </div>
       </section>
 
-      <section className="day-board wrap" id="today-board" aria-labelledby="day-board-title">
+      <section className="day-board wrap" id="today-board" aria-labelledby="day-board-title" data-preview={!signedIn ? "예시" : undefined}>
         <div className="day-numbers">
           <div className="day-board-heading">
             <p className="eyebrow">오늘의 기록</p>
@@ -220,10 +236,10 @@ export function HomeDashboard() {
         </div>
 
         <div className="meal-slots">
-          <div className="meal-slots-heading"><div><p className="eyebrow">식사별 기록</p><h2>기록할 식사를 골라주세요</h2></div><span>누르면 바로 추가할 수 있어요</span></div>
+          <div className="meal-slots-heading"><div><p className="eyebrow">식사별 기록</p><h2>기록할 식사를 골라주세요</h2></div></div>
           <div className="meal-slot-grid">
             {meals.map((meal) => (
-              <button type="button" className="meal-slot" key={meal} onClick={() => openMeal(meal)} aria-label={`${meal} 기록 열기`}>
+              <button type="button" className="meal-slot" data-meal={meal} key={meal} onClick={() => openMeal(meal)} aria-label={`${meal} 기록 열기`}>
                 <div className={`meal-slot-icon meal-${meal}`}><MealSymbol meal={meal} /><i aria-hidden="true">＋</i></div>
                 <div className="meal-slot-name"><span>{meal}</span></div>
                 <div className="meal-slot-copy"><strong>{entries[meal].map((item) => item.name).join(" · ") || "아직 기록이 없어요"}</strong><small>당류 {sugarText(entries[meal].reduce((sum, item) => sum + item.sugar, 0))}g · {entries[meal].reduce((sum, item) => sum + item.calories, 0)}kcal</small></div>
@@ -237,14 +253,43 @@ export function HomeDashboard() {
         <span>{stateCopy} 기록 흐름을 캘린더에서 이어서 볼 수 있어요.</span><b>캘린더에서 흐름 보기 →</b>
       </Link>
 
-      <section className="ranking-section wrap">
-        <header className="section-line-heading"><div><p className="eyebrow">많이 찾는 메뉴</p><h2>인기 레시피와 식품</h2></div><p>사용자들이 자주 살펴본 메뉴를 순서대로 모았어요.</p></header>
+      <section className="home-room-preview wrap" aria-labelledby="home-room-title" data-preview={!signedIn ? "예시" : undefined}>
+        <div className="home-room-preview-title">
+          <span aria-hidden="true">{rooms[0].emoji}</span>
+          <div><p className="eyebrow">내 모임 · 오늘</p><h2 id="home-room-title">{rooms[0].name}</h2></div>
+        </div>
+        <div className="home-room-preview-activity">
+          <div className="home-room-avatars">{mealPhotos.map((meal) => <span key={meal.id}>{meal.avatar}</span>)}</div>
+          <p><strong>{rooms[0].recordedToday}명이 기록했어요</strong><span>“색 조합부터 맛있어 보여요”</span></p>
+        </div>
+        <div className="home-room-preview-photos" aria-label="방금 올라온 모임 식단">
+          {mealPhotos.map((meal) => (
+            <span key={meal.id}>
+              <SafeImage src={meal.image} alt="" fallbackLabel={meal.meal} />
+              <i>{meal.avatar}</i>
+            </span>
+          ))}
+        </div>
+        <div className="home-room-preview-stats">
+          <span><small>기록률</small><strong>{rooms[0].recordRate}%</strong></span>
+          <span><small>팀 평균 당류</small><strong>{rooms[0].averageSugar}g</strong></span>
+        </div>
+        <Link href="/rooms/green-table">모임 기록 보기 →</Link>
+      </section>
+
+      <HomeAdBanner />
+
+      <section className="ranking-section home-ranking-three wrap">
+        <header className="section-line-heading"><div><p className="eyebrow">이번 주 랭킹</p><h2>지금 인기 있는 모임과 메뉴</h2></div></header>
         <div className="ranking-columns">
-          {[["레시피 TOP", recipeRanking, "/recipes"], [productPanelTitle, productRanking, "/search"]].map(([title, list, href]) => (
+          {[["모임", roomRanking, "/rooms", "👥"], ["레시피", recipeRanking, "/recipes", "🥗"], [productPanelTitle.replace(" TOP", ""), productRanking, "/search", "🛒"]].map(([title, list, href, icon]) => (
             <article className="ranking-panel" key={title as string}>
-              <header><h3>{title as string}</h3><Link href={href as string}>전체 보기 ↗</Link></header>
+              <header>
+                <div className="ranking-panel-heading"><span aria-hidden="true">{icon as string}</span><div><small>이번 주 TOP 3</small><h3>{title as string}</h3></div></div>
+                <Link href={href as string}>전체 순위</Link>
+              </header>
               <ol>
-                {(list as RankingItem[]).slice(0, showAllRanking ? 10 : 5).map((item, index) => (
+                {(list as RankingItem[]).slice(0, 3).map((item, index) => (
                   <li key={item.name}>
                     <Link href={item.href}>
                       <span className="ranking-number">{String(index + 1).padStart(2, "0")}</span>
@@ -256,13 +301,12 @@ export function HomeDashboard() {
             </article>
           ))}
         </div>
-        <button type="button" className="ranking-more" onClick={() => setShowAllRanking((current) => !current)} aria-expanded={showAllRanking}>{showAllRanking ? "5위까지만 보기" : "10위까지 보기"}<span aria-hidden="true">{showAllRanking ? "↑" : "↓"}</span></button>
       </section>
 
       <section className="reading-section wrap">
-        <header className="section-line-heading"><div><p className="eyebrow">당당 읽을거리</p><h2>알아두면 선택이 쉬워지는 이야기</h2></div><p>성분과 식단을 이해하는 데 필요한 내용만 짧게 정리했어요.</p></header>
+        <header className="section-line-heading"><div><p className="eyebrow">당당 읽을거리</p><h2>알아두면 선택이 쉬워지는 이야기</h2></div></header>
         <div className="reading-grid">
-          {readingList.map((item, index) => (
+          {readingList.slice(0, 2).map((item, index) => (
             <article className={`reading-card tone-${index + 1}`} key={item.title}>
               <div className="reading-card-cover"><span>{item.category}</span><b>{String(index + 1).padStart(2, "0")}</b></div>
               <div className="reading-card-copy"><small>{item.time} 읽기</small><h3>{item.title}</h3><p>{item.copy}</p></div>
@@ -280,6 +324,7 @@ export function HomeDashboard() {
           onSaved={handleSaved}
         />
       )}
+      {loginPrompt && <LoginPromptDialog onClose={() => setLoginPrompt(false)} />}
     </main>
   );
 }

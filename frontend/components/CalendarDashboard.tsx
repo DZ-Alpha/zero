@@ -140,7 +140,7 @@ export function CalendarDashboard() {
     <div className={`calendar-record-add ${canAddRecord ? "" : "is-disabled"}`}>
       <div>
         <strong>{canAddRecord ? "이날 식단을 더 기록할까요?" : "아직 기록할 수 없는 날짜예요"}</strong>
-        <p>{canAddRecord ? "식사를 고르면 홈과 같은 기록창이 열려요." : "오늘이나 지난 날짜를 골라주세요."}</p>
+        {!canAddRecord && <p>오늘이나 지난 날짜를 골라주세요.</p>}
       </div>
       {canAddRecord && (
         <div className="calendar-meal-buttons" aria-label="기록할 식사 선택">
@@ -154,9 +154,23 @@ export function CalendarDashboard() {
     <main className="calendar-page page-wrap">
       <section className="page-intro wrap">
         <p className="eyebrow">나의 흐름</p>
-        <h1>이번 달은 <span className="calendar-streak">{recordedDays}일</span><br />식단을 기록했어요.</h1>
-        <p>날짜를 누르면 그날 먹은 음식과 당류를 보고, 필요 없는 기록은 바로 지울 수 있어요.</p>
+        <h1>{recordedDays === 0 ? "오늘 한 끼부터 기록해볼까요?" : <>이번 달은 <span className="calendar-streak">{recordedDays}일</span><br />식단을 기록했어요.</>}</h1>
       </section>
+
+      {recordedDays === 0 && (
+        <section className="calendar-empty-kickoff wrap" aria-labelledby="calendar-kickoff-title">
+          <div>
+            <span aria-hidden="true">＋</span>
+            <div>
+              <p className="eyebrow">첫 기록</p>
+              <h2 id="calendar-kickoff-title">지금 먹은 식사를 남겨보세요</h2>
+            </div>
+          </div>
+          <div className="calendar-kickoff-meals" aria-label="오늘 기록할 식사 선택">
+            {meals.map((meal) => <button type="button" onClick={() => setEntryMeal(meal)} key={meal}>{meal}</button>)}
+          </div>
+        </section>
+      )}
 
       <section className="calendar-overview wrap">
         <div className="calendar-panel">
@@ -236,25 +250,29 @@ export function CalendarDashboard() {
         </aside>
       </section>
 
-      <section className="month-summary wrap">
-        <header className="section-line-heading"><div><p className="eyebrow">지난달과 비교</p><h2>{monthNames[month]} 기록 요약</h2></div><p>{comparisonCopy}</p></header>
-        <div className="summary-grid">
-          <article><small>기록한 날</small><strong>{recordedDays}<span>일</span></strong><p>기록이 없는 날 {emptyDays}일</p></article>
-          <article><small>목표 안의 날</small><strong>{withinGoalDays}<span>일</span></strong><p>설정한 하루 목표 이하</p></article>
-          <article><small>이번 달 당류</small><strong>{totalSugar.toLocaleString()}<span>g</span></strong><p>각설탕 약 {cubes}개 분량</p></article>
-          <article><small>기록한 날 평균</small><strong>{averageSugar}<span>g</span></strong><p>기록이 있는 날만 계산했어요</p></article>
-        </div>
-      </section>
+      {recordedDays > 0 && (
+        <>
+          <section className="month-summary wrap">
+            <header className="section-line-heading"><div><p className="eyebrow">지난달과 비교</p><h2>{monthNames[month]} 기록 요약</h2></div><p>{comparisonCopy}</p></header>
+            <div className="summary-grid">
+              <article><small>기록한 날</small><strong>{recordedDays}<span>일</span></strong><p>기록이 없는 날 {emptyDays}일</p></article>
+              <article><small>목표 안의 날</small><strong>{withinGoalDays}<span>일</span></strong><p>설정한 하루 목표 이하</p></article>
+              <article><small>이번 달 당류</small><strong>{totalSugar.toLocaleString()}<span>g</span></strong><p>각설탕 약 {cubes}개 분량</p></article>
+              <article><small>기록한 날 평균</small><strong>{averageSugar}<span>g</span></strong><p>기록이 있는 날만 계산했어요</p></article>
+            </div>
+          </section>
 
-      <section className="monthly-report wrap">
-        <header><div><p className="eyebrow">월간 리포트</p><h2>이번 달 기록에서 보인 흐름이에요</h2></div><span>{monthNames[month]} 기록</span></header>
-        <div className="report-grid">
-          <article className="report-main"><small>이번 달 흐름</small><h3>{recordedDays > 0 ? `${recordedDays}일 중 ${withinGoalDays}일은\n목표 안에 있었어요.` : "아직 기록이 없어요."}</h3><p>{recordedDays > 0 ? "잘한 날과 아쉬운 날을 나누기보다, 기록을 이어간 흐름을 확인해보세요. 날짜를 누르면 그날의 식단을 다시 볼 수 있어요." : "식단을 한 번 기록하면 월간 흐름과 자주 먹은 메뉴를 여기에서 정리해드릴게요."}</p></article>
-          <article><small>가장 자주 기록한 메뉴</small><h3>{mostFrequentFood[0]}</h3><strong>{mostFrequentFood[1]}<span>회</span></strong><p>식사 기록에 가장 많이 등장했어요.</p></article>
-          <article><small>기록이 없는 날</small><h3>{emptyDays > 0 ? `${emptyDays}일은 비어 있어요` : "모든 날을 기록했어요"}</h3><strong>{emptyDays}<span>일</span></strong><p>회색 날짜를 누르면 비어 있는 날을 확인할 수 있어요.</p></article>
-        </div>
-        <div className="report-archive"><span>다른 달 기록</span>{month !== 0 && <button type="button" onClick={() => { setMonth(0); setSelectedDay(1); }}>2026년 6월 보기</button>}{month !== 1 && <button type="button" onClick={() => { setMonth(1); setSelectedDay(15); }}>2026년 7월 보기</button>}{month !== 2 && <button type="button" onClick={() => { setMonth(2); setSelectedDay(1); }}>2026년 8월 보기</button>}</div>
-      </section>
+          <section className="monthly-report wrap">
+            <header><div><p className="eyebrow">월간 리포트</p><h2>이번 달 기록에서 보인 흐름이에요</h2></div><span>{monthNames[month]} 기록</span></header>
+            <div className="report-grid">
+              <article className="report-main"><small>이번 달 흐름</small><h3>{`${recordedDays}일 중 ${withinGoalDays}일은\n목표 안에 있었어요.`}</h3><p>기록을 이어간 흐름을 확인해보세요. 날짜를 누르면 그날의 식단을 다시 볼 수 있어요.</p></article>
+              <article><small>가장 자주 기록한 메뉴</small><h3>{mostFrequentFood[0]}</h3><strong>{mostFrequentFood[1]}<span>회</span></strong><p>식사 기록에 가장 많이 등장했어요.</p></article>
+              <article><small>기록이 없는 날</small><h3>{emptyDays > 0 ? `${emptyDays}일은 비어 있어요` : "모든 날을 기록했어요"}</h3><strong>{emptyDays}<span>일</span></strong><p>회색 날짜를 누르면 비어 있는 날을 확인할 수 있어요.</p></article>
+            </div>
+            <div className="report-archive"><span>다른 달 기록</span>{month !== 0 && <button type="button" onClick={() => { setMonth(0); setSelectedDay(1); }}>2026년 6월 보기</button>}{month !== 1 && <button type="button" onClick={() => { setMonth(1); setSelectedDay(15); }}>2026년 7월 보기</button>}{month !== 2 && <button type="button" onClick={() => { setMonth(2); setSelectedDay(1); }}>2026년 8월 보기</button>}</div>
+          </section>
+        </>
+      )}
 
       {entryMeal && (
         <RecordMealModal

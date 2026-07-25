@@ -3,12 +3,17 @@ export const AUTH_TOKEN_KEY = "dangdang-access-token";
 export const AUTH_EXPIRED_EVENT = "dangdang-auth-expired";
 
 export class ApiError extends Error {
+  readonly code?: string;
+
   constructor(
     message: string,
     readonly status: number,
     readonly payload?: unknown,
   ) {
     super(message);
+    this.code = typeof payload === "object" && payload && "code" in payload
+      ? String((payload as { code: unknown }).code)
+      : undefined;
   }
 }
 

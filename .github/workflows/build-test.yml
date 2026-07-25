@@ -277,8 +277,18 @@ jobs:
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706
         id: filter
         with:
+          # 2026-07-24, infra/frontend/** 를 감시 대상에 추가한다.
+          # 배포 job이 앱 이미지 말고도 infra/frontend/compose.lan-test-override
+          # .yaml 을 매 배포마다 scp해서 -f로 겹쳐 올리는데, 그 파일이 감시 밖에
+          # 있어서 그것만 바뀐 커밋은 "프론트 변경 없음"으로 잡혔다. 그러면
+          # image-scanning이 skip되고, 배포 job 조건이
+          # `image-scanning.result == 'success'` 이므로 배포까지 통째로 skip된다.
+          # 즉 머지는 됐는데 프로덕션엔 아무것도 반영되지 않는다(실측: PR #160).
+          # 감지 대상은 "배포 입력이 되는 모든 파일"이어야 한다.
           filters: |
-            frontend: 'frontend/**'
+            frontend:
+              - 'frontend/**'
+              - 'infra/frontend/**'
       # detect-backend의 filter-bgateway와 같은 이유로 반드시 별도 스텝이다.
       # 지금은 이 job이 changes가 아니라 이름 있는 출력만 읽어서 한 스텝에
       # 합쳐도 동작하지만, PR #61에서 필터를 한 스텝에 섞었다가 changes 출력이
@@ -287,8 +297,12 @@ jobs:
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706
         id: filter-admin
         with:
+          # 위 frontend 필터와 같은 이유로 infra/frontend-admin/** 포함
+          # (loopback override 파일이 여기 있고 배포마다 scp된다).
           filters: |
-            admin: 'frontend-admin/**'
+            admin:
+              - 'frontend-admin/**'
+              - 'infra/frontend-admin/**'
       # 2026-07-24, detect-backend의 "Fail loudly" 가드를 프론트에도 복제한다.
       # 그동안 프론트는 앱이 하나뿐이라 안 만들었지만, frontend-admin이 생기며
       # 백엔드와 똑같은 구조적 한계(수동 allowlist)를 갖게 됐다. PR #52에서
@@ -310,7 +324,13 @@ jobs:
             [ -d "$dir" ] || continue
             name="$(basename "$dir")"
             missing=""
-            grep -q "^            [a-z-]*: '$name/\*\*'$" "$WF" \
+            # 2026-07-24, 필터가 한 줄 형식에서 다중 패턴 리스트 형식으로
+            # 바뀌면서 이 grep도 같이 바꾼다. 안 바꾸면 배선이 멀쩡한데도
+            # 가드가 "paths-filter 누락"으로 판정해 detect-frontend가 통째로
+            # 실패한다(필터 수정 중 실제로 걸린 회귀).
+            #   before: "            admin: 'frontend-admin/**'"
+            #   after : "              - 'frontend-admin/**'"
+            grep -qE "^ +- '$name/\*\*'\$" "$WF" \
               || missing="$missing detect-frontend의-paths-filter"
             grep -q "^        working-directory: $name$" "$WF" \
               || missing="$missing build-test-job"
@@ -1673,6 +1693,16 @@ jobs:
   # 관리자 접속은 SSH 터널로 한다(infra/frontend-admin/ 파일 헤더 참고).
   frontend-admin-deploy-production:
     needs: [frontend-admin-image-scanning, code-scanning]
+    # 2026-07-24, 여기를 backend처럼 'skipped'도 허용하도록 고치고 싶어질 수
+    # 있는데(실제로 그런 제안이 있었다), 프론트에서는 그러면 배포가 깨진다.
+    # backend-deploy-production이 'skipped'를 허용할 수 있는 건 그 job이
+    # 서비스마다 `docker pull`을 먼저 시도해 "이번 커밋으로 빌드된 이미지가
+    # 있는지" 확인하고 없으면 건너뛰는 루프를 갖고 있기 때문이다.
+    # 반면 이 job은 `docker compose pull`을 무조건 실행하므로, 이미지가 없는
+    # 커밋(예: compose/override만 바뀐 커밋)에서는 pull 자체가 실패한다.
+    # 그래서 조건을 푸는 대신 detect-frontend의 경로 필터에 infra/ 를 넣어
+    # "배포 입력이 바뀌면 이미지도 함께 빌드되게" 하는 쪽으로 해결했다
+    # (그 필터 주석 참고). 조건은 'success' 단독을 유지한다.
     if: |
       always() &&
       (
