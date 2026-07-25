@@ -530,7 +530,7 @@ export async function uploadDietPhotoFile(token: string, file: File) {
 
 // RC-0101~0102: object_key(uploadDietPhotoFile 결과) 등록 -> meal_log(PENDING)
 // 생성. 202를 받으면 분석은 아직 끝난 게 아니다 - getDietPhotoStatus로 폴링한다.
-export function uploadDietPhoto(token: string, objectKey: string, mealType?: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK", eatenAt?: string) {
+export function uploadDietPhoto(token: string, objectKey: string, mealType?: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK" | "OTHER", eatenAt?: string) {
   return apiRequest<{ meal_log_id: string; status: string }>("/diet/upload", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },

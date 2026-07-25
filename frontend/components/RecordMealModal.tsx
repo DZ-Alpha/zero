@@ -62,7 +62,7 @@ const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 const sourceTabs: { id: Source; label: string }[] = [
   { id: "photo", label: "사진 입력" },
   { id: "recipe", label: "레시피" },
-  { id: "product", label: "식품 검색" },
+  { id: "product", label: "저당픽" },
   { id: "favorite", label: "즐겨찾기" },
 ];
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -78,6 +78,10 @@ function roundSugar(value: number) {
 
 function sugarText(value: number) {
   return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }).format(roundSugar(value));
+}
+
+function visibleKind(kind: FoodItem["kind"]) {
+  return kind === "식품" ? "저당픽" : kind;
 }
 
 export function RecordMealModal({
@@ -592,8 +596,8 @@ export function RecordMealModal({
             <div className="mini-detail-summary">
               {selected.image
                 ? <div className="mini-food-art has-photo"><SafeImage src={selected.image} alt={`${selected.name} 사진`} fallbackLabel={selected.category} /></div>
-                : <div className="mini-food-art"><span>{selected.category}</span><strong>{selected.kind}</strong></div>}
-              <div><small>{selected.kind}</small><h3>{selected.name}</h3>{selected.nutritionAvailable && <p className="mini-detail-macros">당류 {sugarText(selected.sugar)}g · {selected.calories.toLocaleString()}kcal</p>}<p>{selected.note}</p><Link href={selected.href}>영양 정보 더 보기 →</Link></div>
+                : <div className="mini-food-art"><span>{selected.category}</span><strong>{visibleKind(selected.kind)}</strong></div>}
+              <div><small>{visibleKind(selected.kind)}</small><h3>{selected.name}</h3>{selected.nutritionAvailable && <p className="mini-detail-macros">당류 {sugarText(selected.sugar)}g · {selected.calories.toLocaleString()}kcal</p>}<p>{selected.note}</p><Link href={selected.href}>영양 정보 더 보기 →</Link></div>
             </div>
             {selected.nutritionAvailable ? <div className="projected-change">
               <p className="eyebrow">담으면 이렇게 바뀌어요</p>
