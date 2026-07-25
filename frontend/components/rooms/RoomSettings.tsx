@@ -2,11 +2,22 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ConfirmDialog } from "@/components/SystemFeedback";
 import styles from "@/components/rooms/Rooms.module.css";
-import { members, rooms } from "@/components/rooms/roomData";
 import { useAuthSession } from "@/hooks/useAuthSession";
+import { ApiError } from "@/lib/api/client";
+import {
+  deleteRoom,
+  getRoomSettings,
+  leaveRoom,
+  regenerateRoomInvite,
+  removeRoomMember,
+  transferRoomOwnership,
+  updateRoom,
+  updateRoomNotifications,
+} from "@/lib/api/rooms";
+import { RoomMember, RoomSettingsResponse } from "@/lib/rooms/contracts";
 
 const emojiOptions = ["🌿", "🍚", "🥗", "🥕", "🍋"];
 
@@ -60,28 +71,53 @@ function confirmCopy(action: ConfirmAction) {
 
 export function RoomSettings({ roomId }: { roomId: string }) {
   const router = useRouter();
-  const { ready: authReady, signedIn } = useAuthSession();
-  const room = rooms.find((item) => item.id === roomId);
-  const isOwner = room?.role === "owner";
-  const initialMembers = useMemo(
-    () => members.slice(0, Math.min(room?.members ?? 0, members.length)),
-    [room?.members],
-  );
-  const [memberList, setMemberList] = useState(initialMembers);
-  const [name, setName] = useState(room?.name ?? "");
-  const [emoji, setEmoji] = useState(room?.emoji ?? "🌿");
-  const [rankingOptIn, setRankingOptIn] = useState(room?.rankingOptIn ?? true);
+  const { ready: authReady, signedIn, token } = useAuthSession();
+  const [settings, setSettings] = useState<RoomSettingsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const room = settings?.room ?? null;
+  const permissions = room?.permissions ?? null;
+  const [memberList, setMemberList] = useState<RoomMember[]>([]);
+  const [name, setName] = useState("");
+  const [emoji, setEmoji] = useState("🌿");
+  const [rankingOptIn, setRankingOptIn] = useState(true);
   const [nudgeNotifications, setNudgeNotifications] = useState(true);
   const [activityNotifications, setActivityNotifications] = useState(true);
-  const [inviteCode, setInviteCode] = useState(room?.inviteCode ?? "");
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteExpiresAt, setInviteExpiresAt] = useState<string | null>(null);
   const [deleteText, setDeleteText] = useState("");
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
 
   useEffect(() => {
-    setMemberList(initialMembers);
-  }, [initialMembers]);
+    if (!token) return;
+    let active = true;
+    setLoading(true);
+    setNotFound(false);
+    getRoomSettings(token, roomId)
+      .then((response) => {
+        if (!active) return;
+        setSettings(response);
+        setMemberList(response.members);
+        setName(response.room.name);
+        setEmoji(response.room.emoji);
+        setRankingOptIn(response.room.rankingOptIn);
+        setNudgeNotifications(response.notifications.nudges);
+        setActivityNotifications(response.notifications.commentsAndReactions);
+        setInviteCode(response.activeInvite?.code ?? "");
+        setInviteExpiresAt(response.activeInvite?.expiresAt ?? null);
+      })
+      .catch(() => {
+        if (active) setNotFound(true);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [token, roomId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -89,7 +125,7 @@ export function RoomSettings({ roomId }: { roomId: string }) {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  if (!authReady) {
+  if (!authReady || (signedIn && token && loading)) {
     return (
       <main className={styles.page}>
         <div className={styles.wrap}>
@@ -119,7 +155,7 @@ export function RoomSettings({ roomId }: { roomId: string }) {
     );
   }
 
-  if (!room) {
+  if (notFound || !room || !permissions) {
     return (
       <main className={styles.page}>
         <div className={styles.wrap}>
@@ -133,10 +169,12 @@ export function RoomSettings({ roomId }: { roomId: string }) {
     );
   }
 
-  const inviteExpiryLabel = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" })
-    .format(new Date(room.inviteExpiresAt));
+  const inviteExpiryLabel = inviteExpiresAt
+    ? new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" }).format(new Date(inviteExpiresAt))
+    : null;
 
   async function copyInvite() {
+    if (!inviteCode) return;
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/rooms/join?code=${inviteCode}`);
       setToast("초대 링크를 복사했어요.");
@@ -145,40 +183,67 @@ export function RoomSettings({ roomId }: { roomId: string }) {
     }
   }
 
-  function saveRoomInfo() {
-    if (!name.trim()) {
+  async function saveRoomInfo() {
+    if (!name.trim() || !token) {
       setToast("모임 이름을 적어주세요.");
       return;
     }
-    setName(name.trim());
-    setToast("모임 정보를 저장했어요.");
+    try {
+      const response = await updateRoom(token, roomId, { name: name.trim(), emoji, rankingOptIn });
+      setSettings((prev) => prev && { ...prev, room: response.room });
+      setName(response.room.name);
+      setToast("모임 정보를 저장했어요.");
+    } catch (error) {
+      setToast(error instanceof ApiError ? error.message : "저장하지 못했어요. 다시 시도해주세요.");
+    }
   }
 
-  function saveMySettings() {
-    setToast("알림 설정을 저장했어요.");
+  async function saveMySettings() {
+    if (!token) return;
+    try {
+      await updateRoomNotifications(token, roomId, { nudges: nudgeNotifications, commentsAndReactions: activityNotifications });
+      setToast("알림 설정을 저장했어요.");
+    } catch (error) {
+      setToast(error instanceof ApiError ? error.message : "저장하지 못했어요. 다시 시도해주세요.");
+    }
   }
 
-  function runConfirmedAction() {
-    if (!confirmAction) return;
+  async function runConfirmedAction() {
+    if (!confirmAction || !token) return;
     setBusy(true);
-    window.setTimeout(() => {
+    try {
       if (confirmAction.type === "regenerate") {
-        setInviteCode("YAM" + Math.random().toString(36).slice(2, 5).toUpperCase());
+        const invite = await regenerateRoomInvite(token, roomId, crypto.randomUUID());
+        setInviteCode(invite.code);
+        setInviteExpiresAt(invite.expiresAt);
         setToast("새 초대 코드를 만들었어요.");
       }
       if (confirmAction.type === "transfer") {
+        await transferRoomOwnership(token, roomId, confirmAction.memberId);
         setToast(`${confirmAction.memberName}님에게 방장을 넘겼어요.`);
+        const response = await getRoomSettings(token, roomId);
+        setSettings(response);
+        setMemberList(response.members);
       }
       if (confirmAction.type === "remove") {
+        await removeRoomMember(token, roomId, confirmAction.memberId);
         setMemberList((current) => current.filter((member) => member.id !== confirmAction.memberId));
         setToast(`${confirmAction.memberName}님을 모임에서 내보냈어요.`);
       }
-      if (confirmAction.type === "leave" || confirmAction.type === "delete") {
+      if (confirmAction.type === "leave") {
+        await leaveRoom(token, roomId);
         router.push("/rooms");
       }
+      if (confirmAction.type === "delete") {
+        await deleteRoom(token, roomId);
+        router.push("/rooms");
+      }
+    } catch (error) {
+      setToast(error instanceof ApiError ? error.message : "처리하지 못했어요. 다시 시도해주세요.");
+    } finally {
       setBusy(false);
       setConfirmAction(null);
-    }, 420);
+    }
   }
 
   const confirmation = confirmAction ? confirmCopy(confirmAction) : null;
@@ -199,18 +264,18 @@ export function RoomSettings({ roomId }: { roomId: string }) {
             <a href="#room-info">모임 정보</a>
             <a href="#invite">초대</a>
             <a href="#sharing">알림</a>
-            {isOwner && <a href="#members">멤버 관리</a>}
+            {permissions.canManageMembers && <a href="#members">멤버 관리</a>}
             <a href="#leave">나가기</a>
           </aside>
 
           <div className={styles.settingsContent}>
             <section className={styles.settingsCard} id="room-info">
               <header>
-                <div><p className={styles.eyebrow}>모임 정보</p><h2>{isOwner ? "이름과 랭킹" : "현재 모임"}</h2></div>
-                {!isOwner && <span className={styles.roleBadge}>멤버</span>}
+                <div><p className={styles.eyebrow}>모임 정보</p><h2>{permissions.canEditRoom ? "이름과 랭킹" : "현재 모임"}</h2></div>
+                {!permissions.canEditRoom && <span className={styles.roleBadge}>멤버</span>}
               </header>
 
-              {isOwner ? (
+              {permissions.canEditRoom ? (
                 <>
                   <div className={styles.settingsEmojiList} aria-label="모임 이모지">
                     {emojiOptions.map((option) => (
@@ -233,7 +298,7 @@ export function RoomSettings({ roomId }: { roomId: string }) {
               ) : (
                 <div className={styles.roomReadOnly}>
                   <span aria-hidden="true">{room.emoji}</span>
-                  <div><strong>{room.name}</strong><p>멤버 {room.members}명 · 함께한 지 {room.days}일</p></div>
+                  <div><strong>{room.name}</strong><p>멤버 {room.memberCount}명 · 함께한 지 {room.daysSinceStart}일</p></div>
                 </div>
               )}
             </section>
@@ -243,12 +308,12 @@ export function RoomSettings({ roomId }: { roomId: string }) {
               <div className={styles.invitePanel}>
                 <div>
                   <span>초대 코드</span>
-                  <strong>{inviteCode}</strong>
-                  <small>{inviteExpiryLabel}까지 사용</small>
+                  <strong>{inviteCode || "발급된 코드가 없어요"}</strong>
+                  {inviteExpiryLabel && <small>{inviteExpiryLabel}까지 사용</small>}
                 </div>
                 <div>
-                  <button type="button" className={styles.primaryButton} onClick={copyInvite}>링크 복사</button>
-                  {isOwner && <button type="button" className={styles.secondaryButton} onClick={() => setConfirmAction({ type: "regenerate" })}>새 코드 만들기</button>}
+                  <button type="button" className={styles.primaryButton} onClick={copyInvite} disabled={!inviteCode}>링크 복사</button>
+                  {permissions.canInvite && <button type="button" className={styles.secondaryButton} onClick={() => setConfirmAction({ type: "regenerate" })}>새 코드 만들기</button>}
                 </div>
               </div>
             </section>
@@ -268,17 +333,19 @@ export function RoomSettings({ roomId }: { roomId: string }) {
               </div>
             </section>
 
-            {isOwner && (
+            {permissions.canManageMembers && (
               <section className={styles.settingsCard} id="members">
                 <header><div><p className={styles.eyebrow}>멤버</p><h2>{memberList.length}명과 함께하고 있어요</h2></div></header>
                 <div className={styles.manageMemberList}>
-                  {memberList.map((member, index) => (
+                  {memberList.map((member) => (
                     <article key={member.id}>
-                      <span className={styles.avatar} style={{ background: member.color, color: "#18221b" }} aria-hidden="true">{member.avatar}</span>
-                      <div><strong>{member.name}</strong><small>{index === 0 ? "방장" : `${member.joined}째 참여 중`}</small></div>
-                      {index > 0 && (
+                      <span className={styles.avatar} style={{ background: member.color, color: "#18221b" }} aria-hidden="true">{member.avatarText}</span>
+                      <div><strong>{member.name}</strong><small>{member.role === "owner" ? "방장" : `${member.joinedDays}일째 참여 중`}</small></div>
+                      {!member.isMe && (
                         <div>
-                          <button type="button" onClick={() => setConfirmAction({ type: "transfer", memberId: member.id, memberName: member.name })}>방장 넘기기</button>
+                          {permissions.canTransferOwnership && (
+                            <button type="button" onClick={() => setConfirmAction({ type: "transfer", memberId: member.id, memberName: member.name })}>방장 넘기기</button>
+                          )}
                           <button type="button" className={styles.dangerTextButton} onClick={() => setConfirmAction({ type: "remove", memberId: member.id, memberName: member.name })}>내보내기</button>
                         </div>
                       )}
@@ -289,21 +356,21 @@ export function RoomSettings({ roomId }: { roomId: string }) {
             )}
 
             <section className={`${styles.settingsCard} ${styles.dangerCard}`} id="leave">
-              <header><div><p className={styles.eyebrow}>모임 나가기</p><h2>{isOwner ? "방장 권한을 먼저 확인해요" : "이 모임에서 나가기"}</h2></div></header>
+              <header><div><p className={styles.eyebrow}>모임 나가기</p><h2>{permissions.canLeaveRoom ? "이 모임에서 나가기" : "방장 권한을 먼저 확인해요"}</h2></div></header>
               <div className={styles.dangerRow}>
                 <div>
                   <strong>모임 나가기</strong>
-                  <p>{isOwner ? "다른 멤버에게 방장을 넘긴 뒤 나갈 수 있어요." : "나가면 이 모임의 식탁을 더 이상 볼 수 없어요."}</p>
+                  <p>{permissions.canLeaveRoom ? "나가면 이 모임의 식탁을 더 이상 볼 수 없어요." : "다른 멤버에게 방장을 넘긴 뒤 나갈 수 있어요."}</p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => isOwner ? setToast("먼저 다른 멤버에게 방장을 넘겨주세요.") : setConfirmAction({ type: "leave" })}
+                  onClick={() => !permissions.canLeaveRoom ? setToast("먼저 다른 멤버에게 방장을 넘겨주세요.") : setConfirmAction({ type: "leave" })}
                 >
                   모임 나가기
                 </button>
               </div>
 
-              {isOwner && (
+              {permissions.canDeleteRoom && (
                 <div className={styles.deleteRoomBox}>
                   <div><strong>모임 삭제</strong><p>모임 이름을 입력하면 삭제할 수 있어요.</p></div>
                   <div>

@@ -193,13 +193,16 @@ async def _room_detail_payload(
 
     target_date = date_cls.fromisoformat(date_str) if date_str else room_aggregation.today_kst()
     slots = await room_aggregation.build_meal_slots(db, room_id, members, target_date, viewer_id)
+    today = room_aggregation.today_kst()
+    badges = await room_aggregation.build_room_badges(db, room_id, members, today)
 
     return {
         "room": summary,
         "members": member_list,
-        "serverDate": room_aggregation.today_kst().isoformat(),
+        "serverDate": today.isoformat(),
         "timezone": "Asia/Seoul",
         "todayMealSlots": slots,
+        "badges": badges,
     }
 
 

@@ -317,6 +317,82 @@ async def build_member_calendar(
     return [{"date": d.isoformat(), "recordCount": c} for d, c in sorted(counts.items())]
 
 
+_BADGE_MIN_RECIPE_COUNT = 5
+
+
+async def build_room_badges(
+    db: AsyncSession, room_id: uuid.UUID, members: list[RoomMember], today: date
+) -> list[dict[str, object]]:
+    """roomData.ts 목업의 badges 4종 중 태그 데이터 없이 계산 가능한 3종만
+    구현한다(개근왕/든든이/레시피왕) - "채소한입"은 ProductRef/RecipeRef에
+    카테고리 태그가 미러링돼 있지 않아 이번 범위에서 제외(후속 작업).
+    room_meal_threads에 실제로 기록된 (user, date) 조합만 diet-service에
+    조회해서 그 주에 diet-service를 매일 왕복하지 않는다."""
+    week_start, week_end = week_range_kst(today)
+    user_ids = [m.user_id for m in members]
+    if not user_ids:
+        return []
+
+    thread_map = await _record_counts_for_range(db, room_id, user_ids, week_start, week_end)
+    recorded_dates_by_user: dict[int, set[date]] = {}
+    for (uid, d, _mt) in thread_map:
+        recorded_dates_by_user.setdefault(uid, set()).add(d)
+
+    records_by_date: dict[date, list[dict[str, object]]] = {}
+    for d in {d for (_uid, d, _mt) in thread_map}:
+        records_by_date[d] = await get_meal_records(user_ids, d)
+
+    record_count_by_user: dict[int, int] = {uid: len(dates) for uid, dates in recorded_dates_by_user.items()}
+    recipe_count_by_user: dict[int, int] = {}
+    for day_records in records_by_date.values():
+        for record in day_records:
+            uid = record.get("userId")
+            recipe_hits = sum(1 for item in record.get("connectedItems", []) if item.get("source") == "recipe")
+            if recipe_hits:
+                recipe_count_by_user[uid] = recipe_count_by_user.get(uid, 0) + recipe_hits
+
+    display_names = await room_store.get_display_names_bulk(db, user_ids)
+
+    def _name(uid: int) -> str:
+        return display_names.get(uid, f"회원{uid}")
+
+    badges: list[dict[str, object]] = []
+
+    perfect_attendance = [uid for uid, dates in recorded_dates_by_user.items() if len(dates) >= 7]
+    if perfect_attendance:
+        badges.append({
+            "emoji": "🌱",
+            "name": "개근왕",
+            "ownerId": str(perfect_attendance[0]),
+            "ownerName": _name(perfect_attendance[0]),
+            "copy": "이번 주 7일 모두 기록",
+        })
+
+    if record_count_by_user:
+        top_recorder = max(record_count_by_user, key=lambda uid: record_count_by_user[uid])
+        if record_count_by_user[top_recorder] > 0:
+            badges.append({
+                "emoji": "🍚",
+                "name": "든든이",
+                "ownerId": str(top_recorder),
+                "ownerName": _name(top_recorder),
+                "copy": "한 끼 기록을 가장 많이 남김",
+            })
+
+    eligible_recipe_users = {uid: cnt for uid, cnt in recipe_count_by_user.items() if cnt >= _BADGE_MIN_RECIPE_COUNT}
+    if eligible_recipe_users:
+        top_recipe_user = max(eligible_recipe_users, key=lambda uid: eligible_recipe_users[uid])
+        badges.append({
+            "emoji": "👩‍🍳",
+            "name": "레시피왕",
+            "ownerId": str(top_recipe_user),
+            "ownerName": _name(top_recipe_user),
+            "copy": f"레시피로 {eligible_recipe_users[top_recipe_user]}번 기록",
+        })
+
+    return badges
+
+
 async def hydrate_average_sugar(db: AsyncSession, room_id: uuid.UUID, summary: dict[str, object]) -> None:
     """오늘 하루치 diet-service 조회로 평균 당류를 채운다 - room 목록 화면에서
     방마다 diet-service를 왕복하면 느려지므로, 상세 화면 등 실제로 필요한

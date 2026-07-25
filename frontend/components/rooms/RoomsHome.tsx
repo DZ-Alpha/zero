@@ -5,17 +5,23 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SafeImage } from "@/components/SafeImage";
 import styles from "@/components/rooms/Rooms.module.css";
-import { roomActivity, rooms, teamRanking } from "@/components/rooms/roomData";
 import { useAuthSession } from "@/hooks/useAuthSession";
-import { MAX_ROOM_COUNT } from "@/lib/rooms/contracts";
+import { ApiError } from "@/lib/api/client";
+import { createRoom as createRoomApi, getRoomsHome } from "@/lib/api/rooms";
+import { CreateRoomResponse, MAX_ROOM_COUNT, RoomsHomeResponse } from "@/lib/rooms/contracts";
 
 const emojiOptions = ["🌿", "🍚", "🥗", "🏃", "🌙"];
-const DEMO_INVITE_CODE = "DG7K2A";
+
+const MEAL_LABELS: Record<string, string> = { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" };
 
 export function RoomsHome() {
   const router = useRouter();
-  const { ready: authReady, signedIn } = useAuthSession();
-  const myRooms = rooms.slice(0, MAX_ROOM_COUNT);
+  const { ready: authReady, signedIn, token } = useAuthSession();
+  const [home, setHome] = useState<RoomsHomeResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const myRooms = home?.rooms ?? [];
+  const roomActivity = home?.recentActivities ?? [];
+  const teamRanking = home?.weeklyRanking ?? [];
   const roomLimitReached = myRooms.length >= MAX_ROOM_COUNT;
   const [showAllRanking, setShowAllRanking] = useState(false);
   const [modal, setModal] = useState<"create" | "join" | null>(null);
@@ -23,8 +29,28 @@ export function RoomsHome() {
   const [roomName, setRoomName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [rankingOptIn, setRankingOptIn] = useState(true);
-  const [created, setCreated] = useState(false);
+  const [created, setCreated] = useState<CreateRoomResponse | null>(null);
+  const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    setLoading(true);
+    getRoomsHome(token)
+      .then((response) => {
+        if (active) setHome(response);
+      })
+      .catch(() => {
+        if (active) setToast("모임 정보를 불러오지 못했어요.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!toast) return;
@@ -47,7 +73,7 @@ export function RoomsHome() {
   }, [modal]);
 
   function openModal(nextModal: "create" | "join") {
-    setCreated(false);
+    setCreated(null);
     setRoomName("");
     setJoinCode("");
     setEmoji("🌿");
@@ -57,19 +83,28 @@ export function RoomsHome() {
 
   function closeModal() {
     setModal(null);
-    setCreated(false);
+    setCreated(null);
   }
 
-  function createRoom() {
+  async function createRoom() {
     if (roomLimitReached) {
       setToast("얌로그 모임은 3개까지 만들 수 있어요.");
       return;
     }
-    if (!roomName.trim()) {
-      setToast("모임 이름을 먼저 적어주세요.");
+    if (!roomName.trim() || !token || creating) {
+      if (!roomName.trim()) setToast("모임 이름을 먼저 적어주세요.");
       return;
     }
-    setCreated(true);
+    setCreating(true);
+    try {
+      const response = await createRoomApi(token, { name: roomName.trim(), emoji, rankingOptIn }, crypto.randomUUID());
+      setCreated(response);
+      setHome((prev) => prev && { ...prev, rooms: [...prev.rooms, response.room] });
+    } catch (error) {
+      setToast(error instanceof ApiError ? error.message : "모임을 만들지 못했어요. 다시 시도해주세요.");
+    } finally {
+      setCreating(false);
+    }
   }
 
   function previewJoin() {
@@ -83,16 +118,17 @@ export function RoomsHome() {
   }
 
   async function copyInvite() {
+    if (!created) return;
     const origin = window.location.origin;
     try {
-      await navigator.clipboard.writeText(`${origin}/rooms/join?code=${DEMO_INVITE_CODE}`);
+      await navigator.clipboard.writeText(`${origin}${created.invite.joinUrl}`);
       setToast("초대 링크를 복사했어요.");
     } catch {
       setToast("초대 코드를 직접 복사해주세요.");
     }
   }
 
-  if (!authReady) {
+  if (!authReady || (signedIn && token && loading)) {
     return (
       <main className={styles.page}>
         <div className={styles.wrap}>
@@ -134,7 +170,7 @@ export function RoomsHome() {
             <div className={styles.liveSignal} aria-label="얌로그 참여 현황">
               <i aria-hidden="true" />
               <strong>{myRooms.length} / {MAX_ROOM_COUNT}</strong>
-              <span>내 모임 · 전체 1,284팀 기록 중</span>
+              <span>내 모임 · 전체 {(home?.activeTeamCount ?? 0).toLocaleString()}팀 기록 중</span>
             </div>
           </div>
           <div className={styles.heroActions}>
@@ -182,22 +218,22 @@ export function RoomsHome() {
                   )}
                 </div>
                 <h3>{room.name}</h3>
-                <p className={styles.roomMeta}>멤버 {room.members}명 · 오늘 {room.recordedToday}명 기록 · {room.days}일째</p>
+                <p className={styles.roomMeta}>멤버 {room.memberCount}명 · 오늘 {room.recordedTodayCount}명 기록 · {room.daysSinceStart}일째</p>
                 <div className={styles.roomCardPhotos} aria-label={`${room.name} 최근 식단`}>
                   {recentMeals.map((activity) => (
                     <span key={activity.id}>
-                      <SafeImage src={activity.image} alt="" fallbackLabel={activity.meal} />
-                      <i>{activity.avatar}</i>
+                      <SafeImage src={activity.imageUrl} alt="" fallbackLabel={MEAL_LABELS[activity.mealType]} />
+                      <i>{activity.memberAvatar}</i>
                     </span>
                   ))}
                 </div>
                 <div className={styles.roomStats}>
                   <div><small>팀 평균 당류</small><strong>{room.averageSugar}<span>g</span></strong></div>
-                  <div><small>이번 달 기록률</small><strong>{room.recordRate}<span>%</span></strong></div>
-                  <div><small>내 참여일</small><strong>{room.myDays}<span>일</span></strong></div>
+                  <div><small>이번 달 기록률</small><strong>{room.monthlyRecordRate}<span>%</span></strong></div>
+                  <div><small>내 참여일</small><strong>{room.myParticipationDays}<span>일</span></strong></div>
                 </div>
                 {room.rankingOptIn && !room.rank && (
-                  <p className={styles.qualification}>전체 랭킹 참여까지 {Math.max(0, 7 - room.days)}일 남았어요.</p>
+                  <p className={styles.qualification}>전체 랭킹 참여까지 {room.rankingEligibility.remainingDays}일 남았어요.</p>
                 )}
                 <Link className={styles.roomLink} href={`/rooms/${room.id}`}>
                   <span>오늘 기록 보러가기</span><span aria-hidden="true">→</span>
@@ -219,10 +255,10 @@ export function RoomsHome() {
           <div className={styles.activityRibbon}>
             {roomActivity.map((activity) => (
               <Link href={`/rooms/${activity.roomId}`} className={styles.activityItem} key={activity.id}>
-                <span className={styles.activityPhoto}><SafeImage src={activity.image} alt="" fallbackLabel={activity.meal} /></span>
+                <span className={styles.activityPhoto}><SafeImage src={activity.imageUrl} alt="" fallbackLabel={MEAL_LABELS[activity.mealType]} /></span>
                 <span className={styles.activityCopy}>
                   <small>{activity.roomEmoji} {activity.roomName}</small>
-                  <strong>{activity.member}님이 {activity.copy}</strong>
+                  <strong>{activity.memberName}님이 {MEAL_LABELS[activity.mealType]}을 기록했어요 · {activity.message}</strong>
                 </span>
                 <span aria-hidden="true">→</span>
               </Link>
@@ -241,12 +277,12 @@ export function RoomsHome() {
 
           <ol className={styles.rankList}>
             {teamRanking.slice(0, showAllRanking ? teamRanking.length : 3).map((team, index) => (
-              <li className={`${styles.rankRow} ${team.mine ? styles.rankRowMine : ""}`} key={team.id}>
+              <li className={`${styles.rankRow} ${team.isMine ? styles.rankRowMine : ""}`} key={team.id}>
                 <span className={styles.rankNumber}>{String(index + 1).padStart(2, "0")}</span>
                 <span className={styles.teamEmoji} aria-hidden="true">{team.emoji}</span>
                 <span className={styles.teamCopy}>
-                  <strong>{team.name}{team.mine && <em className={styles.mineBadge}>내 모임</em>}</strong>
-                  <small>멤버 {team.members}명 · {team.movement === 0 ? "순위 유지" : `${Math.abs(team.movement)}계단 ${team.movement > 0 ? "상승" : "하락"}`}</small>
+                  <strong>{team.name}{team.isMine && <em className={styles.mineBadge}>내 모임</em>}</strong>
+                  <small>멤버 {team.memberCount}명 · {team.rankMovement === 0 ? "순위 유지" : `${Math.abs(team.rankMovement)}계단 ${team.rankMovement > 0 ? "상승" : "하락"}`}</small>
                 </span>
                 <span className={styles.teamRate}>
                   <span>기록률</span><strong>{team.recordRate}%</strong>
@@ -307,13 +343,13 @@ export function RoomsHome() {
                 </form>
               ) : created ? (
                 <div className={styles.codeResult}>
-                  <span className={styles.codeEmoji} aria-hidden="true">{emoji}</span>
-                  <h3>{roomName}을 만들었어요</h3>
+                  <span className={styles.codeEmoji} aria-hidden="true">{created.room.emoji}</span>
+                  <h3>{created.room.name}을 만들었어요</h3>
                   <p>초대 코드는 7일 동안 사용할 수 있어요.</p>
-                  <div className={styles.inviteCode}>{DEMO_INVITE_CODE}</div>
+                  <div className={styles.inviteCode}>{created.invite.code}</div>
                   <div className={styles.modalActions}>
                     <button type="button" className={styles.secondaryButton} onClick={copyInvite}>링크 복사</button>
-                    <Link className={styles.primaryButton} href="/rooms/green-table">모임으로 가기</Link>
+                    <Link className={styles.primaryButton} href={`/rooms/${created.room.id}`}>모임으로 가기</Link>
                   </div>
                 </div>
               ) : (
@@ -348,7 +384,9 @@ export function RoomsHome() {
                   </div>
                   <div className={styles.modalActions}>
                     <button type="button" className={styles.secondaryButton} onClick={closeModal}>취소</button>
-                    <button type="submit" className={styles.primaryButton} disabled={!roomName.trim()}>모임 만들기</button>
+                    <button type="submit" className={styles.primaryButton} disabled={!roomName.trim() || creating}>
+                      {creating ? "만드는 중…" : "모임 만들기"}
+                    </button>
                   </div>
                 </form>
               )}

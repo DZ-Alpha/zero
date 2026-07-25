@@ -26,6 +26,11 @@ CANDIDATES: list[ModelCandidate] = [
 
     # --- AWS Bedrock (Converse API로 호출 - 모델군 상관없이 동일 인터페이스) ---
     # 확인 필요: 아래 model id들은 예시. 실제 계정에서 활성화된 정확한 id로 교체할 것.
+    # PR-0301/0302/0303 후보 - us-east-1, IAM 승인 대기 중(2026-07-25).
+    # 콘솔 Model access에서 foundation-model이 아니라 cross-region inference
+    # profile로만 뜨면(예: us.anthropic.claude-haiku-4-5-20251001-v1:0) 아래
+    # model_id와 IAM 정책의 Resource ARN을 그 profile id로 바꿔야 한다.
+    ModelCandidate("bedrock", "anthropic.claude-haiku-4-5-20251001-v1:0", "Bedrock/Haiku4.5"),
     ModelCandidate("bedrock", "anthropic.claude-opus-4-8-v1:0", "Bedrock/Claude-Opus4.8"),
     ModelCandidate("bedrock", "meta.llama3-3-70b-instruct-v1:0", "Bedrock/Llama3.3-70B"),
     ModelCandidate("bedrock", "amazon.nova-pro-v1:0", "Bedrock/Nova-Pro"),
