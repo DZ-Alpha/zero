@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { ChatPanel } from "@/components/ChatPanel";
 
@@ -18,21 +19,27 @@ export function ChatWidget() {
   return (
     <>
       {open && (
-        <div className="chat-widget-popup" role="dialog" aria-modal="true" aria-label="당당 상담">
+        <div className="chat-widget-popup" role="dialog" aria-label="당당 상담">
           <button className="chat-widget-close" onClick={() => setOpen(false)} aria-label="상담 닫기">✕</button>
           <ChatPanel />
         </div>
       )}
-      {!open && (
-        <button
-          className="chat-widget-fab"
-          onClick={() => setOpen(true)}
-          aria-label="상담 열기"
-          aria-expanded={false}
-        >
-          💬
-        </button>
-      )}
+      <button
+        className={`chat-widget-fab${open ? " is-open" : ""}`}
+        onClick={() => setOpen((current) => !current)}
+        aria-label={open ? "상담 접기" : "상담 열기"}
+        aria-expanded={open}
+      >
+        <Image
+          className="chat-widget-character"
+          src="/dangdang-support.png"
+          alt=""
+          width={87}
+          height={78}
+          priority
+          draggable={false}
+        />
+      </button>
     </>
   );
 }

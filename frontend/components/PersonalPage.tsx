@@ -92,11 +92,10 @@ export function PersonalPage() {
           <div className="mypage-gate-symbol" aria-hidden="true">
             <svg viewBox="0 0 32 32"><circle cx="16" cy="11" r="5" /><path d="M7 27c.8-6.1 3.8-9.1 9-9.1s8.2 3 9 9.1" /></svg>
           </div>
-          <p className="eyebrow">회원 전용</p>
-          <h1>마이페이지는<br />로그인 후 볼 수 있어요.</h1>
-          <p>하루 목표, 관심 기준과 저장한 메뉴는 계정에 안전하게 이어서 보관해요.</p>
+          <p className="eyebrow">MY</p>
+          <h1>로그인하면<br />내 기록을 이어볼 수 있어요.</h1>
+          <p>찜한 메뉴, 하루 목표, 계정 설정을 한곳에서 확인해요.</p>
           <div className="mypage-gate-actions"><Link href="/login">로그인하기</Link><Link href="/signup">회원가입하기</Link></div>
-          <small>메인 화면은 로그인하지 않아도 기본 기록으로 미리 볼 수 있어요.</small>
         </section>
       </main>
     );
@@ -232,7 +231,6 @@ export function PersonalPage() {
       <section className="page-intro wrap">
         <p className="eyebrow">마이 당당</p>
         <h1>{name}님의 기준을<br />한곳에서 관리해요.</h1>
-        <p>여기에서 바꾼 목표와 관심 기준은 홈, 식단 기록과 상품 안내에 함께 반영돼요.</p>
       </section>
 
       <section className="profile-summary wrap">
@@ -244,14 +242,14 @@ export function PersonalPage() {
 
       <section className="settings-list wrap">
         <article><header><div><span>01</span><h2>신체와 활동 정보</h2></div><button type="button" onClick={() => openEditor("profile")}>정보 바꾸기</button></header><dl><div><dt>나이</dt><dd>{age === null ? "미입력" : `${age}세`}</dd></div><div><dt>성별</dt><dd>{profile.gender || "미입력"}</dd></div><div><dt>키</dt><dd>{profile.height ? `${profile.height}cm` : "미입력"}</dd></div><div><dt>몸무게</dt><dd>{profile.weight ? `${profile.weight}kg` : "미입력"}</dd></div><div><dt>활동량</dt><dd>{profile.activity || "미입력"}</dd></div></dl></article>
-        <article><header><div><span>02</span><h2>관심 있는 기준</h2></div><button type="button" onClick={() => openEditor("interests")}>기준 바꾸기</button></header>{interests.length > 0 ? <div className="setting-tags">{interests.map((item) => <span key={item}>{item}</span>)}</div> : <p className="setting-empty">아직 고른 기준이 없어요.</p>}<p>식품과 레시피를 추천할 때 이 기준을 먼저 살펴봐요.</p></article>
-        <article><header><div><span>03</span><h2>주의할 성분</h2></div><button type="button" onClick={() => openEditor("allergens")}>성분 바꾸기</button></header>{allergens.length > 0 ? <div className="setting-tags warning">{allergens.map((item) => <span key={item}>{item}</span>)}</div> : <p className="setting-empty">등록한 주의 성분이 없어요.</p>}<p>식품과 사진 분석 결과에 이 성분이 있으면 먼저 알려드려요.</p></article>
+        <article><header><div><span>02</span><h2>관심 있는 기준</h2></div><button type="button" onClick={() => openEditor("interests")}>기준 바꾸기</button></header>{interests.length > 0 ? <div className="setting-tags">{interests.map((item) => <span key={item}>{item}</span>)}</div> : <p className="setting-empty">아직 고른 기준이 없어요.</p>}<p>저당픽과 레시피를 추천할 때 이 기준을 먼저 살펴봐요.</p></article>
+        <article><header><div><span>03</span><h2>주의할 성분</h2></div><button type="button" onClick={() => openEditor("allergens")}>성분 바꾸기</button></header>{allergens.length > 0 ? <div className="setting-tags warning">{allergens.map((item) => <span key={item}>{item}</span>)}</div> : <p className="setting-empty">등록한 주의 성분이 없어요.</p>}<p>저당픽과 사진 분석 결과에 이 성분이 있으면 먼저 알려드려요.</p></article>
         <article><header><div><span>04</span><h2>계정과 알림</h2></div><button type="button" onClick={() => openEditor("notifications")}>알림 바꾸기</button></header><dl><div><dt>연결 계정</dt><dd>{connectedSns.length > 0 ? connectedSns.map((item) => item.label).join(", ") : providerName}</dd></div><div><dt>신제품 알림</dt><dd>{notifications.newProducts ? "받기" : "받지 않기"}</dd></div><div><dt>주간 리포트</dt><dd>{notifications.weeklyReport ? "일요일에 받기" : "받지 않기"}</dd></div></dl>{connectedSns.length > 0 && <div className="sns-manage">{connectedSns.map((item) => <span key={item.code}>{item.label}<button type="button" onClick={() => setUnlinkTarget(item.code)} disabled={unlinking || connectedSns.length === 1}>해제</button></span>)}<small>{connectedSns.length === 1 ? "마지막 로그인 수단은 해제할 수 없어요." : "연결을 해제해도 계정 정보는 유지돼요."}</small></div>}
         {token && linkableProviders.length > 0 && <div className="sns-link-more"><small>다른 소셜 계정 연동하기</small><div>{linkableProviders.map((provider) => <a key={provider.id} className={`oauth-button is-${provider.className}`} href={`/b/social-access/${provider.id}/link?token=${encodeURIComponent(token)}`}><span>{provider.mark}</span><b>{provider.label} 연동하기</b><i className="oauth-arrow">→</i></a>)}</div></div>}
         </article>
       </section>
 
-      <section className="profile-links wrap"><Link href="/diet"><span>내 월간 리포트</span><b>캘린더에서 보기 →</b></Link><Link href="/recipes"><span>저장한 레시피와 식품</span><b>즐겨찾기 보기 →</b></Link></section>
+      <section className="profile-links wrap"><Link href="/diet"><span>내 월간 리포트</span><b>캘린더에서 보기 →</b></Link><Link href="/recipes"><span>저장한 레시피와 저당픽</span><b>즐겨찾기 보기 →</b></Link></section>
       <section className="account-danger-zone wrap"><div><h2>계정 관리</h2><p>탈퇴하면 연결된 계정과 저장한 사용자 정보를 되돌릴 수 없어요.</p></div><button type="button" onClick={() => setConfirmingWithdrawal(true)}>회원 탈퇴</button></section>
 
       {editor && (

@@ -40,7 +40,7 @@ export default function Page() {
           <div><span>하루 칼로리 목표</span><b>{data.calories.toLocaleString()}kcal</b></div>
         </div>
         <Link className="auth-primary" href="/">오늘 식단 기록하기</Link>
-        <Link className="success-secondary" href="/search">식품부터 둘러보기</Link>
+        <Link className="success-secondary" href="/search">저당픽부터 둘러보기</Link>
       </div>
     </AuthFrame>
   );

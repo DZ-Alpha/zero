@@ -69,6 +69,7 @@ function useFavoriteToggle(id: string | number | null | undefined, kind: Favorit
     try {
       const result = await toggleRemote(kind, id, token);
       setLiked(result.liked);
+      window.dispatchEvent(new Event("dangdang:favorites-changed"));
       setToast(result.liked ? "즐겨찾기에 저장했어요." : "즐겨찾기에서 뺐어요.");
     } catch {
       setToast("찜 저장에 실패했어요. 다시 시도해 주세요.");
