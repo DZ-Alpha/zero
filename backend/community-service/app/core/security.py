@@ -1,8 +1,9 @@
 import logging
 import time
+from typing import Annotated
 
 import jwt
-from fastapi import HTTPException, Response, status
+from fastapi import Header, HTTPException, Response, status
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -50,6 +51,22 @@ def resolve_token(usr: str | None, authorization: str | None) -> str:
     if usr:
         return usr
     raise _UNAUTHORIZED
+
+
+def require_room_user(
+    response: Response,
+    authorization: Annotated[str | None, Header()] = None,
+) -> UserIdentity:
+    """얌로그(rooms) 전용 FastAPI Depends 래퍼 — 기존 get_current_user_from_token을
+    그대로 쓰되, 매 라우터 핸들러마다 resolve_token(usr, authorization) 보일러
+    플레이트를 반복하지 않게 한다. 얌로그 API 계약(§9)은 usr 쿼리파라미터
+    호환을 요구하지 않고 "모든 요청은 Authorization: Bearer를 사용한다"고
+    명시하므로, 다른 엔드포인트들과 달리 usr 폴백 없이 헤더만 받는다."""
+    if not authorization or not authorization.startswith("Bearer "):
+        logger.warning("auth denied: reason=missing_bearer_token")
+        raise _UNAUTHORIZED
+    token = authorization.removeprefix("Bearer ").strip()
+    return get_current_user_from_token(token, response)
 
 
 def get_current_admin_from_token(token: str, response: Response) -> UserIdentity:

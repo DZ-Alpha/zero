@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     kafka_brokers: str = ""
     kafka_consumer_group: str = "diet-service"
 
+    # 얌로그(rooms) 연동용 — community-service가 서버간 호출로 사용자·날짜·
+    # 끼니별 식단을 조회하는 GET /diet/internal/meal-records의 인증. 이 값이
+    # 비어있으면 그 엔드포인트는 항상 403을 반환한다(공백 값으로 "누구나 통과"가
+    # 되는 사고를 막기 위해 명시적으로 막아둠 — admin_signup_secret과 같은 패턴).
+    # community-service의 동일 이름 설정과 값이 같아야 한다.
+    internal_service_secret: str = ""
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)
