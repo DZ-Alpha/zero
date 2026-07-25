@@ -142,12 +142,21 @@ export type RoomsHomeResponse = {
   weeklyRankingNextCursor: string | null;
 };
 
+export type RoomBadge = {
+  emoji: string;
+  name: string;
+  ownerId: string;
+  ownerName: string;
+  copy: string;
+};
+
 export type RoomDetailResponse = {
   room: RoomSummary;
   members: RoomMember[];
   serverDate: string;
   timezone: string;
   todayMealSlots: MemberMealSlot[];
+  badges: RoomBadge[];
 };
 
 export type CreateRoomInput = {

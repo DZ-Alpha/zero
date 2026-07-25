@@ -7,26 +7,41 @@ import { RecordMealModal } from "@/components/RecordMealModal";
 import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
 import { products, recipes } from "@/data/catalog";
-import { mealPhotos, rooms, teamRanking } from "@/components/rooms/roomData";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useDailyGauge } from "@/hooks/useDailyGauge";
 import { DietRecord, getTodayKey, keyToDate, MealType, useDietRecords } from "@/hooks/useDietRecords";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { withMockFallback } from "@/lib/api/client";
+import { getRoomsHome } from "@/lib/api/rooms";
 import { getProductRanking, getUserRecommendations, HomeProductItem } from "@/lib/api/zerocheck";
+import { RoomsHomeResponse } from "@/lib/rooms/contracts";
 
 type RankingItem = { name: string; meta: string; saved: number; href: string };
 
 const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 
+const MEAL_LABELS: Record<string, string> = { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" };
+
 const recipeRanking: RankingItem[] = recipes.map((recipe) => ({ name: recipe.title, meta: `${recipe.time} · 등록 재료 당류 ${recipe.estimatedSugar}g`, saved: recipe.savedDemo, href: `/recipes/${recipe.slug}` }));
 const fallbackProductRanking: RankingItem[] = products.slice(0, 10).map((product) => ({ name: product.title, meta: `${product.serving} 기준 · 당류 ${product.sugar}g · ${product.calories}kcal`, saved: product.savedDemo, href: `/product/${product.slug}` }));
-const roomRanking: RankingItem[] = teamRanking.map((room, index) => ({
-  name: room.name,
-  meta: `멤버 ${room.members}명 · 기록률 ${room.recordRate}% · 평균 당류 ${room.averageSugar}g`,
-  saved: index + 1,
-  href: room.mine ? "/rooms/green-table" : "/rooms",
-}));
+const emptyRoomsHome: RoomsHomeResponse = {
+  rooms: [],
+  recentActivities: [],
+  weeklyRanking: [],
+  activeTeamCount: 0,
+  maxRoomCount: 3,
+  recentActivitiesNextCursor: null,
+  weeklyRankingNextCursor: null,
+};
+
+function toRoomRanking(weeklyRanking: RoomsHomeResponse["weeklyRanking"]): RankingItem[] {
+  return weeklyRanking.map((room, index) => ({
+    name: room.name,
+    meta: `멤버 ${room.memberCount}명 · 기록률 ${room.recordRate}% · 평균 당류 ${room.averageSugar}g`,
+    saved: index + 1,
+    href: room.isMine ? `/rooms/${room.id}` : "/rooms",
+  }));
+}
 
 function toRankingItems(items: HomeProductItem[], personalized: boolean): RankingItem[] {
   return items.map((item, index) => {
@@ -107,6 +122,7 @@ export function HomeDashboard() {
   const [feedback, setFeedback] = useState("");
   const [productRanking, setProductRanking] = useState<RankingItem[]>(fallbackProductRanking);
   const [productPanelTitle, setProductPanelTitle] = useState("저당픽 TOP");
+  const [roomsHome, setRoomsHome] = useState<RoomsHomeResponse>(emptyRoomsHome);
 
   useEffect(() => {
     const today = keyToDate(todayKey);
@@ -136,6 +152,20 @@ export function HomeDashboard() {
       setProductPanelTitle("저당픽 TOP");
     });
 
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) {
+      setRoomsHome(emptyRoomsHome);
+      return;
+    }
+    let active = true;
+    withMockFallback(() => getRoomsHome(token), emptyRoomsHome).then((response) => {
+      if (active) setRoomsHome(response);
+    });
     return () => {
       active = false;
     };
@@ -190,6 +220,11 @@ export function HomeDashboard() {
 
   const today = keyToDate(todayKey);
   const todayLabel = `${today.getMonth() + 1}월 ${today.getDate()}일 ${["일", "월", "화", "수", "목", "금", "토"][today.getDay()]}요일`;
+  const myRoom = roomsHome.rooms[0] ?? null;
+  const myRoomActivities = myRoom
+    ? roomsHome.recentActivities.filter((activity) => activity.roomId === myRoom.id).slice(0, 4)
+    : [];
+  const roomRanking = toRoomRanking(roomsHome.weeklyRanking);
 
   return (
     <main className="home-dashboard">
@@ -205,11 +240,15 @@ export function HomeDashboard() {
         <div className="today-character-copy">
           <p className="day-label">{todayLabel} · {signedIn ? "나의 오늘" : "오늘의 미리보기"}</p>
           <h1>{stateCopy}</h1>
-          <Link className="today-room-nudge" href="/rooms/green-table">
-            <span className="today-room-nudge-avatars" aria-hidden="true"><i>민</i><i>준</i><i>유</i></span>
-            <span><strong>초록 식탁에 새 사진이 올라왔어요</strong><small>멤버들의 오늘 식탁 보러가기</small></span>
-            <b aria-hidden="true">→</b>
-          </Link>
+          {myRoom && (
+            <Link className="today-room-nudge" href={`/rooms/${myRoom.id}`}>
+              <span className="today-room-nudge-avatars" aria-hidden="true">
+                {myRoomActivities.slice(0, 3).map((activity) => <i key={activity.id}>{activity.memberAvatar}</i>)}
+              </span>
+              <span><strong>{myRoom.name}에 새 사진이 올라왔어요</strong><small>멤버들의 오늘 식탁 보러가기</small></span>
+              <b aria-hidden="true">→</b>
+            </Link>
+          )}
         </div>
       </section>
 
@@ -253,29 +292,39 @@ export function HomeDashboard() {
         <span>{stateCopy} 기록 흐름을 캘린더에서 이어서 볼 수 있어요.</span><b>캘린더에서 흐름 보기 →</b>
       </Link>
 
-      <section className="home-room-preview wrap" aria-labelledby="home-room-title" data-preview={!signedIn ? "예시" : undefined}>
-        <div className="home-room-preview-title">
-          <span aria-hidden="true">{rooms[0].emoji}</span>
-          <div><p className="eyebrow">내 모임 · 오늘</p><h2 id="home-room-title">{rooms[0].name}</h2></div>
-        </div>
-        <div className="home-room-preview-activity">
-          <div className="home-room-avatars">{mealPhotos.map((meal) => <span key={meal.id}>{meal.avatar}</span>)}</div>
-          <p><strong>{rooms[0].recordedToday}명이 기록했어요</strong><span>“색 조합부터 맛있어 보여요”</span></p>
-        </div>
-        <div className="home-room-preview-photos" aria-label="방금 올라온 모임 식단">
-          {mealPhotos.map((meal) => (
-            <span key={meal.id}>
-              <SafeImage src={meal.image} alt="" fallbackLabel={meal.meal} />
-              <i>{meal.avatar}</i>
-            </span>
-          ))}
-        </div>
-        <div className="home-room-preview-stats">
-          <span><small>기록률</small><strong>{rooms[0].recordRate}%</strong></span>
-          <span><small>팀 평균 당류</small><strong>{rooms[0].averageSugar}g</strong></span>
-        </div>
-        <Link href="/rooms/green-table">모임 기록 보기 →</Link>
-      </section>
+      {myRoom ? (
+        <section className="home-room-preview wrap" aria-labelledby="home-room-title" data-preview={!signedIn ? "예시" : undefined}>
+          <div className="home-room-preview-title">
+            <span aria-hidden="true">{myRoom.emoji}</span>
+            <div><p className="eyebrow">내 모임 · 오늘</p><h2 id="home-room-title">{myRoom.name}</h2></div>
+          </div>
+          <div className="home-room-preview-activity">
+            <div className="home-room-avatars">{myRoomActivities.map((activity) => <span key={activity.id}>{activity.memberAvatar}</span>)}</div>
+            <p><strong>{myRoom.recordedTodayCount}명이 기록했어요</strong></p>
+          </div>
+          <div className="home-room-preview-photos" aria-label="방금 올라온 모임 식단">
+            {myRoomActivities.map((activity) => (
+              <span key={activity.id}>
+                <SafeImage src={activity.imageUrl} alt="" fallbackLabel={MEAL_LABELS[activity.mealType]} />
+                <i>{activity.memberAvatar}</i>
+              </span>
+            ))}
+          </div>
+          <div className="home-room-preview-stats">
+            <span><small>기록률</small><strong>{myRoom.monthlyRecordRate}%</strong></span>
+            <span><small>팀 평균 당류</small><strong>{myRoom.averageSugar}g</strong></span>
+          </div>
+          <Link href={`/rooms/${myRoom.id}`}>모임 기록 보기 →</Link>
+        </section>
+      ) : signedIn ? (
+        <section className="home-room-preview wrap" aria-labelledby="home-room-title">
+          <div className="home-room-preview-title">
+            <span aria-hidden="true">🍽️</span>
+            <div><p className="eyebrow">얌로그</p><h2 id="home-room-title">아직 참여한 모임이 없어요</h2></div>
+          </div>
+          <Link href="/rooms">모임 만들거나 참여하기 →</Link>
+        </section>
+      ) : null}
 
       <HomeAdBanner />
 
