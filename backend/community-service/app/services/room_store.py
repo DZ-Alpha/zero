@@ -528,6 +528,8 @@ async def send_nudge(
     db: AsyncSession, room_id: uuid.UUID, sender_id: int, target_user_id: int, record_date: date, meal_type: str
 ) -> None:
     await require_membership(db, room_id, sender_id)
+    if sender_id == target_user_id:
+        raise RoomError(422, "CANNOT_NUDGE_SELF", "본인은 콕 찌를 수 없어요.")
     target = await get_membership(db, room_id, target_user_id)
     if target is None:
         raise RoomError(404, "ROOM_NOT_FOUND", "대상 멤버를 찾을 수 없어요.")
