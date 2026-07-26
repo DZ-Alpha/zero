@@ -1,0 +1,6 @@
+# 저당 레시피 producer 주기 실행 (매시 정각, 1시간마다 1회)
+# 설치: crontab -e 에 아래 줄 추가 (또는 이 파일을 /etc/cron.d/ 에 배치)
+#
+# producer는 상시 데몬이 아니라 배치다. run --rm 으로 매번 새 컨테이너를 띄우고 끝나면 제거.
+# 커서(Redis last_fetched_at)가 상태를 유지하므로 매 실행은 "직전 실행 이후 신규"만 조회.
+0 * * * * cd /opt/zero-infra && /usr/bin/docker compose run --rm producer >> /opt/zero-infra/producer.log 2>&1

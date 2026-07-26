@@ -1,0 +1,259 @@
+당당(DangDang) 데이터베이스 명세서
+기준일: 2026-07-20
+기준: zero-db의 PostgreSQL database `zero` 및 MongoDB `dangdang_analytics` 실측
+
+============================================================
+1. 데이터 저장소 역할
+============================================================
+
+PostgreSQL
+- 사용자 계정, 식단 기록, 상품/레시피/커뮤니티의 업무 원본 데이터(System of Record).
+- schema로 서비스 영역을 구분한다.
+  public: 사용자/인증
+  service: 식단, 상품, 레시피, outbox
+  product: 기존 상품 찜
+  recipe: 기존 레시피 찜
+  community: 공지/좋아요
+  ai_rag: RAG 문서 벡터
+  pitr_validation: 복구 검증 마커
+
+MongoDB
+- Kafka `user.activity.raw` 이벤트의 분석용 최종 적재소.
+- 사용자 원본/인증 DB가 아니다.
+- 사용자 식별자는 Mongo ObjectId가 아닌 PostgreSQL `public.users.id` 정수값이다.
+
+============================================================
+2. 핵심 식별자 및 관계
+============================================================
+
+- 사용자 기본 PK: public.users.id (integer)
+- 식단 기록 PK: service.meal_logs.meal_log_id (UUID)
+- 식단 항목 PK: service.meal_items.meal_item_id (UUID)
+- Kafka 이벤트 멱등키: service.event_outbox.event_id (UUID, UNIQUE)
+- Mongo 이벤트 PK: user_activity_events._id = Kafka event_id (UUIDv7 문자열)
+
+물리 FK가 있는 주요 관계
+- users.id -> social_accounts.user_id
+- users.id -> admin_accounts.user_id (1:0..1)
+- users.id -> user_health_profiles.user_id (1:0..1)
+- users.id -> user_preferences.user_id
+- users.id -> meal_logs.user_id
+- meal_logs.meal_log_id -> meal_items.meal_log_id
+- products.product_id -> meal_items.product_id (선택)
+- products.product_id -> product_embeddings.product_id (1:0..1)
+- products.product_id -> product_tags.product_id
+- tags.tag_id -> product_tags.tag_id
+- tags.tag_id -> user_preferences.tag_id (선택)
+- recipes.id -> recipe_ingredients.recipe_id
+- recipe_ingredients.id -> recipe_ingredient_products.recipe_ingredient_id
+- products.product_id -> recipe_ingredient_products.product_id
+- users.id -> notices.author_user_id
+- notices.notice_id -> notice_likes.notice_id
+- users.id -> notice_likes.user_id
+
+논리 관계(현재 FK 없음)
+- event_outbox.user_id -> public.users.id
+- Mongo user_activity_events.user_id -> public.users.id
+
+============================================================
+3. PostgreSQL: public schema
+============================================================
+
+[public.users]
+용도: 서비스의 표준 사용자 원본 테이블.
+PK: id integer
+주요 컬럼:
+- id, email, birthday
+- favorite_categories varchar[], is_allergic, optional_agree
+- tall, weight
+- created_at, updated_at
+
+[public.social_accounts]
+용도: OAuth/소셜 로그인 연결 정보.
+PK: id integer
+FK: user_id -> users.id
+UNIQUE: (provider, provider_user_id)
+주요 컬럼: provider, provider_user_id, nickname, profile_image_url,
+provider_email, provider_gender, provider_birthday, provider_birthyear, linked_at
+
+[public.admin_accounts]
+용도: 관리자 계정 정보.
+PK: id integer
+FK: user_id -> users.id
+UNIQUE: user_id, login_id
+주요 컬럼: login_id, password_hash, created_at
+
+============================================================
+4. PostgreSQL: 식단 및 이벤트 (service schema)
+============================================================
+
+[service.meal_logs]
+용도: 사용자의 한 끼 기록 및 Vision 분석 작업 상태.
+PK: meal_log_id UUID
+FK: user_id -> public.users.id
+주요 컬럼:
+- user_id, eaten_at, meal_type
+- image_object_key: MinIO object key만 저장. 이미지 byte 또는 credential 저장 금지.
+- input_type: VISION | MANUAL | PRODUCT | RECIPE
+- analysis_status: PENDING | PROCESSING | AWAITING_CONFIRMATION | COMPLETED | FAILED
+- vision_confidence, vision_provider, needs_user_confirmation
+- created_at, updated_at
+
+[service.meal_items]
+용도: meal_logs에 속한 실제 식단 항목과 영양값.
+PK: meal_item_id UUID
+FK: meal_log_id -> service.meal_logs.meal_log_id (CASCADE)
+FK: product_id -> service.products.product_id (선택, SET NULL)
+주요 컬럼:
+- external_recipe_id는 product_id와 동시에 값이 있을 수 없음.
+- item_name, serving_value, serving_unit
+- calories, sugars, carbohydrate
+- 모든 수치값은 0 이상.
+
+[service.v_meal_totals] (VIEW)
+용도: meal_log_id별 총 calories, sugars, carbohydrate를 계산하는 조회 전용 view.
+컬럼: meal_log_id, total_calories, total_sugars, total_carbohydrate
+
+[service.event_outbox]
+용도: DB 업무 변경과 Kafka 이벤트 발행을 원자적으로 연결하는 transactional outbox.
+PK: id bigint
+UNIQUE: event_id UUID
+주요 컬럼:
+- event_id, event_type, user_id, producer
+- aggregate_type, aggregate_id, occurred_at, schema_version, trace_id
+- payload JSONB
+- published_at, publish_attempts, last_error
+운영 규칙:
+- 업무 row 생성/변경과 같은 PostgreSQL transaction에서 INSERT.
+- request handler가 Kafka로 직접 발행하지 않음.
+- publisher가 성공 ACK 뒤 published_at 갱신.
+
+[service.user_health_profiles]
+용도: 동의 기반 사용자 건강 프로필.
+PK/FK: user_id -> public.users.id
+주요 컬럼: birth_year, gender, height_cm, weight_kg, activity_level,
+health_goal, daily_calorie_target, daily_sugar_target_g, target_source,
+health_data_consent_at, updated_at
+
+[service.user_preferences]
+용도: 사용자 관심 카테고리, 알레르겐, 주의 성분.
+PK: preference_id UUID
+FK: user_id -> public.users.id
+FK: tag_id -> service.tags.tag_id (선택)
+주요 컬럼: preference_type, tag_id, custom_value, created_at
+규칙: tag_id와 custom_value 중 하나만 허용.
+
+[service.user_favorites]
+용도: 서비스 통합 찜.
+PK: favorite_id UUID
+FK: user_id -> public.users.id
+FK: product_id -> service.products.product_id (선택)
+주요 컬럼: product_id, external_recipe_id, created_at
+규칙: product_id와 external_recipe_id 중 정확히 하나만 허용.
+
+============================================================
+5. PostgreSQL: 상품/레시피 (service, product, recipe schema)
+============================================================
+
+[service.products]
+PK: product_id UUID
+주요 컬럼: report_no, product_name, brand_name, manufacturer_name, food_type,
+serving_value, serving_unit, calories, carbohydrate, sugars, protein, fat,
+sodium, ingredient_text, image_url, purchase_url
+
+[service.product_embeddings]
+PK/FK: product_id -> service.products.product_id
+주요 컬럼: embedding vector, source_text, updated_at
+
+[service.tags]
+PK: tag_id UUID
+UNIQUE: (tag_type, tag_code)
+주요 컬럼: tag_type, tag_code, tag_name, description, caution_text,
+source_url, active
+tag_type: CATEGORY | ALLERGEN | SWEETENER | HEALTH_LABEL
+
+[service.product_tags]
+복합 PK/FK: (product_id, tag_id)
+주요 컬럼: evidence_source, matched_text
+evidence_source: NAME | NUTRITION | INGREDIENT | CRAWL
+
+[service.raw_ingredient_nutrients]
+PK: food_code varchar
+주요 컬럼: name, basis_unit, per100_kcal, per100_protein_g, per100_fat_g,
+per100_carb_g, per100_sugar_g, source
+
+[service.recipes]
+PK: id integer
+주요 컬럼: video_id, name, thumbnail_url, steps JSONB, total_sugar_g,
+total_kcal, base_sugar_g, base_kcal, sugar_reduction_pct,
+comparison_status, published_at, source, kcal_reduction_pct
+
+[service.recipe_ingredients]
+PK: id integer
+FK: recipe_id -> service.recipes.id
+주요 컬럼: name, amount, ingredient_type, sugar_g, kcal, core_keyword,
+base_sugar_g, base_kcal
+
+[service.recipe_ingredient_products]
+PK: id integer
+FK: recipe_ingredient_id -> service.recipe_ingredients.id
+FK: product_id -> service.products.product_id
+주요 컬럼: match_score, is_primary
+
+[product.product_favorites]
+복합 PK/FK: (product_id -> service.products.product_id, user_id -> public.users.id)
+용도: 기존 상품 찜 데이터.
+
+[recipe.recipe_favorites]
+복합 PK/FK: (recipe_id -> service.recipes.id, user_id -> public.users.id)
+용도: 기존 레시피 찜 데이터.
+
+============================================================
+6. PostgreSQL: 커뮤니티 및 운영 schema
+============================================================
+
+[community.notices]
+PK: notice_id UUID
+FK: author_user_id -> public.users.id
+주요 컬럼: title, content, external_url, thumbnail_url, hashtag,
+created_at, updated_at
+
+[community.notice_likes]
+복합 PK/FK: (notice_id -> community.notices.notice_id, user_id -> public.users.id)
+주요 컬럼: created_at
+
+[ai_rag.rag_documents]
+PK: id bigint
+주요 컬럼: chunk_text, source, doc_name, embedding vector
+
+[pitr_validation.restore_markers]
+PK: marker_id text
+용도: pgBackRest/PITR 격리 복구 시험의 검증 표식.
+
+============================================================
+7. MongoDB: dangdang_analytics
+============================================================
+
+[dangdang_analytics.user_activity_events]
+용도: Kafka `user.activity.raw`의 분석용 최종 이벤트 저장.
+PK: _id string = event_id(UUIDv7)
+문서 필드:
+- _id: event_id. 동일 이벤트 재소비를 막는 멱등키.
+- event_type: `user.*` 형식의 이벤트명
+- user_id: PostgreSQL public.users.id (integer)
+- occurred_at: UTC date-time
+- producer: `*-service`
+- schema_version: 현재 1
+- trace_id: 선택
+- properties: 이벤트별 allow-list 기반 추가 속성 객체
+
+인덱스:
+- _id_ : {_id: 1}
+- user_id_1_occurred_at_-1 : {user_id: 1, occurred_at: -1}
+- event_type_1_occurred_at_-1 : {event_type: 1, occurred_at: -1}
+
+운영 규칙:
+- MongoDB는 활동 분석 저장소이며 회원 원본 테이블이 아니다.
+- consumer는 Mongo write 성공 후 Kafka offset을 commit한다.
+- properties에는 JWT, 이메일, 생년월일, 건강정보, 이미지 bytes/key/URL,
+  검색어와 자유문자열을 넣지 않는다.

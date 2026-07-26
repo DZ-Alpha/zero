@@ -1,0 +1,10 @@
+# 도커 이미지 빌드 시 제외 (COPY . 에서 빠짐)
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.omc/
+.env
+.env.*
+!.env.example
+*.log

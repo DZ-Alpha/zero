@@ -1,0 +1,39 @@
+## Ansible managed
+services:
+  pgbackrest-minio-tls:
+    image: nginx@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46
+    container_name: zero-pgbackrest-minio-tls
+    restart: unless-stopped
+    volumes:
+      - ./config/pgbackrest-tls/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./config/pgbackrest-tls/certs:/etc/nginx/certs:ro
+    networks:
+      - backend
+
+  pg-vector:
+    build:
+      context: .
+      dockerfile: Dockerfile.pg-vector
+    image: zero-infra/pg-vector-pgbackrest:pg17-20260719
+    volumes:
+      - pg-vector-data:/var/lib/postgresql/data
+      - ./config/postgresql/init:/docker-entrypoint-initdb.d:ro
+      - ./config/postgresql/pg_hba.conf:/etc/postgresql-custom/pg_hba.conf:ro
+      - ./config/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - pgbackrest-spool:/var/spool/pgbackrest
+    command:
+      - postgres
+      - "-c"
+      - "hba_file=/etc/postgresql-custom/pg_hba.conf"
+      - "-c"
+      - "archive_mode=on"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "archive_command=pgbackrest --stanza=pgvector --config=/etc/pgbackrest/pgbackrest.conf archive-push %p"
+      - "-c"
+      - "archive_timeout=240"
+
+volumes:
+  pgbackrest-spool:
+    name: zero-infra-pgbackrest-spool
