@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { SafeImage } from "@/components/SafeImage";
+import { ConfirmDialog } from "@/components/SystemFeedback";
 import styles from "@/components/rooms/Rooms.module.css";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { ApiError } from "@/lib/api/client";
@@ -76,6 +77,8 @@ export function RoomDetail({ roomId }: { roomId: string }) {
   const [reportReason, setReportReason] = useState("");
   const [comments, setComments] = useState<Record<string, RoomComment[]>>({});
   const [nudgedSlots, setNudgedSlots] = useState<Record<string, boolean>>({});
+  const [pendingNudge, setPendingNudge] = useState<{ memberId: string; memberName: string; mealType: MealType } | null>(null);
+  const [nudgeSending, setNudgeSending] = useState(false);
   const [memberCalendars, setMemberCalendars] = useState<Record<string, MemberCalendarDay[]>>({});
 
   const tabsRef = useRef<HTMLElement>(null);
@@ -264,15 +267,20 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
-  async function sendNudge(memberId: string, memberName: string, mealType: MealType) {
-    if (!token) return;
+  async function confirmSendNudge() {
+    if (!token || !pendingNudge) return;
+    const { memberId, memberName, mealType } = pendingNudge;
     const key = slotKey(memberId, mealType);
+    setNudgeSending(true);
     try {
       await nudgeRoomMember(token, roomId, memberId, mealType, crypto.randomUUID());
       setNudgedSlots((current) => ({ ...current, [key]: true }));
       setToast(`${memberName}님을 콕 찔렀어요.`);
     } catch (error) {
       setToast(error instanceof ApiError ? error.message : "콕 찌르지 못했어요.");
+    } finally {
+      setNudgeSending(false);
+      setPendingNudge(null);
     }
   }
 
@@ -413,15 +421,17 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                               <span className={styles.avatar} style={{ background: member.color, color: "#18221b" }} aria-hidden="true">{member.avatarText}</span>
                               <p>아직 {MEAL_LABELS[todayView]} 사진이 없어요</p>
                             </div>
-                            <footer className={styles.setlogEmptyAction}>
-                              <button
-                                type="button"
-                                disabled={!canSend || alreadyNudged}
-                                onClick={() => sendNudge(member.id, member.name, todayView)}
-                              >
-                                {alreadyNudged ? "콕 찔렀어요" : "콕 찌르기"}
-                              </button>
-                            </footer>
+                            {canSend && (
+                              <footer className={styles.setlogEmptyAction}>
+                                <button
+                                  type="button"
+                                  disabled={alreadyNudged}
+                                  onClick={() => setPendingNudge({ memberId: member.id, memberName: member.name, mealType: todayView })}
+                                >
+                                  {alreadyNudged ? "콕 찔렀어요" : "콕 찌르기"}
+                                </button>
+                              </footer>
+                            )}
                           </article>
                         );
                       }
@@ -681,6 +691,16 @@ export function RoomDetail({ roomId }: { roomId: string }) {
         </div>
       )}
 
+      {pendingNudge && (
+        <ConfirmDialog
+          title={`${pendingNudge.memberName}님을 콕 찌를까요?`}
+          description={`${MEAL_LABELS[pendingNudge.mealType]} 기록을 아직 안 남겼다고 알려줄게요.`}
+          confirmLabel="콕 찌르기"
+          busy={nudgeSending}
+          onConfirm={confirmSendNudge}
+          onClose={() => setPendingNudge(null)}
+        />
+      )}
       {toast && <div className={styles.toast} role="status">{toast}</div>}
     </main>
   );
