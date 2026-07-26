@@ -83,6 +83,7 @@ export type ConnectedMealItem = {
 export type OrderedPhoto = {
   source: MealSource;
   imageUrl: string;
+  name: string;
 };
 
 export type MealRecord = {

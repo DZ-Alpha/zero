@@ -49,6 +49,19 @@ logger = logging.getLogger("diet_service.diet")
 router = APIRouter(prefix="/diet")
 
 
+def _recipe_thumbnail_url(recipe) -> str | None:
+    # recipe-service의 app/routers/recipe.py의 _thumbnail_url()과 동일한
+    # 폴백 - source="유튜브" 레시피는 thumbnail_url이 "/data/thumbnails/{id}.jpg"
+    # 같은 상대경로인데 이걸 서빙하는 곳이 없어 항상 깨진다. 여기서 이 폴백을
+    # 안 하면 유튜브 레시피로 기록한 사람만 얌로그 사진이 안 뜨는 것처럼 보인다
+    # (실사용 중 재현 - "유저마다 이미지 들어가는 애/안 들어가는 애가 있다").
+    if recipe.thumbnail_url and not recipe.thumbnail_url.startswith("/"):
+        return recipe.thumbnail_url
+    if recipe.video_id:
+        return f"https://img.youtube.com/vi/{recipe.video_id}/hqdefault.jpg"
+    return recipe.thumbnail_url
+
+
 def _to_uuid(value: str, label: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
@@ -641,18 +654,20 @@ async def internal_meal_records(
 
     records = []
     for (user_id, meal_type), group_rows in groups.items():
-        photo_object_keys: list[str] = []
-        seen_logs: set[uuid.UUID] = set()
+        # meal_log_id -> object_key, 처음 본 순서 유지(dict는 삽입 순서 보존).
+        photo_object_keys: dict[uuid.UUID, str] = {}
+        # 같은 사진(meal_log)에 딸린 비전 인식 음식 이름들 - 레시피/저당픽으로
+        # 연결 안 된 항목(item.product_id도 external_recipe_id도 없음)은
+        # Vision이 그 사진에서 직접 인식한 음식이라는 뜻이다.
+        photo_item_names: dict[uuid.UUID, list[str]] = {}
         recipe_items: list[dict[str, object]] = []
         product_items: list[dict[str, object]] = []
         sugar_total = 0.0
         calories_total = 0.0
 
         for log, item in group_rows:
-            if log.meal_log_id not in seen_logs:
-                seen_logs.add(log.meal_log_id)
-                if log.image_object_key:
-                    photo_object_keys.append(log.image_object_key)
+            if log.image_object_key and log.meal_log_id not in photo_object_keys:
+                photo_object_keys[log.meal_log_id] = log.image_object_key
 
             sugar_total += float(item.sugars) if item.sugars is not None else 0.0
             calories_total += float(item.calories) if item.calories is not None else 0.0
@@ -671,17 +686,32 @@ async def internal_meal_records(
                     "source": "recipe",
                     "id": item.external_recipe_id,
                     "name": recipe.name if recipe else item.item_name,
-                    "imageUrl": recipe.thumbnail_url if recipe else None,
+                    "imageUrl": _recipe_thumbnail_url(recipe) if recipe else None,
                 })
+            elif log.meal_log_id in photo_object_keys and item.item_name:
+                photo_item_names.setdefault(log.meal_log_id, []).append(item.item_name)
 
         # 얌로그 요청사항 - 비전(사진) → 레시피 → 저당픽 순으로 넘겨볼 수 있게
         # 하나의 정렬된 리스트로도 내려준다. photoUrls/connectedItems는 기존
         # 소비자(다른 화면)와의 호환을 위해 그대로 둔다.
         connected_items = recipe_items + product_items
-        photo_urls = [presign_diet_photo_url(key) for key in photo_object_keys]
+        # 사진 넘겨보기 캐러셀이 사진마다 맞는 이름을 보여줄 수 있게, 사진
+        # 하나하나에 그 사진에서 인식된 음식 이름을 같이 실어 보낸다(이전엔
+        # imageUrl만 있어서 프론트가 전부 같은 이름 하나로만 보여줬다).
+        photo_entries = [
+            {
+                "imageUrl": presign_diet_photo_url(object_key),
+                "name": ", ".join(photo_item_names.get(log_id, [])) or "사진으로 기록한 식사",
+            }
+            for log_id, object_key in photo_object_keys.items()
+        ]
+        photo_urls = [entry["imageUrl"] for entry in photo_entries]
         ordered_photos: list[dict[str, object]] = (
-            [{"source": "photo", "imageUrl": url} for url in photo_urls]
-            + [{"source": item["source"], "imageUrl": item["imageUrl"]} for item in connected_items if item.get("imageUrl")]
+            [{"source": "photo", "imageUrl": entry["imageUrl"], "name": entry["name"]} for entry in photo_entries]
+            + [
+                {"source": item["source"], "imageUrl": item["imageUrl"], "name": item["name"]}
+                for item in connected_items if item.get("imageUrl")
+            ]
         )
 
         records.append({
