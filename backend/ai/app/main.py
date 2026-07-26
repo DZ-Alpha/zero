@@ -24,6 +24,7 @@ from app.router.intent import IntentClassifier  # noqa: E402
 from app.schemas import Intent  # noqa: E402
 from app.core.redis_client import redis_client  # noqa: E402
 from app.memory.conversation_store import ConversationStore  # noqa: E402
+from app.services.chat_photo_storage import ensure_lifecycle as ensure_chat_photo_lifecycle  # noqa: E402
 
 logger = logging.getLogger("ai_service")
 
@@ -35,6 +36,13 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    # chat-photos 버킷에 24시간 만료 규칙이 있는지 보장 - MinIO 미설정/미기동이어도
+    # 부가 기능이라 서비스 자체는 정상 기동한다(ensure_lifecycle 내부에서 처리).
+    await ensure_chat_photo_lifecycle()
 
 
 @app.exception_handler(Exception)
@@ -87,7 +95,7 @@ def build_dependencies() -> chatbot_api.Dependencies:
     llm = _build_llm()
     retriever = build_retriever()
     handlers = {
-        Intent.PRODUCT_ANALYSIS: ProductAnalysisHandler(),
+        Intent.PRODUCT_ANALYSIS: ProductAnalysisHandler(llm=llm),
         Intent.RECOMMEND: RecommendHandler(),
         Intent.DIET_PHOTO: DietPhotoHandler(),
         Intent.RECIPE_SUBSTITUTE: RecipeSubstituteHandler(),

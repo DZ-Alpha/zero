@@ -21,6 +21,10 @@ class LLMClient(ABC):
     def complete_stream(self, system: str, messages: list[dict]) -> AsyncIterator[str]:
         ...
 
+    @abstractmethod
+    async def complete_vision(self, system: str, prompt: str, media_type: str, image_bytes: bytes) -> str:
+        ...
+
 
 class BedrockClient(LLMClient):
     """AWS Bedrock converse API 래퍼. 모델ID는 settings에서 주입(PoC로 선정)."""
@@ -36,6 +40,24 @@ class BedrockClient(LLMClient):
             modelId=self._model_id,
             system=[{"text": system}],
             messages=_to_converse(messages),
+            inferenceConfig={"maxTokens": 500},
+        )
+        return resp["output"]["message"]["content"][0]["text"]
+
+    async def complete_vision(self, system: str, prompt: str, media_type: str, image_bytes: bytes) -> str:
+        # Bedrock converse의 image format 필드는 "image/xxx"가 아니라 xxx만 받는다.
+        image_format = media_type.split("/", 1)[-1]
+        resp = await asyncio.to_thread(
+            self._client.converse,
+            modelId=self._model_id,
+            system=[{"text": system}],
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"image": {"format": image_format, "source": {"bytes": image_bytes}}},
+                    {"text": prompt},
+                ],
+            }],
             inferenceConfig={"maxTokens": 500},
         )
         return resp["output"]["message"]["content"][0]["text"]
