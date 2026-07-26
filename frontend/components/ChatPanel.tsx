@@ -3,6 +3,7 @@
 import { ChangeEvent, Fragment, useEffect, useRef, useState } from "react";
 import { getAccessToken } from "@/lib/api/client";
 import { getChatHistory, sendChatbotMessage, streamChatbotMessage } from "@/lib/api/zerocheck";
+import { convertHeicToJpeg, isHeicFile } from "@/lib/heic";
 
 type ChatMessage = { role: "question" | "answer"; text: string; imageUrl?: string };
 
@@ -65,15 +66,23 @@ export function ChatPanel() {
   }
 
   async function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const rawFile = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/")) return;
-    if (file.size > MAX_IMAGE_BYTES) return;
+    if (!rawFile) return;
+    if (!rawFile.type.startsWith("image/") && !isHeicFile(rawFile)) return;
+
     setAttaching(true);
     try {
+      // 아이폰 카메라 기본 포맷(HEIC) — 챗봇도 식단 사진 등록과 동일하게
+      // 선택 즉시 JPEG로 변환한다. 용량 체크는 변환 후 실제로 전송될 파일
+      // 기준으로 해야 한다 - HEIC은 JPEG보다 압축률이 좋아서 원본 기준으로만
+      // 재면 변환 후 용량이 늘어 제한을 넘어설 수 있다.
+      const file = isHeicFile(rawFile) ? await convertHeicToJpeg(rawFile) : rawFile;
+      if (file.size > MAX_IMAGE_BYTES) return;
       const dataUrl = await readFileAsDataUrl(file);
       setAttachedImage(dataUrl);
+    } catch {
+      // 변환/읽기 실패 — 기존과 동일하게 조용히 무시(별도 에러 UI 없음)
     } finally {
       setAttaching(false);
     }
@@ -172,8 +181,9 @@ export function ChatPanel() {
           {attaching ? (
             <span className="chat-attach-spinner" aria-hidden="true" />
           ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 16.5V7a4 4 0 0 1 8 0v10a2.5 2.5 0 0 1-5 0V8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 8.5a2 2 0 0 1 2-2h1.6l.9-1.5A2 2 0 0 1 10.23 4h3.54a2 2 0 0 1 1.73 1l.9 1.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+              <circle cx="12" cy="12.5" r="3.4" stroke="currentColor" strokeWidth="1.8" />
             </svg>
           )}
         </button>

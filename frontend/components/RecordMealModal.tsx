@@ -13,6 +13,7 @@ import { useRecipeCatalog } from "@/hooks/useRecipeCatalog";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { getAccessToken } from "@/lib/api/client";
+import { convertHeicToJpeg, isHeicFile } from "@/lib/heic";
 import {
   confirmDietPhoto,
   DietAnalysisItem,
@@ -67,23 +68,6 @@ const sourceTabs: { id: Source; label: string }[] = [
 ];
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxImageBytes = 10 * 1024 * 1024;
-
-// iOS 카메라 기본 포맷 - 브라우저가 <img>/<canvas>에서 못 읽으므로 선택 즉시
-// JPEG로 변환한다. 확장자도 같이 보는 이유는 사파리가 종종 file.type을
-// "application/octet-stream"이나 빈 문자열로 주기 때문.
-function isHeicFile(file: File): boolean {
-  const type = file.type.toLowerCase();
-  if (type === "image/heic" || type === "image/heif") return true;
-  return /\.hei[cf]$/i.test(file.name);
-}
-
-async function convertHeicToJpeg(file: File): Promise<File> {
-  const heic2any = (await import("heic2any")).default;
-  const result = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
-  const blob = Array.isArray(result) ? result[0] : result;
-  const newName = file.name.replace(/\.hei[cf]$/i, "") + ".jpg";
-  return new File([blob], newName, { type: "image/jpeg" });
-}
 
 function percent(value: number, max: number) {
   return Math.min(100, Math.round((value / max) * 100));
