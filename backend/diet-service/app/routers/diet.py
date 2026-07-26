@@ -20,7 +20,6 @@ from app.services.diet_store import (
     MealLogNotFoundError,
     ProductNotFoundError,
     RecipeNotFoundError,
-    complete_meal_log,
     confirm_meal_log,
     create_manual_record,
     create_meal_log,
@@ -40,7 +39,6 @@ from app.services.diet_store import (
     update_record,
 )
 from app.services.storage import StorageUploadError, presign_diet_photo_url, validate_diet_photo_key
-from app.services.vision_service import analyze_meal_photo
 
 _KST = ZoneInfo("Asia/Seoul")
 
@@ -131,11 +129,12 @@ async def upload_diet(
     payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     """RC-0101~0102: object_key(POST /uploads/diet-photo가 반환한 값) 등록 →
-    meal_log(PENDING) 생성. 분석은 GET /diet/photo/{id} 폴링(비동기, zero-db
-    Vision worker가 diet.photo.completed/failed를 Kafka로 발행 →
-    app/services/vision_consumer.py가 구독) 또는 GET /diet/ai-analyze(동기,
-    Claude Vision) 둘 중 실제로 연결된 경로를 프론트가 사용한다 —
-    PRODUCTION_HANDOFF.md P0-3.
+    meal_log(PENDING) 생성. 분석은 항상 zero-db Vision worker(별도 Vision AI)가
+    수행한다 — outbox의 diet.photo.requested를 워커가 처리해 diet.photo.
+    completed/failed를 Kafka로 발행하고 app/services/vision_consumer.py가
+    구독한다. 프론트는 GET /diet/photo/{id}를 폴링한다. 회의 결정(2026-07-27):
+    식사 사진 분석은 이 파이프라인만 사용한다 — 이전에 병행 존재하던
+    Claude Vision 동기 경로(vision_service.py)는 제거됨.
 
     mode='daily'는 mealType 없을 때만 쓰는 하위호환 폴백이다.
     """
@@ -242,18 +241,18 @@ async def confirm_diet_analysis(
 # 없어 삭제했다 — 개발팀 요청서 확인.)
 
 
-# RC-0103: AI 식단 분석 (Vision AI → 음식 인식 + 영양 추정)
+# RC-0103: AI 식단 분석 결과 조회. 분석 자체는 여기서 하지 않는다 — 회의
+# 결정(2026-07-27): 식사 사진 분석은 별도 Vision AI(zero-db worker, Kafka
+# 파이프라인)만 사용한다. 이전에 여기 있던 Claude Vision 동기 호출
+# (vision_service.py)은 프론트가 실제로 쓰지 않는 병행 경로였고, 분석 주체가
+# 이원화되는 문제(+호출 시 Anthropic 비용 발생)로 제거했다. 진행 상태 폴링의
+# 정식 경로는 GET /diet/photo/{meal_log_id}다.
 @router.get("/ai-analyze")
 async def ai_analyze(
     id: str = Query(..., description="meal_log UUID"),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
-    """RC-0103: meal_log의 이미지를 Claude Vision으로 분석해 meal_items 저장.
-
-    ANTHROPIC_API_KEY가 없으면(app/services/vision_service.py) 기존과 동일하게
-    PREPARING을 반환한다 — 키를 안 넣으면 배포해도 동작이 그대로다.
-    """
     user_id: int = payload["user_id"]
     log_id = _to_uuid(id, "meal_log ID")
 
@@ -276,43 +275,11 @@ async def ai_analyze(
             "needs_user_confirmation": log.needs_user_confirmation,
         }
 
-    if not log.image_object_key:
-        raise HTTPException(status_code=422, detail="분석할 이미지가 없습니다.")
-
-    try:
-        analyzed = await analyze_meal_photo(log.image_object_key)
-    except Exception:
-        logger.exception("vision: analysis failed meal_log_id=%s", log_id)
-        analyzed = []
-
-    if not analyzed:
-        return {
-            "status": "PREPARING",
-            "message": "AI 식단 분석 기능은 Vision AI 파이프라인 연동 후 활성화됩니다.",
-            "id": str(log_id),
-            "list-diet": [],
-        }
-
-    items = [
-        make_meal_item_from_analysis(
-            log_id,
-            item_name=entry["name"],
-            serving_value=Decimal(str(entry["servingValue"])),
-            serving_unit=entry["servingUnit"],
-            calories=Decimal(str(entry["calories"])),
-            sugars=Decimal(str(entry["sugars"])),
-            carbohydrate=Decimal(str(entry["carbohydrate"])),
-        )
-        for entry in analyzed
-    ]
-    await complete_meal_log(db, log_id, items)
-    logger.info("diet: vision analysis completed meal_log_id=%s items=%d", log_id, len(items))
-
     return {
+        "status": log.analysis_status,
+        "message": "분석은 Vision AI 파이프라인에서 진행돼요. GET /diet/photo/{meal_log_id}로 상태를 확인하세요.",
         "id": str(log_id),
-        "dang": sum(float(i.sugars) for i in items if i.sugars is not None),
-        "calo": sum(float(i.calories) for i in items if i.calories is not None),
-        "list-diet": [_item_dict(i) for i in items],
+        "list-diet": [],
     }
 
 

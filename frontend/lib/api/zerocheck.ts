@@ -562,9 +562,3 @@ export function confirmDietPhoto(
     },
   );
 }
-
-// RC-0103: 옛 1회성 스텁 - 새 폴링 플로우에서는 getDietPhotoStatus를 쓴다.
-// 다른 곳에서 여전히 참조할 수 있어 남겨둔다.
-export function analyzeDietPhoto(token: string, id: string) {
-  return apiRequest<DietAnalysisResponse>(query("/diet/ai-analyze", { usr: token, id }));
-}
