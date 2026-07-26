@@ -152,8 +152,14 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
       </section>
 
       <section className="personal-ai-note wrap">
-        <div><p className="eyebrow">오늘 기록에 더하면</p><h2>오늘 당류가 {format(todaySugar)}g이 돼요.</h2></div>
-        <div><p>현재 기록 {format(currentSugar)}g · {currentCalories.toLocaleString()}kcal에 이 제품의 {detail.serving} 기준 영양값을 더했어요. 실제로 먹은 양을 바꾸면 수치도 다시 계산돼요.</p><div className="personal-ai-metrics"><span>당류 목표 {format(goals.sugar)}g 중 {todayRate}%</span><span>칼로리 목표 {goals.calories.toLocaleString()}kcal 중 {calorieRate}%</span></div></div>
+        {token ? (
+          <>
+            <div><p className="eyebrow">오늘 기록에 더하면</p><h2>오늘 당류가 {format(todaySugar)}g이 돼요.</h2></div>
+            <div><p>현재 기록 {format(currentSugar)}g · {currentCalories.toLocaleString()}kcal에 이 제품의 {detail.serving} 기준 영양값을 더했어요. 실제로 먹은 양을 바꾸면 수치도 다시 계산돼요.</p><div className="personal-ai-metrics"><span>당류 목표 {format(goals.sugar)}g 중 {todayRate}%</span><span>칼로리 목표 {goals.calories.toLocaleString()}kcal 중 {calorieRate}%</span></div></div>
+          </>
+        ) : (
+          <div><p className="eyebrow">오늘 기록에 더하면</p><h2>로그인하면 오늘 기록에 더한 당류를 볼 수 있어요.</h2><p><Link href="/login">로그인하기 →</Link></p></div>
+        )}
       </section>
 
       <section className="ingredient-story wrap">
@@ -165,13 +171,23 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
         </article>
         <div className="personal-product-analysis">
           <p className="eyebrow">오늘 기록을 바탕으로 한 안내</p>
-          <h3>{withinGoal ? "오늘 목표 안에서 선택할 수 있어요." : "오늘은 먹는 양을 조금 조절해보세요."}</h3>
-          <p>{livePersonalInfo && <span className="ai-summary-badge">AI 요약</span>}{livePersonalInfo || (withinGoal ? `${detail.serving}을 더해도 설정한 당류 목표까지 ${format(remainingSugar)}g 남아요. 간식으로 먹는다면 실제 섭취량만 기록해 주세요.` : `${detail.serving}을 모두 먹으면 설정한 당류 목표를 ${format(Math.abs(remainingSugar))}g 넘어요. 절반만 먹거나 다음 식사의 당류를 가볍게 골라도 좋아요.`)}</p>
-          <div className="analysis-points">
-            <span><b>{format(detail.sugar)}g</b>이 제품의 당류</span>
-            <span><b>{format(detail.calories)}kcal</b>이 제품의 열량</span>
-          </div>
-          <small>알레르기나 건강 상태에 따라 필요한 기준은 달라질 수 있어요. 제품 포장지의 표시도 함께 확인해 주세요.</small>
+          {token ? (
+            <>
+              <h3>{withinGoal ? "오늘 목표 안에서 선택할 수 있어요." : "오늘은 먹는 양을 조금 조절해보세요."}</h3>
+              <p>{livePersonalInfo && <span className="ai-summary-badge">AI 요약</span>}{livePersonalInfo || (withinGoal ? `${detail.serving}을 더해도 설정한 당류 목표까지 ${format(remainingSugar)}g 남아요. 간식으로 먹는다면 실제 섭취량만 기록해 주세요.` : `${detail.serving}을 모두 먹으면 설정한 당류 목표를 ${format(Math.abs(remainingSugar))}g 넘어요. 절반만 먹거나 다음 식사의 당류를 가볍게 골라도 좋아요.`)}</p>
+              <div className="analysis-points">
+                <span><b>{format(detail.sugar)}g</b>이 제품의 당류</span>
+                <span><b>{format(detail.calories)}kcal</b>이 제품의 열량</span>
+              </div>
+              <small>알레르기나 건강 상태에 따라 필요한 기준은 달라질 수 있어요. 제품 포장지의 표시도 함께 확인해 주세요.</small>
+            </>
+          ) : (
+            <>
+              <h3>로그인하면 내 기록 기반 안내를 볼 수 있어요.</h3>
+              <p>오늘 먹은 양과 목표를 반영한 맞춤 안내는 로그인 후 확인할 수 있어요.</p>
+              <Link href="/login">로그인하기 →</Link>
+            </>
+          )}
         </div>
       </section>
 
