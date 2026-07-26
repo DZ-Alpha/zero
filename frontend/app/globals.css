@@ -1739,7 +1739,10 @@ body{font-size:17px}
 
 /* User-flow polish: keep the existing visual language, but make the next action unmistakable. */
 .meal-panel-backdrop{
-  background:rgba(17,29,20,.58);
+  /* iOS Safari가 backdrop-filter를 적용하지 못하는 경우(스크롤/전환 중)가 있어
+     blur에만 기대지 않고, 배경 자체를 거의 불투명하게 만들어 뒤에 있는
+     HomeDashboard의 today-sugar-character 캐릭터가 비쳐 보이지 않게 한다. */
+  background:rgba(17,29,20,.92);
   backdrop-filter:blur(7px);
   animation:none;
 }
