@@ -58,7 +58,7 @@
    - `/diet/upload`가 `mealType`, `eatenAt`을 받아야 합니다.
    - 업로드 직후 확정 기록을 만들지 말고 draft → 분석 → 사용자 확인 → 저장 흐름이 필요합니다.
    - 취소한 업로드를 삭제할 API가 필요합니다.
-   - `/diet/ai-analyze`의 실제 분석 구현이 필요합니다.
+   - ~~`/diet/ai-analyze`의 실제 분석 구현이 필요합니다.~~ → 회의 결정(2026-07-27): 식사 사진 분석은 별도 Vision AI(zero-db worker, Kafka 파이프라인)만 사용합니다. `/diet/ai-analyze`는 결과 조회 전용이며, 분석 상태 폴링은 `GET /diet/photo/{meal_log_id}`가 정식 경로입니다.
 
 4. 인증 전달 방식 개선
    - 현재 여러 API가 `usr` 쿼리에 JWT를 넣고 OAuth 콜백도 URL에 토큰을 전달합니다.

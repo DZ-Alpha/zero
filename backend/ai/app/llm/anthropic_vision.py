@@ -12,9 +12,9 @@ _MODEL = "claude-opus-4-8"
 
 async def analyze_photo(system: str, prompt: str, media_type: str, image_bytes: bytes) -> str | None:
     """챗봇 사진 첨부(product_analysis) 전용 - 비용 협의(2026-07-26)로 Bedrock이
-    아니라 Anthropic API를 직접 호출한다. diet-service의 vision_service.py와
-    같은 ANTHROPIC_API_KEY를 쓰고 같은 호출 방식이다 - 일반 텍스트 질의(Bedrock)
-    와는 완전히 별개 경로.
+    아니라 Anthropic API를 직접 호출한다. 일반 텍스트 질의(Bedrock)와는 완전히
+    별개 경로다. 식사 사진(아침/점심/저녁/간식) 분석과도 별개다 - 그쪽은
+    zero-db Vision worker(Kafka 파이프라인)만 쓴다(회의 결정 2026-07-27).
 
     키가 없거나 모델이 거부하면 None을 반환한다 - 호출 측이 "준비 중"/실패
     안내로 폴백한다(기존 무비용 폴백과 동일 패턴)."""

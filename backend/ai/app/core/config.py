@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     bedrock_model_id: str = ""
 
     # 챗봇 사진 첨부 분석(product_analysis) 전용 - 비용 협의(2026-07-26)로 이
-    # 경로만 Bedrock이 아니라 Anthropic API를 직접 호출한다(diet-service의
-    # vision_service.py와 동일한 키·호출 방식). 일반 텍스트 질의는 여전히
-    # Bedrock(위 bedrock_model_id)을 쓴다 - 이 키는 사진 분석에만 쓰인다.
+    # 경로만 Bedrock이 아니라 Anthropic API를 직접 호출한다. 일반 텍스트 질의는
+    # 여전히 Bedrock(위 bedrock_model_id)을 쓴다 - 이 키는 사진 분석에만 쓰인다.
+    # (식사 사진 분석과는 별개다 - 그쪽은 zero-db Vision worker 파이프라인만 쓴다.)
     # 비어있으면 사진 분석은 "준비 중" 안내로 폴백한다(기존 무비용 폴백과 동일 패턴).
     anthropic_api_key: str = ""
 
