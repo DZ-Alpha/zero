@@ -15,6 +15,14 @@ const serviceUrls = {
 } as const;
 
 const gatewayUrl = process.env.BACKEND_GATEWAY_URL?.trim().replace(/\/$/, "");
+// 얌로그(rooms)가 보여주는 식단 사진 presigned URL 전용 - MinIO의 SigV4
+// 서명은 host와 경로 전체를 포함한다(SignedHeaders=host). b-gateway를 거치면
+// nginx가 "/b"를 벗겨내는 rewrite를 타면서 서명 당시 경로와 실제 도착 경로가
+// 달라져 SignatureDoesNotMatch가 난다(실사용 중 재현). 이 프록시는 Node
+// fetch로 경로를 한 글자도 안 건드리고 그대로 넘기므로, diet-service가
+// 내부 MinIO 주소로 서명한 경로 그대로 게이트웨이를 거치지 않고 MinIO에
+// 직접 요청한다.
+const minioUrl = process.env.MINIO_URL?.trim().replace(/\/$/, "");
 
 function normalizePath(parts: string[]) {
   if (parts[0] === "receipe") return ["recipes", ...parts.slice(1)];
@@ -45,6 +53,10 @@ function safeFallback(request: NextRequest) {
 
 function buildUpstream(parts: string[]) {
   const encodedPath = parts.map(encodeURIComponent).join("/");
+
+  if (parts[0] === "diet-photos" && minioUrl) {
+    return new URL(`/${encodedPath}`, minioUrl);
+  }
 
   if (!gatewayUrl) {
     return new URL(`/${encodedPath}`, selectService(parts));
