@@ -97,6 +97,16 @@ async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMem
     week_record_count = len(thread_map)
     my_participation_days = len({d for (uid, d, _mt) in thread_map if uid == viewer_id})
 
+    # hydrate_average_sugar가 따로 있던 이유는 "room 목록 화면에서 방마다
+    # diet-service를 왕복하면 느려진다"였는데(과거 주석), 정작 모든 호출부가
+    # compute_room_summary 바로 뒤에서 hydrate_average_sugar를 불러 같은
+    # user_ids/오늘 날짜로 get_meal_records를 한 번 더(중복) 왕복하고 있었다
+    # (2026-07-26 실사용 중 "얌로그 진입 시 버퍼링" 재현 - 방마다 diet-service
+    # 왕복이 2번씩이었음). 위에서 이미 받아온 records_today를 그대로 써서
+    # 왕복 횟수를 절반으로 줄인다.
+    sugars_today = [r["sugar"] for r in records_today if isinstance(r.get("sugar"), (int, float))]
+    average_sugar = round(sum(sugars_today) / len(sugars_today), 1) if sugars_today else 0.0
+
     eligible = member_count >= 3 and days_since_start >= 7 and room.ranking_opt_in
 
     return {
@@ -108,7 +118,7 @@ async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMem
         "recordedTodayCount": recorded_today,
         "daysSinceStart": days_since_start,
         # 이번 주 기록 개수 대비 기록률(§8 권장 분모 - slot_target=0 방지).
-        "averageSugar": 0.0,  # 아래 hydrate_room_summary_sugar에서 diet-service 조회 후 채움
+        "averageSugar": average_sugar,
         "monthlyRecordRate": round(week_record_count / slot_target * 100, 1) if slot_target else 0.0,
         "myParticipationDays": my_participation_days,
         "rankingOptIn": room.ranking_opt_in,
@@ -431,19 +441,6 @@ async def build_room_badges(
         })
 
     return badges
-
-
-async def hydrate_average_sugar(db: AsyncSession, room_id: uuid.UUID, summary: dict[str, object]) -> None:
-    """오늘 하루치 diet-service 조회로 평균 당류를 채운다 - room 목록 화면에서
-    방마다 diet-service를 왕복하면 느려지므로, 상세 화면 등 실제로 필요한
-    곳에서만 호출해서 쓴다(room_summary 계산 자체와 분리해둔 이유)."""
-    members_result = await db.execute(
-        select(RoomMember.user_id).where(RoomMember.room_id == room_id, RoomMember.left_at.is_(None))
-    )
-    user_ids = [row.user_id for row in members_result.all()]
-    records = await get_meal_records(user_ids, today_kst())
-    sugars = [r["sugar"] for r in records if isinstance(r.get("sugar"), (int, float))]
-    summary["averageSugar"] = round(sum(sugars) / len(sugars), 1) if sugars else 0.0
 
 
 async def build_meal_slots(
