@@ -3734,7 +3734,10 @@
 .invitePanel strong {
   font-size: 25px;
   letter-spacing: .13em;
-  white-space: nowrap;
+  /* 실제 초대 코드는 항상 6자라 줄바꿈이 안 되지만, "발급된 코드가 없어요"
+     같은 폴백 문구는 nowrap이면 줄바꿈 없이 넓어져서 모바일에서 페이지 자체가
+     옆으로 밀리는 문제가 있었다 - 문구가 길어질 수 있는 상태를 감안해 제거. */
+  overflow-wrap: anywhere;
 }
 
 .invitePanel small {

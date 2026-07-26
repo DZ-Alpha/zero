@@ -197,6 +197,20 @@ async def get_active_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int)
     return result.scalar_one_or_none()
 
 
+async def revoke_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int) -> None:
+    """활성 초대 코드를 새로 발급하지 않고 그냥 없앤다 - create_invite("새 코드
+    만들기")와 달리 "코드 지우기"는 당장 아무도 새로 못 들어오게만 하고 싶을
+    때 쓴다."""
+    await require_owner(db, room_id, actor_id)
+    result = await db.execute(
+        select(RoomInvite).where(RoomInvite.room_id == room_id, RoomInvite.revoked_at.is_(None))
+    )
+    now = datetime.now(timezone.utc)
+    for existing in result.scalars().all():
+        existing.revoked_at = now
+    await db.commit()
+
+
 async def _get_invite_by_code(db: AsyncSession, code: str) -> RoomInvite | None:
     result = await db.execute(select(RoomInvite).where(RoomInvite.code_hash == _hash_invite_code(code)))
     return result.scalar_one_or_none()

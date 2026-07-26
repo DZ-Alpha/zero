@@ -339,6 +339,20 @@ async def post_regenerate_invite(
     return await _idempotent(db, user.user_id, idempotency_key, run)
 
 
+@router.delete("/{room_id}/invite")
+async def delete_invite(
+    room_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: UserIdentity = Depends(require_room_user),
+) -> dict[str, object]:
+    rid = _to_uuid(room_id)
+    try:
+        await room_store.revoke_invite(db, rid, user.user_id)
+    except RoomError as error:
+        raise _err(error)
+    return {"status": "deleted"}
+
+
 # ── 멤버십 ───────────────────────────────────────────────────────────────────
 
 @router.delete("/{room_id}/membership")

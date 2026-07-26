@@ -111,6 +111,13 @@ export function regenerateRoomInvite(token: string, roomId: string, idempotencyK
   });
 }
 
+export function deleteRoomInvite(token: string, roomId: string) {
+  return apiRequest<{ status: "deleted" }>(`/rooms/${encodeURIComponent(roomId)}/invite`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+}
+
 export function nudgeRoomMember(token: string, roomId: string, memberId: string, mealType: string, idempotencyKey?: string) {
   return apiRequest<{ status: "sent"; retryAfterSeconds: number }>(`/rooms/${encodeURIComponent(roomId)}/nudges`, {
     method: "POST",

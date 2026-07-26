@@ -9,6 +9,7 @@ import { useAuthSession } from "@/hooks/useAuthSession";
 import { ApiError } from "@/lib/api/client";
 import {
   deleteRoom,
+  deleteRoomInvite,
   getRoomSettings,
   leaveRoom,
   regenerateRoomInvite,
@@ -23,6 +24,7 @@ const emojiOptions = ["🌿", "🍚", "🥗", "🥕", "🍋"];
 
 type ConfirmAction =
   | { type: "regenerate" }
+  | { type: "revoke_invite" }
   | { type: "transfer"; memberId: string; memberName: string }
   | { type: "remove"; memberId: string; memberName: string }
   | { type: "leave" }
@@ -35,6 +37,14 @@ function confirmCopy(action: ConfirmAction) {
       description: "지금 코드는 바로 사용할 수 없게 돼요.",
       confirmLabel: "새 코드 만들기",
       destructive: false,
+    };
+  }
+  if (action.type === "revoke_invite") {
+    return {
+      title: "초대 코드를 지울까요?",
+      description: "이 코드로는 더 이상 아무도 새로 들어올 수 없어요. 언제든 다시 만들 수 있어요.",
+      confirmLabel: "코드 지우기",
+      destructive: true,
     };
   }
   if (action.type === "transfer") {
@@ -218,6 +228,12 @@ export function RoomSettings({ roomId }: { roomId: string }) {
         setInviteExpiresAt(invite.expiresAt);
         setToast("새 초대 코드를 만들었어요.");
       }
+      if (confirmAction.type === "revoke_invite") {
+        await deleteRoomInvite(token, roomId);
+        setInviteCode("");
+        setInviteExpiresAt(null);
+        setToast("초대 코드를 지웠어요.");
+      }
       if (confirmAction.type === "transfer") {
         await transferRoomOwnership(token, roomId, confirmAction.memberId);
         setToast(`${confirmAction.memberName}님에게 방장을 넘겼어요.`);
@@ -314,6 +330,9 @@ export function RoomSettings({ roomId }: { roomId: string }) {
                 <div>
                   <button type="button" className={styles.primaryButton} onClick={copyInvite} disabled={!inviteCode}>링크 복사</button>
                   {permissions.canInvite && <button type="button" className={styles.secondaryButton} onClick={() => setConfirmAction({ type: "regenerate" })}>새 코드 만들기</button>}
+                  {permissions.canInvite && inviteCode && (
+                    <button type="button" className={styles.secondaryButton} onClick={() => setConfirmAction({ type: "revoke_invite" })}>코드 삭제</button>
+                  )}
                 </div>
               </div>
             </section>
