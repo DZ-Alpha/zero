@@ -66,7 +66,6 @@ async def get_rooms_home(
     summaries = []
     for room, membership in my_rooms:
         summary = await room_aggregation.compute_room_summary(db, room, membership, user.user_id)
-        await room_aggregation.hydrate_average_sugar(db, room.id, summary)
         summaries.append(summary)
 
     activities, activities_cursor = await room_aggregation.list_recent_activities(db, user.user_id, None)
@@ -190,7 +189,6 @@ async def _room_detail_payload(
         membership = await room_store.require_membership(db, room_id, viewer_id)
 
     summary = await room_aggregation.compute_room_summary(db, room, membership, viewer_id)
-    await room_aggregation.hydrate_average_sugar(db, room_id, summary)
 
     members = await room_store.list_active_members(db, room_id)
     member_list = await room_aggregation.build_room_members(db, room, members, viewer_id)
@@ -267,7 +265,6 @@ async def _get_settings_payload(db: AsyncSession, room_id: uuid.UUID, viewer_id:
     room = await room_store.get_room(db, room_id)
     membership = await room_store.require_membership(db, room_id, viewer_id)
     summary = await room_aggregation.compute_room_summary(db, room, membership, viewer_id)
-    await room_aggregation.hydrate_average_sugar(db, room_id, summary)
 
     members = await room_store.list_active_members(db, room_id)
     member_list = await room_aggregation.build_room_members(db, room, members, viewer_id)
