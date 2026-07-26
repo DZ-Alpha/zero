@@ -169,7 +169,13 @@ export function ChatPanel() {
           aria-label="사진 첨부"
           title="사진 첨부"
         >
-          {attaching ? "…" : "+"}
+          {attaching ? (
+            <span className="chat-attach-spinner" aria-hidden="true" />
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 16.5V7a4 4 0 0 1 8 0v10a2.5 2.5 0 0 1-5 0V8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
         </button>
         <input aria-label="질문" value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder="궁금한 성분이나 제품을 물어보세요" />
         <button onClick={send} disabled={pending || (!value.trim() && !attachedImage)}>{pending ? "전송 중" : "보내기"}</button>

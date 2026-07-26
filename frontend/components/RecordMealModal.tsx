@@ -573,8 +573,8 @@ export function RecordMealModal({
                 <div className="vision-error" role="alert"><span aria-hidden="true" /><h3>사진을 분석하지 못했어요.</h3><p>{analysisError}</p><div><button type="button" onClick={resetPhoto}>다른 사진 고르기</button><button type="button" className="solid-button" onClick={analyzePhoto}>다시 분석하기</button></div></div>
               ) : (
                 <div className="vision-upload">
-                  <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={selectPhoto} />
-                  {photoPreview ? <div className="vision-photo-preview"><img src={photoPreview} alt="선택한 음식 사진 미리보기" /><div><button type="button" onClick={() => photoInput.current?.click()}>바꾸기</button><button type="button" onClick={resetPhoto}>지우기</button></div></div> : <div className="camera-mark" aria-hidden="true">⌁</div>}
+                  <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectPhoto} />
+                  {photoPreview ? <div className="vision-photo-preview"><img src={photoPreview} alt="선택한 음식 사진 미리보기" /><div><button type="button" onClick={() => photoInput.current?.click()}>바꾸기</button><button type="button" onClick={resetPhoto}>지우기</button></div></div> : <div className="camera-mark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M4 8.5a2 2 0 0 1 2-2h1.6l.9-1.5A2 2 0 0 1 10.23 4h3.54a2 2 0 0 1 1.73 1l.9 1.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><circle cx="12" cy="12.5" r="3.4" stroke="currentColor" strokeWidth="1.8" /></svg></div>}
                   <h3>음식이나 제품 사진을 올려주세요</h3>
                   <p>{photoFile ? `${photoFile.name}을 선택했어요.` : "사진을 올리면 음식의 양을 확인하고 당류와 칼로리를 계산해요."}</p>
                   <small>JPG, PNG, WEBP · 최대 10MB</small>
