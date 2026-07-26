@@ -5,14 +5,14 @@ import re
 
 from app.handlers.base import FeatureHandler, HandlerInput, HandlerResult
 from app.handlers.general_qa import render_user_context_block, strip_chat_markdown
-from app.llm.bedrock_client import LLMClient
+from app.llm.anthropic_vision import analyze_photo
 from app.services.chat_photo_storage import store_best_effort
 
 logger = logging.getLogger("ai_service.product_analysis")
 
 _DATA_URL_RE = re.compile(r"^data:(?P<media_type>image/[\w.+-]+);base64,(?P<data>.+)$", re.DOTALL)
 
-# Bedrock converse가 실제로 받아주는 이미지 포맷만 화이트리스트. HEIC 등 나머지는
+# Anthropic API가 실제로 받아주는 이미지 포맷만 화이트리스트. HEIC 등 나머지는
 # 여기서 걸러 친절한 안내로 대체한다(모델 호출까지 갔다가 400을 받는 것보다 낫다).
 _SUPPORTED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
@@ -58,19 +58,14 @@ def _build_user_prompt(user_msg: str | None, context_block: str) -> str:
 
 
 class ProductAnalysisHandler(FeatureHandler):
-    """사진 첨부 챗봇 질의 - Vision 모델(Bedrock)로 사진 속 음식·제품을 짧게
-    설명해준다. diet-service의 실제 식단 기록과는 별개의 참고용 답변이다
-    (구조화된 영양 수치는 반환하지 않는다 - 자유형 설명만 채택, 2026-07-26 결정)."""
-
-    def __init__(self, llm: LLMClient | None = None) -> None:
-        self._llm = llm
+    """사진 첨부 챗봇 질의 - Vision(Anthropic API 직접 호출, 비용 협의로 Bedrock과
+    분리 - app/llm/anthropic_vision.py)으로 사진 속 음식·제품을 짧게 설명해준다.
+    diet-service의 실제 식단 기록과는 별개의 참고용 답변이다(구조화된 영양
+    수치는 반환하지 않는다 - 자유형 설명만 채택, 2026-07-26 결정)."""
 
     async def handle(self, data: HandlerInput) -> HandlerResult:
         if not data.img:
             return HandlerResult(msg="상품 영양성분 분석 기능은 준비 중이에요. 곧 제공할게요.")
-
-        if self._llm is None:
-            return HandlerResult(msg=_NOT_READY_MSG, is_img=True)
 
         parsed = _parse_data_url(data.img)
         if parsed is None or parsed[0] not in _SUPPORTED_MEDIA_TYPES:
@@ -80,9 +75,12 @@ class ProductAnalysisHandler(FeatureHandler):
         user_prompt = _build_user_prompt(data.msg, render_user_context_block(data.context))
 
         try:
-            answer = await self._llm.complete_vision(_SYSTEM_PROMPT, user_prompt, media_type, image_bytes)
+            answer = await analyze_photo(_SYSTEM_PROMPT, user_prompt, media_type, image_bytes)
         except Exception:
             logger.exception("vision analysis failed")
             return HandlerResult(msg=_ANALYSIS_FAILED_MSG, is_img=True)
+
+        if answer is None:
+            return HandlerResult(msg=_NOT_READY_MSG, is_img=True)
 
         return HandlerResult(msg=strip_chat_markdown(answer), is_img=True)

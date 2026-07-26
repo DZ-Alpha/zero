@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     bedrock_region: str = "us-east-1"
     bedrock_model_id: str = ""
 
+    # 챗봇 사진 첨부 분석(product_analysis) 전용 - 비용 협의(2026-07-26)로 이
+    # 경로만 Bedrock이 아니라 Anthropic API를 직접 호출한다(diet-service의
+    # vision_service.py와 동일한 키·호출 방식). 일반 텍스트 질의는 여전히
+    # Bedrock(위 bedrock_model_id)을 쓴다 - 이 키는 사진 분석에만 쓰인다.
+    # 비어있으면 사진 분석은 "준비 중" 안내로 폴백한다(기존 무비용 폴백과 동일 패턴).
+    anthropic_api_key: str = ""
+
     # Cohere Embed v4 리전 — 상품벡터를 만든 기존 파이프라인과 동일(ap-northeast-2).
     embed_region: str = "ap-northeast-2"
     # pgvector 연결이 준비됐을 때만 실제 Retriever 사용. 기본은 NullRetriever(폴백).
@@ -28,7 +35,7 @@ class Settings(BaseSettings):
 
     # 챗봇 사진 첨부(product_analysis) 원본을 감사·재현 목적으로 24시간만
     # 보관한다 - 대화 메모리(conversation_ttl_seconds)와 같은 수명. Vision 분석
-    # 자체엔 필요 없다(Bedrock에는 바이트를 직접 보낸다) - 그래서 비어있으면
+    # 자체엔 필요 없다(Anthropic API에 바이트를 직접 보낸다) - 그래서 비어있으면
     # 저장만 건너뛰고 분석 기능은 그대로 동작한다.
     minio_endpoint: str = ""
     minio_access_key: str = ""
