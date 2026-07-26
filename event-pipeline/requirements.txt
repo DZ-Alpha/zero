@@ -1,0 +1,8 @@
+confluent-kafka==2.11.1
+fastapi==0.116.1
+minio==7.2.16
+psycopg[binary]==3.2.9
+psycopg-pool==3.2.6
+python-multipart==0.0.20
+pymongo==4.14.1
+uvicorn[standard]==0.35.0

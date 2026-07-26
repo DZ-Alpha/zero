@@ -1,0 +1,7 @@
+# 버전 고정(2026-07-18 로컬 검증 버전) — 재현성 확보
+confluent-kafka==2.15.0
+boto3==1.43.48
+psycopg[binary]==3.3.4
+python-dotenv==1.2.2
+requests==2.33.1
+redis==8.0.1

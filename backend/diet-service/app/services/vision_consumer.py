@@ -21,6 +21,7 @@ _TOPIC_FAILED = "diet.photo.failed"
 
 _consumer: AIOKafkaConsumer | None = None
 _task: asyncio.Task | None = None
+_last_error: str | None = None
 
 
 def _parse_causation_event_id(payload: dict) -> uuid.UUID | None:
@@ -104,6 +105,7 @@ async def _handle_failed(payload: dict) -> None:
 
 
 async def _consume_once(consumer: AIOKafkaConsumer) -> None:
+    global _last_error
     async for msg in consumer:
         try:
             payload = json.loads(msg.value)
@@ -112,14 +114,25 @@ async def _consume_once(consumer: AIOKafkaConsumer) -> None:
             else:
                 await _handle_failed(payload)
         except Exception:
-            # commit하지 않고 다음 메시지로 넘어간다 — 재기동하면 이 오프셋부터
-            # 다시 전달된다 (at-least-once). apply_vision_result가 이미 종결
-            # 상태(COMPLETED/FAILED)는 재적용하지 않으므로 재전달은 안전하다.
+            # commit하지 않고 다음 메시지로 넘어간다 — 재기동하면 이
+            # 오프셋부터 다시 전달된다 (at-least-once).
+            # apply_vision_result가 이미 종결 상태(COMPLETED/FAILED)는
+            # 재적용하지 않으므로 재전달은 안전하다.
             logger.exception(
-                "vision consumer: failed to process message topic=%s offset=%s", msg.topic, msg.offset
+                "vision consumer: failed to process message topic=%s offset=%s",
+                msg.topic, msg.offset,
             )
             continue
         await consumer.commit()
+        _last_error = None
+
+
+def consumer_state() -> dict:
+    """/health가 컨슈머 생존 여부를 보고할 수 있게 상태를 노출한다."""
+    if not settings.kafka_brokers:
+        return {"enabled": False, "alive": None, "last_error": None}
+    alive = _task is not None and not _task.done()
+    return {"enabled": True, "alive": alive, "last_error": _last_error}
 
 
 async def _consume_loop(consumer: AIOKafkaConsumer) -> None:
@@ -127,7 +140,9 @@ async def _consume_loop(consumer: AIOKafkaConsumer) -> None:
     # 오류, 역직렬화 실패 등)는 이 태스크를 조용히 죽여서 이후 아무도 메시지를
     # 소비하지 않게 만든다 — 인프라팀 경고(2026-07-21, snappy 미지원으로 컨슈머가
     # 소리 없이 죽은 사고와 같은 계열). 최상위 try/except로 감싸 지수 백오프로
-    # 재시작한다. 종료(stop_consumer)는 CancelledError로 오므로 그대로 전파한다.
+    # 재시작하고, 상태는 consumer_state()로 /health에 노출한다. 종료
+    # (stop_consumer)는 CancelledError로 오므로 그대로 전파한다.
+    global _last_error
     backoff = 1
     while True:
         try:
@@ -135,7 +150,8 @@ async def _consume_loop(consumer: AIOKafkaConsumer) -> None:
             return  # consumer가 정상 종료되면 루프도 끝낸다
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            _last_error = f"{type(exc).__name__}: {exc}"[:300]
             logger.exception("vision consumer: consume loop crashed, restarting in %ss", backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
