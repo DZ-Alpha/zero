@@ -671,9 +671,7 @@ async def internal_meal_records(
                     "source": "recipe",
                     "id": item.external_recipe_id,
                     "name": recipe.name if recipe else item.item_name,
-                    # RecipeRef는 id/name만 미러링한다 - 이미지가 필요해지면
-                    # recipe-service 쪽 image_url 컬럼을 여기에도 추가해야 한다.
-                    "imageUrl": None,
+                    "imageUrl": recipe.thumbnail_url if recipe else None,
                 })
 
         # 얌로그 요청사항 - 비전(사진) → 레시피 → 저당픽 순으로 넘겨볼 수 있게

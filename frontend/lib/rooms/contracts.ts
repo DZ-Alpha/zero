@@ -140,6 +140,14 @@ export function resolveMealCover(record: Pick<MealRecord, "uploadedPhotoUrls" | 
   return { imageUrl: null, source: null };
 }
 
+export type IncomingNudge = {
+  id: string;
+  roomId: string;
+  roomName: string;
+  senderName: string;
+  mealType: MealType;
+};
+
 export type RoomsHomeResponse = {
   rooms: RoomSummary[];
   recentActivities: RoomActivityItem[];
@@ -148,6 +156,7 @@ export type RoomsHomeResponse = {
   maxRoomCount: number;
   recentActivitiesNextCursor: string | null;
   weeklyRankingNextCursor: string | null;
+  incomingNudges: IncomingNudge[];
 };
 
 export type RoomBadge = {
@@ -165,6 +174,7 @@ export type RoomDetailResponse = {
   timezone: string;
   todayMealSlots: MemberMealSlot[];
   badges: RoomBadge[];
+  incomingNudges: IncomingNudge[];
 };
 
 export type CreateRoomInput = {

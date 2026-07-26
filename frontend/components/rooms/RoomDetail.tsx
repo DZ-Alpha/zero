@@ -88,7 +88,16 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     setNotFound(false);
     getRoomDetail(token, roomId)
       .then((response) => {
-        if (active) setDetail(response);
+        if (!active) return;
+        setDetail(response);
+        if (response.incomingNudges.length > 0) {
+          const [first, ...rest] = response.incomingNudges;
+          setToast(
+            rest.length > 0
+              ? `${first.senderName}님 외 ${rest.length}명이 콕 찔렀어요.`
+              : `${first.senderName}님이 ${MEAL_LABELS[first.mealType]} 기록을 콕 찔렀어요.`,
+          );
+        }
       })
       .catch(() => {
         if (active) setNotFound(true);

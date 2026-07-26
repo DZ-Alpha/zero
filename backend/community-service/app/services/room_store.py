@@ -197,6 +197,20 @@ async def get_active_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int)
     return result.scalar_one_or_none()
 
 
+async def revoke_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int) -> None:
+    """활성 초대 코드를 새로 발급하지 않고 그냥 없앤다 - create_invite("새 코드
+    만들기")와 달리 "코드 지우기"는 당장 아무도 새로 못 들어오게만 하고 싶을
+    때 쓴다."""
+    await require_owner(db, room_id, actor_id)
+    result = await db.execute(
+        select(RoomInvite).where(RoomInvite.room_id == room_id, RoomInvite.revoked_at.is_(None))
+    )
+    now = datetime.now(timezone.utc)
+    for existing in result.scalars().all():
+        existing.revoked_at = now
+    await db.commit()
+
+
 async def _get_invite_by_code(db: AsyncSession, code: str) -> RoomInvite | None:
     result = await db.execute(select(RoomInvite).where(RoomInvite.code_hash == _hash_invite_code(code)))
     return result.scalar_one_or_none()
@@ -537,6 +551,42 @@ async def get_last_nudge(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def list_incoming_nudges(
+    db: AsyncSession, target_user_id: int, room_id: uuid.UUID | None = None
+) -> list[RoomNudge]:
+    """받는 사람이 아직 못 본 콕 찌르기 목록. 이 서비스엔 실시간 푸시가 없어서
+    (폴링 방식), 방/홈 화면을 열 때 이 목록을 보여주고 acknowledge_nudges로
+    확인 처리한다. nudge_notifications를 꺼둔 멤버십은 제외한다(§11)."""
+    stmt = (
+        select(RoomNudge)
+        .join(
+            RoomMember,
+            (RoomMember.room_id == RoomNudge.room_id) & (RoomMember.user_id == RoomNudge.target_user_id),
+        )
+        .where(
+            RoomNudge.target_user_id == target_user_id,
+            RoomNudge.acknowledged_at.is_(None),
+            RoomMember.left_at.is_(None),
+            RoomMember.nudge_notifications.is_(True),
+        )
+    )
+    if room_id is not None:
+        stmt = stmt.where(RoomNudge.room_id == room_id)
+    stmt = stmt.order_by(RoomNudge.created_at.desc())
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def acknowledge_nudges(db: AsyncSession, nudge_ids: list[uuid.UUID]) -> None:
+    if not nudge_ids:
+        return
+    now = datetime.now(timezone.utc)
+    await db.execute(
+        RoomNudge.__table__.update().where(RoomNudge.id.in_(nudge_ids)).values(acknowledged_at=now)
+    )
+    await db.commit()
 
 
 # ── 신고 ─────────────────────────────────────────────────────────────────────
