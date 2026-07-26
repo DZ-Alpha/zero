@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { RecordDateNavigator } from "@/components/RecordDateNavigator";
 import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
@@ -116,6 +116,7 @@ export function RecordMealModal({
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState("");
   const [convertingHeic, setConvertingHeic] = useState(false);
+  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [serverMealLogId, setServerMealLogId] = useState<string | null>(null);
@@ -413,9 +414,7 @@ export function RecordMealModal({
     }
   }
 
-  async function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
-    const rawFile = event.target.files?.[0];
-    if (!rawFile) return;
+  async function handleIncomingPhoto(rawFile: File, onReject?: () => void) {
     setFileError("");
     setAnalysisError("");
 
@@ -426,7 +425,7 @@ export function RecordMealModal({
         file = await convertHeicToJpeg(file);
       } catch {
         setFileError("HEIC 사진을 변환하지 못했어요. 다른 사진을 선택해 주세요.");
-        event.target.value = "";
+        onReject?.();
         setConvertingHeic(false);
         return;
       }
@@ -435,17 +434,43 @@ export function RecordMealModal({
 
     if (!acceptedImageTypes.has(file.type)) {
       setFileError("JPG, PNG, WEBP 형식의 사진을 선택해 주세요.");
-      event.target.value = "";
+      onReject?.();
       return;
     }
     if (file.size > maxImageBytes) {
       setFileError("사진 크기는 10MB 이하로 선택해 주세요.");
-      event.target.value = "";
+      onReject?.();
       return;
     }
     if (photoPreview) URL.revokeObjectURL(photoPreview);
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
+  }
+
+  async function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const rawFile = event.target.files?.[0];
+    if (!rawFile) return;
+    await handleIncomingPhoto(rawFile, () => { event.target.value = ""; });
+  }
+
+  function handlePhotoDragOver(event: DragEvent<HTMLDivElement>) {
+    if (convertingHeic || isAnalyzing) return;
+    event.preventDefault();
+    setIsDraggingPhoto(true);
+  }
+
+  function handlePhotoDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setIsDraggingPhoto(false);
+  }
+
+  async function handlePhotoDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDraggingPhoto(false);
+    if (convertingHeic || isAnalyzing) return;
+    const rawFile = event.dataTransfer.files?.[0];
+    if (!rawFile) return;
+    await handleIncomingPhoto(rawFile);
   }
 
   function resetPhoto() {
@@ -596,11 +621,17 @@ export function RecordMealModal({
               ) : analysisError ? (
                 <div className="vision-error" role="alert"><span aria-hidden="true" /><h3>사진을 분석하지 못했어요.</h3><p>{analysisError}</p><div><button type="button" onClick={resetPhoto}>다른 사진 고르기</button><button type="button" className="solid-button" onClick={analyzePhoto}>다시 분석하기</button></div></div>
               ) : (
-                <div className="vision-upload">
+                <div
+                  className={`vision-upload${isDraggingPhoto ? " is-dragging" : ""}`}
+                  onDragOver={handlePhotoDragOver}
+                  onDragEnter={handlePhotoDragOver}
+                  onDragLeave={handlePhotoDragLeave}
+                  onDrop={handlePhotoDrop}
+                >
                   <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={selectPhoto} />
                   {photoPreview ? <div className="vision-photo-preview"><img src={photoPreview} alt="선택한 음식 사진 미리보기" /><div><button type="button" onClick={() => photoInput.current?.click()}>바꾸기</button><button type="button" onClick={resetPhoto}>지우기</button></div></div> : <div className="camera-mark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M4 8.5a2 2 0 0 1 2-2h1.6l.9-1.5A2 2 0 0 1 10.23 4h3.54a2 2 0 0 1 1.73 1l.9 1.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><circle cx="12" cy="12.5" r="3.4" stroke="currentColor" strokeWidth="1.8" /></svg></div>}
                   <h3>음식이나 제품 사진을 올려주세요</h3>
-                  <p>{photoFile ? `${photoFile.name}을 선택했어요.` : "사진을 올리면 음식의 양을 확인하고 당류와 칼로리를 계산해요."}</p>
+                  <p>{photoFile ? `${photoFile.name}을 선택했어요.` : "사진을 올리거나 이 위로 끌어다 놓으면 음식의 양을 확인하고 당류와 칼로리를 계산해요."}</p>
                   <small>JPG, PNG, WEBP, HEIC · 최대 10MB</small>
                   {fileError && <p className="vision-file-error" role="alert">{fileError}</p>}
                   <button type="button" className="solid-button" onClick={analyzePhoto} disabled={convertingHeic}>{photoFile ? "당류·칼로리 확인하기" : "사진 선택하기"}</button>
