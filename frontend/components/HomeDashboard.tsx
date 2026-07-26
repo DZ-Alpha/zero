@@ -32,6 +32,7 @@ const emptyRoomsHome: RoomsHomeResponse = {
   maxRoomCount: 3,
   recentActivitiesNextCursor: null,
   weeklyRankingNextCursor: null,
+  incomingNudges: [],
 };
 
 function toRoomRanking(weeklyRanking: RoomsHomeResponse["weeklyRanking"]): RankingItem[] {
@@ -123,6 +124,13 @@ export function HomeDashboard() {
   const [productRanking, setProductRanking] = useState<RankingItem[]>(fallbackProductRanking);
   const [productPanelTitle, setProductPanelTitle] = useState("저당픽 TOP");
   const [roomsHome, setRoomsHome] = useState<RoomsHomeResponse>(emptyRoomsHome);
+  const [nudgeToast, setNudgeToast] = useState("");
+
+  useEffect(() => {
+    if (!nudgeToast) return;
+    const timer = window.setTimeout(() => setNudgeToast(""), 2200);
+    return () => window.clearTimeout(timer);
+  }, [nudgeToast]);
 
   useEffect(() => {
     const today = keyToDate(todayKey);
@@ -164,7 +172,16 @@ export function HomeDashboard() {
     }
     let active = true;
     withMockFallback(() => getRoomsHome(token), emptyRoomsHome).then((response) => {
-      if (active) setRoomsHome(response);
+      if (!active) return;
+      setRoomsHome(response);
+      if (response.incomingNudges.length > 0) {
+        const [first, ...rest] = response.incomingNudges;
+        setNudgeToast(
+          rest.length > 0
+            ? `${first.senderName}님 외 ${rest.length}명이 콕 찔렀어요.`
+            : `${first.senderName}님이 ${MEAL_LABELS[first.mealType]} 기록을 콕 찔렀어요.`,
+        );
+      }
     });
     return () => {
       active = false;
@@ -374,6 +391,7 @@ export function HomeDashboard() {
         />
       )}
       {loginPrompt && <LoginPromptDialog onClose={() => setLoginPrompt(false)} />}
+      {nudgeToast && <div className="home-toast" role="status">{nudgeToast}</div>}
     </main>
   );
 }

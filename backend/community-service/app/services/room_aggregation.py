@@ -248,6 +248,37 @@ async def list_recent_activities(
     return items, next_cursor
 
 
+async def build_incoming_nudges(
+    db: AsyncSession, viewer_id: int, room_by_id: dict[uuid.UUID, Room], room_id: uuid.UUID | None = None
+) -> list[dict[str, object]]:
+    """방/홈 화면 진입 시 보여줄 "누가 나를 콕 찔렀는지" 목록을 만들고, 한 번
+    보여준 뒤 바로 acknowledge 처리한다(같은 화면을 다시 열어도 반복 노출 안 됨).
+    room_id를 주면 그 방으로 한정(방 상세), 안 주면 뷰어의 모든 방(홈)."""
+    nudges = await room_store.list_incoming_nudges(db, viewer_id, room_id)
+    if not nudges:
+        return []
+
+    display_names = await room_store.get_display_names_bulk(db, [n.sender_id for n in nudges])
+    items: list[dict[str, object]] = []
+    acknowledged_ids: list[uuid.UUID] = []
+    for nudge in nudges:
+        room = room_by_id.get(nudge.room_id)
+        acknowledged_ids.append(nudge.id)
+        if room is None:
+            continue
+        sender_name = display_names.get(nudge.sender_id, f"회원{nudge.sender_id}")
+        items.append({
+            "id": str(nudge.id),
+            "roomId": str(room.id),
+            "roomName": room.name,
+            "senderName": sender_name,
+            "mealType": to_frontend_meal_type(nudge.meal_type),
+        })
+
+    await room_store.acknowledge_nudges(db, acknowledged_ids)
+    return items
+
+
 async def list_weekly_ranking(
     db: AsyncSession, viewer_id: int, cursor: str | None, limit: int = 20
 ) -> tuple[list[dict[str, object]], str | None]:

@@ -18,6 +18,14 @@ from app.routers import health, notice, rooms, sweetener  # noqa: E402
 
 logger = logging.getLogger("community_service")
 
+# create_all()은 없는 테이블만 만들고, 이미 있는 테이블에 컬럼을 추가해주지
+# 않는다 - room_nudges는 이미 운영에 있던 테이블이라 새 컬럼(acknowledged_at,
+# 받은 사람에게 콕 찌르기를 한 번 보여줬는지 추적용)이 실제 테이블엔 반영이
+# 안 돼 있을 수 있다 - diet-service의 동일 패턴(_MEAL_LOG_COLUMN_MIGRATIONS) 참고.
+_ROOM_NUDGE_COLUMN_MIGRATIONS = [
+    "ALTER TABLE community.room_nudges ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ",
+]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,6 +35,8 @@ async def lifespan(app: FastAPI):
         # touched: create_all(tables=...) is scoped to OWNED_TABLES only.
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS community"))
         await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
+        for statement in _ROOM_NUDGE_COLUMN_MIGRATIONS:
+            await conn.execute(text(statement))
     yield
 
 

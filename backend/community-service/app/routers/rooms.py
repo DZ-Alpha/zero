@@ -62,6 +62,7 @@ async def get_rooms_home(
     user: UserIdentity = Depends(require_room_user),
 ) -> dict[str, object]:
     my_rooms = await room_store.list_rooms_for_user(db, user.user_id)
+    room_by_id = {room.id: room for room, _membership in my_rooms}
     summaries = []
     for room, membership in my_rooms:
         summary = await room_aggregation.compute_room_summary(db, room, membership, user.user_id)
@@ -72,6 +73,7 @@ async def get_rooms_home(
     ranking, ranking_cursor = await room_aggregation.list_weekly_ranking(db, user.user_id, None)
     for index, entry in enumerate(ranking):
         entry["rank"] = index + 1
+    incoming_nudges = await room_aggregation.build_incoming_nudges(db, user.user_id, room_by_id)
 
     return {
         "rooms": summaries,
@@ -81,6 +83,7 @@ async def get_rooms_home(
         "maxRoomCount": room_store.MAX_ROOM_COUNT,
         "recentActivitiesNextCursor": activities_cursor,
         "weeklyRankingNextCursor": ranking_cursor,
+        "incomingNudges": incoming_nudges,
     }
 
 
@@ -196,6 +199,7 @@ async def _room_detail_payload(
     slots = await room_aggregation.build_meal_slots(db, room_id, members, target_date, viewer_id)
     today = room_aggregation.today_kst()
     badges = await room_aggregation.build_room_badges(db, room_id, members, today)
+    incoming_nudges = await room_aggregation.build_incoming_nudges(db, viewer_id, {room_id: room}, room_id)
 
     return {
         "room": summary,
@@ -204,6 +208,7 @@ async def _room_detail_payload(
         "timezone": "Asia/Seoul",
         "todayMealSlots": slots,
         "badges": badges,
+        "incomingNudges": incoming_nudges,
     }
 
 

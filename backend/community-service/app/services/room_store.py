@@ -539,6 +539,42 @@ async def get_last_nudge(
     return result.scalar_one_or_none()
 
 
+async def list_incoming_nudges(
+    db: AsyncSession, target_user_id: int, room_id: uuid.UUID | None = None
+) -> list[RoomNudge]:
+    """받는 사람이 아직 못 본 콕 찌르기 목록. 이 서비스엔 실시간 푸시가 없어서
+    (폴링 방식), 방/홈 화면을 열 때 이 목록을 보여주고 acknowledge_nudges로
+    확인 처리한다. nudge_notifications를 꺼둔 멤버십은 제외한다(§11)."""
+    stmt = (
+        select(RoomNudge)
+        .join(
+            RoomMember,
+            (RoomMember.room_id == RoomNudge.room_id) & (RoomMember.user_id == RoomNudge.target_user_id),
+        )
+        .where(
+            RoomNudge.target_user_id == target_user_id,
+            RoomNudge.acknowledged_at.is_(None),
+            RoomMember.left_at.is_(None),
+            RoomMember.nudge_notifications.is_(True),
+        )
+    )
+    if room_id is not None:
+        stmt = stmt.where(RoomNudge.room_id == room_id)
+    stmt = stmt.order_by(RoomNudge.created_at.desc())
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def acknowledge_nudges(db: AsyncSession, nudge_ids: list[uuid.UUID]) -> None:
+    if not nudge_ids:
+        return
+    now = datetime.now(timezone.utc)
+    await db.execute(
+        RoomNudge.__table__.update().where(RoomNudge.id.in_(nudge_ids)).values(acknowledged_at=now)
+    )
+    await db.commit()
+
+
 # ── 신고 ─────────────────────────────────────────────────────────────────────
 
 async def report_content(
