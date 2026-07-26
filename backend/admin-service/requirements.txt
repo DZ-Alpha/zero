@@ -4,3 +4,5 @@ uvicorn[standard]==0.32.1
 pyjwt==2.13.0
 pydantic==2.10.6
 pydantic-settings==2.7.1
+opentelemetry-distro==0.65b0
+opentelemetry-exporter-otlp==1.44.0

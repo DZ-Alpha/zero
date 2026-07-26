@@ -3,6 +3,7 @@ modules:
     prober: http
     timeout: 5s
     http:
+      preferred_ip_protocol: ip4
       valid_status_codes: []
       method: GET
 

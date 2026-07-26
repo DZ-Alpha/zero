@@ -8,6 +8,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# OTel 계측(otel-guide.md, login-service 파일럿 검증 후 확대) - 설치된
+# 라이브러리에 맞는 auto-instrumentation 패키지를 골라 넣는다.
+RUN opentelemetry-bootstrap -a install
 
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
 
@@ -24,6 +27,15 @@ COPY app ./app
 # setuid/setgid 비트 제거 (CIS Docker Benchmark 4.8 - 방어 심층화)
 RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
 
+# perl-base 제거 (CIS 4.3 - 불필요 패키지 제거): 베이스 이미지에 딸려오는
+# Essential 패키지지만 런타임(파이썬/uvicorn)은 perl을 전혀 안 쓴다.
+# CVE-2026-57433(CRITICAL)이 perl-base에 떠 있는데 Debian 수정판이 아직 없어
+# (Trivy Fixed Version 공란) 버전 업그레이드로는 해결이 불가능하다 — 취약
+# 패키지 자체를 최종 이미지에서 없애 이미지 스캔 게이트를 통과시킨다.
+# --force-depends: debconf 등이 perl-base에 의존하지만 전부 apt 실행시에만
+# 쓰이고, 최종 이미지에서는 apt를 다시 쓸 일이 없다.
+RUN dpkg --purge --force-remove-essential --force-depends perl-base
+
 RUN chown -R appuser:appuser /app
 USER appuser
 
@@ -35,4 +47,4 @@ EXPOSE 8020
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8020/health', timeout=2)" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]
+CMD ["opentelemetry-instrument", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]

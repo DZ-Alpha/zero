@@ -1,4 +1,5 @@
 # 멀티 스테이지 빌드(Docker 공식 권장 패턴) - 의존성 설치 산출물을 최종 이미지에서 제외한다.
+# cache: registry 캐시 검증 트리거 (2026-07-21)
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28 AS builder
 
 WORKDIR /app
@@ -8,6 +9,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# OTel 계측(otel-guide.md, login-service 파일럿 검증 후 확대) - 설치된
+# 라이브러리에 맞는 auto-instrumentation 패키지를 골라 넣는다.
+RUN opentelemetry-bootstrap -a install
 
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
 
@@ -35,4 +39,4 @@ EXPOSE 8008
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8008/health', timeout=2)" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008"]
+CMD ["opentelemetry-instrument", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008"]

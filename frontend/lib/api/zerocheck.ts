@@ -1,4 +1,4 @@
-import { ApiError, apiRequest } from "@/lib/api/client";
+import { API_PREFIX, ApiError, apiRequest } from "@/lib/api/client";
 
 export type GaugeResponse = {
   cal: number;
@@ -41,6 +41,7 @@ export type RecipeDetailResponse = RecipeListItem & {
 
 export type MyPageResponse = {
   enabledSns: string[];
+  nickname?: string | null;
   email?: string | null;
   optionalAgree: boolean;
   favorite?: string[] | null;
@@ -148,6 +149,8 @@ export type RecipeSubstituteResponse = {
       brand?: string | null;
       image?: string | null;
       url?: string | null;
+      sugar?: number | null;
+      calories?: number | null;
       matchScore?: number | null;
       isPrimary?: boolean;
     }>;
@@ -174,11 +177,21 @@ export function deleteAccount(token: string) {
   return apiRequest<{ status: string }>(query("/user/mypage", { usr: token, exituser: "EXIT" }), { method: "DELETE" });
 }
 
-export function getHealthProfile(token: string) {
-  return apiRequest<HealthProfileResponse>(query("/home/health-profile", { usr: token }));
+// DB의 ck_health_gender 체크 제약은 영문 코드(MALE/FEMALE)만 허용하는데, 프론트는
+// 어디서나 한글 라벨(남성/여성)로 gender를 다룬다 — 회원가입 목표 저장 때 한글을
+// 그대로 보내서 IntegrityError로 계속 실패하던 버그(2026-07-21). API 경계에서만
+// 변환해서 나머지 코드는 한글 표기를 그대로 쓸 수 있게 한다.
+const GENDER_TO_CODE: Record<string, string> = { "여성": "FEMALE", "남성": "MALE" };
+const GENDER_FROM_CODE: Record<string, string> = { FEMALE: "여성", MALE: "남성" };
+
+export async function getHealthProfile(token: string) {
+  const profile = await apiRequest<HealthProfileResponse>(query("/home/health-profile", { usr: token }));
+  return { ...profile, gender: profile.gender ? GENDER_FROM_CODE[profile.gender] ?? profile.gender : profile.gender };
 }
 
 export function updateFirstSet(token: string, payload: {
+  nickname?: string;
+  email?: string;
   favoriteCategory?: string[];
   isAllergic?: boolean;
   optionalAgree?: boolean;
@@ -199,7 +212,7 @@ export function updateHealthProfile(token: string, payload: HealthProfileRespons
       usr: token,
       consent: payload.consent ?? false,
       birthYear: payload.birthYear,
-      gender: payload.gender,
+      gender: payload.gender ? GENDER_TO_CODE[payload.gender] ?? payload.gender : payload.gender,
       heightCm: payload.heightCm,
       weightKg: payload.weightKg,
       activityLevel: payload.activityLevel,
@@ -295,6 +308,9 @@ export function getDietOtherFoods(token: string, id: string) {
 // 기존 getDietCalendar + 로그마다 getDietOtherFoods 호출하던 N+1이 필요 없다.
 export type DietRecordApiItem = {
   recordId: string;
+  // meal_item PK — 사진 기록 하나에서 음식이 여러 개 인식되면 recordId(meal_log_id)가
+  // 행마다 동일해서 리스트 렌더링/삭제 대상 식별에 못 쓴다. entryId는 행마다 유일하다.
+  entryId: string;
   mealType: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK" | "OTHER";
   itemType: "recipe" | "product" | "photo";
   itemId: string;
@@ -372,12 +388,119 @@ export type ChatbotResponse = {
   "is-img"?: boolean;
 };
 
+const GUEST_CHAT_SESSION_KEY = "chat_session_id";
+
+// conversation-memory-frontend-spec.md — 비로그인 사용자의 대화방 식별자. 한 번
+// 발급하면 localStorage에 저장해두고 매 요청에 실어 보내야, 페이지 이동·새로고침
+// 후에도 서버가 같은 대화로 이어서 기억한다(session_id가 없으면 매번 새 대화로 취급).
+export function getGuestSessionId() {
+  if (typeof window === "undefined") return "";
+  let id = window.localStorage.getItem(GUEST_CHAT_SESSION_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    window.localStorage.setItem(GUEST_CHAT_SESSION_KEY, id);
+  }
+  return id;
+}
+
+// 로그인 사용자는 usr(JWT)로 계정 기준 대화방을, 비로그인 사용자는 session_id로
+// 게스트 대화방을 식별한다 — 둘을 같이 보내지 않는다(스펙 §1).
+function chatSessionParams(token?: string | null) {
+  return token ? { usr: token } : { session_id: getGuestSessionId() };
+}
+
 // MN-0111: 요청 키는 명세대로 msg/template, 응답은 cs-partner/time/msg/is-img.
-export function sendChatbotMessage(msg: string, token?: string | null, template?: string) {
+// img는 "data:image/...;base64,...." 형태의 data URL 그대로 넘긴다 - 백엔드
+// ChatbotRequest.img가 문자열 하나만 받는 구조라 별도 멀티파트 업로드 없이
+// 이 필드 하나로 보낸다.
+export function sendChatbotMessage(msg: string, token?: string | null, template?: string, img?: string | null) {
   return apiRequest<ChatbotResponse>("/ai/chatbot", {
     method: "POST",
-    body: JSON.stringify({ msg, ...(token ? { usr: token } : {}), ...(template ? { template } : {}) }),
+    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}), ...(img ? { img } : {}) }),
   });
+}
+
+export type ChatHistoryMessage = { role: "user" | "assistant"; text: string };
+
+// conversation-memory-frontend-spec.md §2 — 채팅창을 열 때 이전 대화를 복원한다.
+export function getChatHistory(token?: string | null) {
+  return apiRequest<{ messages: ChatHistoryMessage[] }>(query("/ai/chatbot/history", chatSessionParams(token)));
+}
+
+export type ChatbotStreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "done"; meta: Pick<ChatbotResponse, "cs-partner" | "time" | "is-img"> }
+  | { type: "error"; message: string };
+
+// 2026-07-21 chatbot-streaming-design.md 반영 — 답변을 다 만든 뒤 한 번에 받는 대신
+// SSE(delta 단위)로 흘려받는다. apiRequest는 완결된 JSON 응답 하나를 기대하는
+// 헬퍼라 스트림 파싱과는 안 맞아서, 여기선 직접 fetch + reader로 처리한다.
+export async function streamChatbotMessage(
+  msg: string,
+  token: string | null | undefined,
+  onEvent: (event: ChatbotStreamEvent) => void,
+  template?: string,
+  img?: string | null,
+): Promise<void> {
+  const response = await fetch(`${API_PREFIX}/ai/chatbot/stream`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}), ...(img ? { img } : {}) }),
+  });
+
+  if (!response.ok || !response.body) {
+    throw new ApiError("스트리밍 응답을 받지 못했어요.", response.status);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  function emitLine(line: string) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return;
+    const jsonText = trimmed.slice(5).trim();
+    if (!jsonText) return;
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(jsonText);
+    } catch {
+      return;
+    }
+
+    if (typeof payload.delta === "string") {
+      onEvent({ type: "delta", text: payload.delta });
+    } else if (payload.error) {
+      onEvent({ type: "error", message: String(payload.error) });
+    } else if (payload.done) {
+      onEvent({
+        type: "done",
+        meta: {
+          "cs-partner": payload["cs-partner"] as string | null | undefined,
+          time: payload.time as string | null | undefined,
+          "is-img": payload["is-img"] as boolean | undefined,
+        },
+      });
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? ""; // 마지막 조각은 아직 줄이 안 끝났을 수 있어 버퍼에 남긴다
+    for (const line of lines) emitLine(line);
+  }
+
+  // 스트림이 끝나는 마지막 청크가 개행 없이 끝나면(서버가 트레일링 "\n" 없이
+  // done 이벤트로 연결을 바로 닫는 경우), 그 줄이 buffer에 남은 채로 위 루프가
+  // 끝나버려서 done/마지막 delta가 통째로 유실됐다 — 프론트가 done을 못 받아
+  // "답변을 준비하고 있어요" 로딩이 안 꺼지는 버그의 원인. 남은 버퍼도 마저 처리한다.
+  if (buffer.trim()) emitLine(buffer);
 }
 
 export function unlinkSocialAccount(token: string, provider: string) {
@@ -411,7 +534,7 @@ export async function uploadDietPhotoFile(token: string, file: File) {
 
 // RC-0101~0102: object_key(uploadDietPhotoFile 결과) 등록 -> meal_log(PENDING)
 // 생성. 202를 받으면 분석은 아직 끝난 게 아니다 - getDietPhotoStatus로 폴링한다.
-export function uploadDietPhoto(token: string, objectKey: string, mealType?: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK", eatenAt?: string) {
+export function uploadDietPhoto(token: string, objectKey: string, mealType?: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK" | "OTHER", eatenAt?: string) {
   return apiRequest<{ meal_log_id: string; status: string }>("/diet/upload", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },

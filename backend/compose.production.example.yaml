@@ -36,6 +36,19 @@
 # 패턴으로 git 추적 + 자동 동기화하도록 전환 - 새 서비스 추가가 계속
 # 있을 예정이라, 다음부터는 이 파일을 고치는 PR 리뷰에서 누락이 바로
 # 보이고, CI가 production에 자동으로 반영한다.
+# 2026-07-24, 이 앵커를 9개 서비스가 실제로 쓰도록 정리했다. 그전에는 앵커가
+# 정의만 되어 있고 ai 하나만 참조했으며, 나머지 8개는 같은 내용을 인라인으로
+# 복붙해 갖고 있었다. 새 서비스는 기존 블록을 복사해 만들어지므로, 복사 시점에
+# 항목 하나(pids_limit 등)를 빠뜨리면 그 서비스만 조용히 약한 설정으로
+# 배포된다 - 이 저장소에서 반복돼온 "새 항목 추가 시 누락" 계열과 같은 형태다.
+# 이제 하드닝 기준이 한 곳에만 존재하므로, 기준을 바꾸면 9개에 동시에 적용되고
+# 새 서비스는 `<<: *hardening` 한 줄만 쓰면 된다.
+#
+# 등가성 검증(2026-07-24, harbor VM에서 `docker compose config`로 리팩터링
+# 전/후 정규화 출력을 비교): 차이 0. 런타임 동작은 바뀌지 않는다.
+# 각 서비스가 로컬 environment를 갖고 있어 앵커의 environment는 덮이는데,
+# 9개 전부 로컬에 PYTHONDONTWRITEBYTECODE=1을 이미 갖고 있어 결과가 같다
+# (YAML 병합키 <<는 깊은 병합이 아니라 키 단위 치환이라는 점이 근거).
 x-hardening: &hardening
   restart: unless-stopped
   cap_drop:
@@ -44,7 +57,7 @@ x-hardening: &hardening
     - no-new-privileges:true
   read_only: true
   tmpfs:
-    - /tmp
+    - /tmp:rw,noexec,nosuid
   environment:
     - PYTHONDONTWRITEBYTECODE=1
   mem_limit: 256m
@@ -81,30 +94,30 @@ services:
       - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
       - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
-      - "8000:8000"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - "127.0.0.1:8000:8000"
+    <<: *hardening
 
   admin-service:
     image: 192.168.0.53/dangdang-backend/admin-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: admin-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=admin-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
-      - "8008:8008"
+      - "127.0.0.1:8008:8008"
     <<: *hardening
 
   # 2026-07-20, PR #52(MN-0111)로 추가된 AI 챗봇 서비스. 필요 env는
@@ -116,48 +129,139 @@ services:
     env_file: ./.env
     volumes:
       - ${HOME}/.aws:/home/appuser/.aws:ro   # Bedrock 자격증명(non-root 유저 appuser의 홈)
+    # 2026-07-21, OTel 계측(윤경님 담당분 대행 - login-service와 동일 패턴).
+    # environment를 로컬로 두면 anchor의 environment가 통째로 덮이므로
+    # PYTHONDONTWRITEBYTECODE도 함께 명시한다(login/diet와 같은 방식).
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=ai
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
-      - "8022:8022"
+      - "127.0.0.1:8022:8022"
     <<: *hardening
 
   main-service:
     image: 192.168.0.53/dangdang-backend/main-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: main-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=main-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
-      - "8010:8010"
+      - "127.0.0.1:8010:8010"
     <<: *hardening
 
   community-service:
     image: 192.168.0.53/dangdang-backend/community-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: community-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=community-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
-      - "8012:8012"
+      - "127.0.0.1:8012:8012"
     <<: *hardening
 
   recipe-service:
     image: 192.168.0.53/dangdang-backend/recipe-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: recipe-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=recipe-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
-      - "8014:8014"
+      - "127.0.0.1:8014:8014"
     <<: *hardening
 
   product-service:
     image: 192.168.0.53/dangdang-backend/product-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: product-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=product-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
-      - "8016:8016"
+      - "127.0.0.1:8016:8016"
     <<: *hardening
 
   ingredients-service:
     image: 192.168.0.53/dangdang-backend/ingredients-service:${TAG:?TAG(커밋 SHA) 필수 - latest 배포 금지, CI가 자동으로 넘김}
     container_name: ingredients-service
     env_file: ./.env
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - OTEL_SERVICE_NAME=ingredients-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     ports:
-      - "8018:8018"
+      - "127.0.0.1:8018:8018"
     <<: *hardening
 
   diet-service:
@@ -166,92 +270,50 @@ services:
     env_file: ./.env
     # .env의 PRODUCT_SERVICE_URL은 로컬 단독 실행 기준(localhost:8016)이라,
     # 같은 compose 네트워크 안에서는 컨테이너명으로 덮어써야 한다.
+    # 2026-07-21, OTel 계측 확대 - login-service 파일럿 검증 후 나머지 서비스로
+    # 확장. Tempo(4318)/Loki(3100)/Prometheus(9090) OTLP 엔드포인트로 직접 전송한다.
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PRODUCT_SERVICE_URL=http://product-service:8016
+      - OTEL_SERVICE_NAME=diet-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.10.10.40:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.10.10.40:3100/otlp/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.10.10.40:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+      - OTEL_PYTHON_LOG_CORRELATION=true
     depends_on:
       product-service:
         condition: service_healthy
     ports:
-      - "8020:8020"
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp
-    mem_limit: 256m
-    cpus: 0.5
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - "127.0.0.1:8020:8020"
+    <<: *hardening
 
-  # /b/ 프리픽스 게이트웨이 — harbor-template에서 검증 완료된 구성 그대로.
-  # POST /admin(product-service 상품관리 vs ingredients-service 태그관리)과
-  # /community/gam-list(community-service vs ingredients-service)는 두 서비스가
-  # 실제로 같은 경로를 쓰고 있어서 생기는 임시 워크어라운드다 — gateway/nginx.conf
-  # 주석과 services/알릴거.md 참고. 근본 해결(경로 분리)은 별도 작업.
-  b-gateway:
-    image: openresty/openresty:alpine
-    container_name: b-gateway
-    volumes:
-      - ./gateway/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
-    ports:
-      - "8080:8080"
-    # default(backend_default)만으로는 frontend가 컨테이너명 b-gateway를 못
-    # 찾는다 — frontend는 dangdang-edge에 있다. 이게 없으면 compose로 재기동할
-    # 때마다 frontend<->b-gateway 연결이 끊긴다(2026-07-20 발견).
-    networks:
-      - default
-      - dangdang-edge
-    depends_on:
-      login-service: { condition: service_healthy }
-      admin-service: { condition: service_healthy }
-      main-service: { condition: service_healthy }
-      community-service: { condition: service_healthy }
-      recipe-service: { condition: service_healthy }
-      product-service: { condition: service_healthy }
-      ingredients-service: { condition: service_healthy }
-      diet-service: { condition: service_healthy }
-      ai: { condition: service_healthy }
-    restart: unless-stopped
-    cap_drop:
-      - ALL
-    # docker-openresty 엔트리포인트가 시작 시 임시 디렉터리를 nobody(65534)로
-    # chown하고 워커 프로세스 권한을 낮추는 데 필요한 최소 권한만 다시 부여한다.
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /var/run/openresty
-      - /usr/local/openresty/nginx/logs
-      - /usr/local/openresty/nginx/client_body_temp
-      - /usr/local/openresty/nginx/proxy_temp
-      - /usr/local/openresty/nginx/fastcgi_temp
-      - /usr/local/openresty/nginx/uwsgi_temp
-      - /usr/local/openresty/nginx/scgi_temp
-    mem_limit: 128m
-    cpus: 0.3
-    pids_limit: 50
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-# dangdang-edge는 frontend가 만드는 외부 네트워크 — 여기서는 참조만 하고
-# 소유하지 않는다. 다른 서비스는 top-level networks 선언이 없어도 계속
-# 기존 default(backend_default) 네트워크에 자동으로 붙는다.
-networks:
-  dangdang-edge:
-    external: true
+# 2026-07-24, b-gateway 서비스 정의를 이 파일에서 제거했다.
+#
+# 이 파일이 정의하던 b-gateway는 실제 운영본과 달랐다:
+#   - 여기: openresty 공식 이미지 + ./gateway/nginx.conf 볼륨 마운트 + root 실행
+#     (cap_add로 CHOWN/SETUID/SETGID 재부여)
+#   - 실제: infra/b-gateway/ (Dockerfile로 nginx.conf를 이미지에 굽고 USER 101
+#     non-root 실행). bgateway-cutover job이 이걸 배포하며, 그게 유일한 배포 경로.
+# 게다가 여기가 참조하는 ./gateway/nginx.conf 는 이 저장소에 존재하지도 않는다.
+#
+# 문제는 이 파일이 backend-deploy-production에 의해 매 배포마다 production VM의
+# ~/backend/docker-compose.yaml 로 덮어써진다는 점이다. 즉 낡은(root 실행) 정의가
+# 배포 때마다 production에 다시 심어지고 있었고, 누군가 ~/backend에서 서비스 단위가
+# 아닌 전체 `docker compose up -d`를 한 번만 실행하면 2026-07-19에 적용한 non-root
+# 하드닝이 조용히 원복되는 경로였다. b-gateway는 컨테이너명도 프로젝트명(backend)도
+# 같아서 compose가 자기 관리 대상으로 인식한다.
+#
+# 소유권을 infra/b-gateway/ 한 곳으로 정리한다. 실행 중인 b-gateway 컨테이너에는
+# 영향이 없다(배포는 `up -d --no-deps <service>`로 서비스 단위 실행이라 b-gateway를
+# 건드리지 않는다). 다만 이 파일로 compose를 돌리면 b-gateway가 이 프로젝트의
+# "orphan container"로 경고에 뜬다 - 제거하지 않는 한 실행에는 영향 없고, 오히려
+# 소유자가 다른 파일임을 드러내주는 신호라 그대로 둔다(--remove-orphans 금지).
+#
+# top-level networks(dangdang-edge)도 함께 제거했다 - b-gateway가 유일한 참조자였고,
+# 나머지 서비스는 선언 없이 default(backend_default)에 자동으로 붙는다.

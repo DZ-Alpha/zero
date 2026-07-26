@@ -6,7 +6,9 @@ import { RecipeCover } from "@/components/RecipeCover";
 import { FavoriteIconButton } from "@/components/FavoriteButton";
 import { recipes as mockRecipes } from "@/data/catalog";
 import { RECIPE_CATEGORIES } from "@/data/taxonomy";
+import { useAuthSession } from "@/hooks/useAuthSession";
 import { useRecipeCatalog } from "@/hooks/useRecipeCatalog";
+import { getRecipeFavorites } from "@/lib/api/zerocheck";
 
 const personalSlugs = new Set(mockRecipes.filter((recipe) => recipe.category === "한 끼" || recipe.category === "반찬").slice(0, 6).map((recipe) => recipe.slug));
 const personalIds = new Set(mockRecipes.filter((recipe) => personalSlugs.has(recipe.slug)).map((recipe) => recipe.databaseId).filter(Boolean));
@@ -19,6 +21,25 @@ export function RecipeFeed() {
   const [personalOnly, setPersonalOnly] = useState(false);
   const [visible, setVisible] = useState(6);
   const sentinel = useRef<HTMLDivElement>(null);
+  const { ready: authReady, signedIn, token } = useAuthSession();
+  const [favoriteRecipeIds, setFavoriteRecipeIds] = useState<Set<string>>(new Set());
+
+  // 목록 카드마다 즐겨찾기 여부를 개별 조회하면 N+1이라, 즐겨찾기 목록을 한 번만
+  // 통으로 불러와 Set으로 대조한다(RecordMealModal.tsx와 같은 패턴) — 이게
+  // 없으면 찜 저장/해제는 잘 되는데 목록을 다시 불러올 때마다 항상 "안 찜"
+  // 상태로 보이는 문제가 있었다.
+  useEffect(() => {
+    if (!authReady || !signedIn || !token) return;
+    let active = true;
+    getRecipeFavorites(token).then((result) => {
+      if (active) setFavoriteRecipeIds(new Set(result["list-receipe"].map((item) => String(item.id))));
+    }).catch(() => {
+      // 조회 실패해도 하트는 기본(안 찜) 상태로 남는다 — 눌러서 다시 저장할 수 있다.
+    });
+    return () => {
+      active = false;
+    };
+  }, [authReady, signedIn, token]);
 
   const availableCategories = new Set(recipes.map((recipe) => recipe.category));
   const categories = ["전체", ...RECIPE_CATEGORIES.filter((item) => availableCategories.has(item))];
@@ -29,7 +50,9 @@ export function RecipeFeed() {
       return queryMatch && categoryMatch && (!personalOnly || personalSlugs.has(recipe.slug) || personalIds.has(recipe.databaseId));
     });
     if (sort === "인기순") list = [...list].sort((a, b) => b.savedDemo - a.savedDemo);
-    if (sort === "빠른 조리순") list = [...list].sort((a, b) => Number.parseInt(a.time.replace(/\D/g, "")) - Number.parseInt(b.time.replace(/\D/g, "")));
+    // "빠른 조리순"은 조리 시간 숨김(RecipeCover.tsx 참고)과 함께 잠시 뺐다 —
+    // DB 레시피 대부분 time이 "조리 시간 준비 중"이라 파싱이 NaN이 돼 정렬이
+    // 사실상 동작하지 않았다. 시간 데이터가 채워지면 옵션과 함께 되돌린다.
     if (sort === "등록 당류 낮은순") list = [...list].sort((a, b) => a.estimatedSugar - b.estimatedSugar);
     return list;
   }, [category, personalOnly, query, recipes, sort]);
@@ -67,13 +90,12 @@ export function RecipeFeed() {
         <div>
           <p className="eyebrow">저당 레시피</p>
           <h1>등록된 재료까지 확인한<br />저당 메뉴를 모았어요.</h1>
-          <p className="catalog-source-note">만개의레시피 데이터 중 재료 영양값이 모두 연결된 메뉴를 우선 보여드려요.</p>
         </div>
         <div className="catalog-search"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="메뉴나 재료를 검색해보세요" /><span>⌕</span></div>
       </section>
 
       <section className="catalog-recommendation personal-picks wrap">
-        <header><div><span>기록에 맞춘 추천</span><h2>최근 기록과 잘 맞는 메뉴예요</h2></div><p>한 끼는 든든하게, 간식의 단맛은 가볍게 고를 수 있도록 골랐어요.</p></header>
+        <header><div><span>기록에 맞춘 추천</span><h2>최근 기록과 잘 맞는 메뉴예요</h2></div></header>
         <div>{recommendationItems.map((recipe, index) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><span className="recommendation-rank">0{index + 1}</span><div><h3>{recipe.title}</h3><p>{recipe.nutritionCoverage ? `등록 재료 당류 ${recipe.estimatedSugar}g` : "영양정보를 확인하고 있어요"}</p></div></Link>)}</div>
       </section>
 
@@ -81,7 +103,7 @@ export function RecipeFeed() {
         <div className="catalog-list wrap">
           <header className="catalog-tools">
           <div className="filter-chips">{categories.map((item) => <button type="button" className={category === item ? "is-active" : ""} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div>
-          <div className="catalog-sort"><label><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} />추천 메뉴만</label><select value={sort} onChange={(event) => setSort(event.target.value)}><option>추천순</option><option>인기순</option><option>빠른 조리순</option><option>등록 당류 낮은순</option></select></div>
+          <div className="catalog-sort"><label><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} />추천 메뉴만</label><select value={sort} onChange={(event) => setSort(event.target.value)}><option>추천순</option><option>인기순</option><option>등록 당류 낮은순</option></select></div>
           </header>
           {activeFilters.length > 0 && <div className="active-filter-summary" aria-label="적용된 필터"><span>적용한 조건</span>{activeFilters.map((item) => <b key={item}>{item}</b>)}<button type="button" onClick={resetFilters}>모두 지우기</button></div>}
           {source === "mock" && !loading && <div className="inline-service-notice" role="status"><div><b>서버에서 레시피를 불러오지 못했어요.</b><span>지금은 준비된 레시피 목록을 보여드려요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
@@ -93,7 +115,7 @@ export function RecipeFeed() {
               <article className="feed-card" key={key}>
                 <Link href={`/recipes/${key}`} className="feed-image"><RecipeCover recipe={recipe} /></Link>
                 <div className="feed-card-copy"><small>{recipe.author}{recipe.nutritionCoverage ? ` · 영양 계산 ${recipe.nutritionCoverage}%` : ""}</small><h2><Link href={`/recipes/${key}`}>{recipe.title}</Link></h2><p>{recipe.nutritionCoverage ? <>등록 재료 합계 <b>당류 {recipe.estimatedSugar}g</b> · {recipe.estimatedCalories}kcal</> : "영양정보를 확인하고 있어요."}</p></div>
-                <FavoriteIconButton label={recipe.title} id={recipe.databaseId} kind="recipe" />
+                <FavoriteIconButton label={recipe.title} id={recipe.databaseId} kind="recipe" initial={favoriteRecipeIds.has(String(recipe.databaseId))} />
               </article>
             )})}
           </div>

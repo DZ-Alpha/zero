@@ -13,7 +13,12 @@ const allergens = ["우유", "대두", "땅콩", "호두", "밀", "난류", "새
 export type OAuthSignupProfile = {
   name?: string;
   birthDate?: string;
+  email?: string;
 };
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
 
 function birthDateDigits(value = "") {
   return value.replace(/\D/g, "").slice(0, 8);
@@ -49,6 +54,7 @@ export function SignupProfileForm({ provider, oauthProfile = {} }: { provider: s
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [name, setName] = useState(oauthProfile.name?.trim() ?? "");
+  const [email, setEmail] = useState(oauthProfile.email?.trim() ?? "");
   const [birthDate, setBirthDate] = useState(birthDateDigits(oauthProfile.birthDate));
   const [activity, setActivity] = useState("");
   const [gender, setGender] = useState("");
@@ -66,15 +72,16 @@ export function SignupProfileForm({ provider, oauthProfile = {} }: { provider: s
     if (step === 1) {
       const validHeight = Number(height) >= 120 && Number(height) <= 230;
       const validWeight = Number(weight) >= 30 && Number(weight) <= 250;
-      return name.trim().length >= 2 && isValidBirthDate(birthDate) && Boolean(activity) && Boolean(gender) && validHeight && validWeight;
+      return name.trim().length >= 2 && isValidEmail(email) && isValidBirthDate(birthDate) && Boolean(activity) && Boolean(gender) && validHeight && validWeight;
     }
     if (step === 2) return selectedInterests.length > 0;
     return consents.age && consents.terms && consents.privacy;
-  }, [activity, birthDate, consents, gender, height, name, selectedInterests.length, step, weight]);
+  }, [activity, birthDate, consents, email, gender, height, name, selectedInterests.length, step, weight]);
 
   const validationMessage = useMemo(() => {
     if (step === 1) {
       if (name.trim().length < 2) return "사용할 이름이나 닉네임을 두 글자 이상 입력해 주세요.";
+      if (!isValidEmail(email)) return "이메일 주소를 확인해 주세요.";
       if (!isValidBirthDate(birthDate)) return "생년월일 8자리를 확인해 주세요.";
       if (!gender) return "성별을 골라주세요.";
       if (!(Number(height) >= 120 && Number(height) <= 230)) return "키는 120~230cm 사이로 입력해 주세요.";
@@ -84,7 +91,7 @@ export function SignupProfileForm({ provider, oauthProfile = {} }: { provider: s
     if (step === 2 && selectedInterests.length === 0) return "관심 기준을 하나 이상 골라주세요.";
     if (step === 3 && !(consents.age && consents.terms && consents.privacy)) return "필수 동의 세 가지를 확인해 주세요.";
     return "";
-  }, [activity, birthDate, consents, gender, height, name, selectedInterests.length, step, weight]);
+  }, [activity, birthDate, consents, email, gender, height, name, selectedInterests.length, step, weight]);
 
   function toggle(list: string[], setList: (value: string[]) => void, value: string) {
     if (value === "해당 없음") return setList(list.includes(value) ? [] : [value]);
@@ -102,6 +109,7 @@ export function SignupProfileForm({ provider, oauthProfile = {} }: { provider: s
     else {
       saveUserProfile({
         name: name.trim(),
+        email: email.trim(),
         birthDate,
         birthYear: birthDate.slice(0, 4),
         gender,
@@ -133,6 +141,7 @@ export function SignupProfileForm({ provider, oauthProfile = {} }: { provider: s
             <div className="auth-title"><p className="eyebrow">기본 정보</p><h1>어떻게 불러드릴까요?</h1><p>소셜 계정에서 받지 못한 정보만 직접 입력해 주세요. 하루 목표를 계산할 때 사용해요.</p></div>
             <div className="form-grid">
               <label className={`full oauth-profile-field ${nameLocked ? "is-locked" : ""}`}><span>이름 또는 닉네임 {nameLocked && <i>소셜 계정 정보</i>}</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="예: 지은" autoFocus={!nameLocked} readOnly={nameLocked} /><small className="oauth-field-note">{nameLocked ? `${providerName}에서 불러왔어요. 연결 계정의 정보와 같게 유지돼요.` : `${providerName}에서 이름을 받지 못했어요. 사용할 이름을 입력해 주세요.`}</small></label>
+              <label className="full"><span>이메일</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="예: dangdang@example.com" /><small className="oauth-field-note">중요한 안내를 받을 이메일이에요. 마이페이지에서 언제든 바꿀 수 있어요.</small></label>
               <label className={`oauth-profile-field ${birthDateLocked ? "is-locked" : ""}`}><span>생년월일 {birthDateLocked && <i>소셜 계정 정보</i>}</span><div className="birthdate-control"><input value={formatBirthDate(birthDate)} onChange={(event) => setBirthDate(birthDateDigits(event.target.value))} inputMode="numeric" placeholder="예: 20001006" readOnly={birthDateLocked} aria-describedby="birthdate-help" />{!birthDateLocked && <><input className="birthdate-picker" type="date" min="1900-01-01" max={new Date().toISOString().slice(0, 10)} value={birthDateToIso(birthDate)} onChange={(event) => setBirthDate(birthDateDigits(event.target.value))} aria-label="달력에서 생년월일 선택" /><b aria-hidden="true">달력</b></>}</div><small className="oauth-field-note" id="birthdate-help">{birthDateLocked ? `${providerName}에서 불러왔어요. 이 화면에서는 바꿀 수 없어요.` : "숫자 8자리를 입력하거나 달력에서 골라주세요."}</small></label>
               <label><span>성별</span><select value={gender} onChange={(event) => setGender(event.target.value)}><option value="">골라주세요</option><option>여성</option><option>남성</option></select></label>
               <label><span>키</span><div className="unit-input"><input value={height} onChange={(event) => setHeight(event.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" placeholder="165" /><b>cm</b></div></label>

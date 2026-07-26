@@ -11,3 +11,5 @@ python-multipart==0.0.32
 anthropic==0.69.0
 boto3==1.43.51
 aiokafka==0.14.0
+opentelemetry-distro==0.65b0
+opentelemetry-exporter-otlp==1.44.0

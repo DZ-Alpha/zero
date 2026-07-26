@@ -46,6 +46,28 @@ services:
     container_name: b-gateway
     restart: unless-stopped
     user: "101:101"
+    # 2026-07-24, 런타임 하드닝 패리티. 백엔드 9개 서비스는 전부
+    # cap_drop/no-new-privileges/pids_limit을 갖고 있는데, 정작 인터넷과 맞닿는
+    # 유일한 컴포넌트인 이 게이트웨이만 빠져 있었다(user/read_only만 적용된
+    # 상태). 노출 표면이 가장 큰 컴포넌트가 가장 약한 설정이던 셈.
+    #
+    # cap_add가 필요 없는 이유: backend/compose.production.example.yaml의 옛
+    # b-gateway 정의는 openresty 공식 이미지를 root로 띄우느라 엔트리포인트가
+    # 시작 시 chown/setuid를 해야 했고 그래서 CHOWN/SETUID/SETGID를 되돌려
+    # 줬다. 지금 이 스택은 Dockerfile에서 USER 101로 이미 non-root로 뜨고
+    # nginx.conf도 이미지에 구워져 있어(pid/temp 경로를 /tmp로 재지정) 런타임에
+    # 권한 조작을 하지 않는다. 8080은 비특권 포트라 NET_BIND_SERVICE도 불필요.
+    #
+    # 격리 검증(2026-07-24, harbor VM에서 라이브 게이트웨이 안 건드리고 별도
+    # 컨테이너로 실행): 이 세 항목을 전부 건 상태에서 컨테이너 정상 기동,
+    # uid 101로 master+worker 프로세스 확인, nginx가 요청을 실제로 접수해
+    # 액세스 로그에 기록되는 것까지 확인함(업스트림 미존재로 인한 resolver
+    # 오류만 발생 - 격리 환경의 예상 동작).
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 50
     read_only: true
     tmpfs:
       - /tmp

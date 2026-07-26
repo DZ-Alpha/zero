@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { RecordDateNavigator } from "@/components/RecordDateNavigator";
+import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
-import { products, recipes } from "@/data/catalog";
+import { recipes } from "@/data/catalog";
 import { PRODUCT_CATEGORIES } from "@/data/taxonomy";
 import { DietRecord, DietRecordsByDate, getTodayKey, MealType, useDietRecords } from "@/hooks/useDietRecords";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
@@ -12,13 +13,16 @@ import { useRecipeCatalog } from "@/hooks/useRecipeCatalog";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { getAccessToken } from "@/lib/api/client";
+import { convertHeicToJpeg, isHeicFile } from "@/lib/heic";
 import {
   confirmDietPhoto,
   DietAnalysisItem,
   DietPhotoStatusResponse,
   getDietPhotoStatus,
   getProductDetail,
+  getProductFavorites,
   getRecipeDetail,
+  getRecipeFavorites,
   uploadDietPhoto,
   uploadDietPhotoFile,
 } from "@/lib/api/zerocheck";
@@ -50,6 +54,7 @@ type FoodItem = {
   calories: number;
   note: string;
   href: string;
+  image?: string;
   favorite?: boolean;
   nutritionAvailable: boolean;
 };
@@ -58,14 +63,12 @@ const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 const sourceTabs: { id: Source; label: string }[] = [
   { id: "photo", label: "사진 입력" },
   { id: "recipe", label: "레시피" },
-  { id: "product", label: "식품 검색" },
+  { id: "product", label: "저당픽" },
   { id: "favorite", label: "즐겨찾기" },
 ];
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxImageBytes = 10 * 1024 * 1024;
 
-const favoriteRecipeIds = new Set(recipes.filter((_, index) => index === 0 || index === 4).map((recipe) => recipe.databaseId ?? recipe.slug));
-const favoriteProductIds = new Set(products.filter((_, index) => index === 0 || index === 3 || index === 5).map((product) => product.backendId ?? product.slug));
 function percent(value: number, max: number) {
   return Math.min(100, Math.round((value / max) * 100));
 }
@@ -76,6 +79,10 @@ function roundSugar(value: number) {
 
 function sugarText(value: number) {
   return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }).format(roundSugar(value));
+}
+
+function visibleKind(kind: FoodItem["kind"]) {
+  return kind === "식품" ? "저당픽" : kind;
 }
 
 export function RecordMealModal({
@@ -108,6 +115,8 @@ export function RecordMealModal({
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState("");
+  const [convertingHeic, setConvertingHeic] = useState(false);
+  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [serverMealLogId, setServerMealLogId] = useState<string | null>(null);
@@ -118,6 +127,8 @@ export function RecordMealModal({
   const [loginPrompt, setLoginPrompt] = useState(false);
   const [resolvingItemId, setResolvingItemId] = useState<string | null>(null);
   const [selectionError, setSelectionError] = useState("");
+  const [favoriteRecipeIds, setFavoriteRecipeIds] = useState<Set<string>>(new Set());
+  const [favoriteProductIds, setFavoriteProductIds] = useState<Set<string>>(new Set());
   const photoInput = useRef<HTMLInputElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const recipeCatalog = useRecipeCatalog(recipes);
@@ -141,10 +152,11 @@ export function RecordMealModal({
         calories: recipe.estimatedCalories,
         note: Number(recipe.nutritionCoverage ?? 0) > 0 ? `${recipe.summary} 등록된 재료 영양값을 합산했어요.` : "자세한 재료와 영양정보는 상세에서 확인할 수 있어요.",
         href: `/recipes/${id}`,
+        image: recipe.thumbnail,
         favorite: favoriteRecipeIds.has(id),
         nutritionAvailable: Number(recipe.nutritionCoverage ?? 0) > 0,
       };
-    }), [recipeCatalog.recipes]);
+    }), [recipeCatalog.recipes, favoriteRecipeIds]);
 
   const productLibrary = useMemo<FoodItem[]>(() => productCatalog.products.map((product) => {
     const id = product.backendId ?? product.slug;
@@ -157,12 +169,35 @@ export function RecordMealModal({
       calories: product.calories,
       note: `${product.summary} ${product.serving} 기준이에요.`,
       href: `/product/${id}`,
+      image: product.image,
       favorite: favoriteProductIds.has(id),
       nutritionAvailable: product.nutritionAvailable !== false,
     };
-  }), [productCatalog.products]);
+  }), [productCatalog.products, favoriteProductIds]);
 
   const library = useMemo(() => [...recipeLibrary, ...productLibrary], [productLibrary, recipeLibrary]);
+
+  // "즐겨찾기" 탭이 실제 찜 목록이 아니라 하드코딩된 샘플(레시피 0/4번, 식품 0/3/5번
+  // 인덱스)만 계속 보여주던 버그 — 하트로 찜해도 여기 절대 안 뜬다. 실제 서버 찜
+  // 목록(RC-0111/0112)을 불러오도록 고친다.
+  useEffect(() => {
+    if (!authReady || !signedIn) return;
+    const token = getAccessToken();
+    if (!token) return;
+    let active = true;
+    Promise.allSettled([getRecipeFavorites(token), getProductFavorites(token)]).then(([recipeResult, productResult]) => {
+      if (!active) return;
+      if (recipeResult.status === "fulfilled") {
+        setFavoriteRecipeIds(new Set(recipeResult.value["list-receipe"].map((item) => String(item.id))));
+      }
+      if (productResult.status === "fulfilled") {
+        setFavoriteProductIds(new Set(productResult.value["list-products"].map((item) => item.id)));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [authReady, signedIn]);
 
   useEffect(() => {
     closeButton.current?.focus();
@@ -318,6 +353,7 @@ export function RecordMealModal({
         calories: Math.round(analyzedCalories),
         note: "AI가 사진에서 인식한 결과예요. 양을 조절하면 다시 계산할 수 있어요.",
         href: "/diet",
+        image: photoPreview ?? undefined,
         nutritionAvailable: true,
       });
       return;
@@ -333,6 +369,7 @@ export function RecordMealModal({
       calories: 0,
       note: "사진은 서버에 등록했어요. 분석이 끝나면 실제 영양정보로 표시할게요.",
       href: "/diet",
+      image: photoPreview ?? undefined,
       nutritionAvailable: false,
     });
   }
@@ -366,6 +403,7 @@ export function RecordMealModal({
         calories: Math.round(analyzedCalories),
         note: "확인한 내용으로 저장했어요.",
         href: "/diet",
+        image: photoPreview ?? undefined,
         nutritionAvailable: true,
       });
       setDraftItems(null);
@@ -376,24 +414,63 @@ export function RecordMealModal({
     }
   }
 
-  function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  async function handleIncomingPhoto(rawFile: File, onReject?: () => void) {
     setFileError("");
     setAnalysisError("");
+
+    let file = rawFile;
+    if (isHeicFile(file)) {
+      setConvertingHeic(true);
+      try {
+        file = await convertHeicToJpeg(file);
+      } catch {
+        setFileError("HEIC 사진을 변환하지 못했어요. 다른 사진을 선택해 주세요.");
+        onReject?.();
+        setConvertingHeic(false);
+        return;
+      }
+      setConvertingHeic(false);
+    }
+
     if (!acceptedImageTypes.has(file.type)) {
       setFileError("JPG, PNG, WEBP 형식의 사진을 선택해 주세요.");
-      event.target.value = "";
+      onReject?.();
       return;
     }
     if (file.size > maxImageBytes) {
       setFileError("사진 크기는 10MB 이하로 선택해 주세요.");
-      event.target.value = "";
+      onReject?.();
       return;
     }
     if (photoPreview) URL.revokeObjectURL(photoPreview);
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
+  }
+
+  async function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const rawFile = event.target.files?.[0];
+    if (!rawFile) return;
+    await handleIncomingPhoto(rawFile, () => { event.target.value = ""; });
+  }
+
+  function handlePhotoDragOver(event: DragEvent<HTMLDivElement>) {
+    if (convertingHeic || isAnalyzing) return;
+    event.preventDefault();
+    setIsDraggingPhoto(true);
+  }
+
+  function handlePhotoDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setIsDraggingPhoto(false);
+  }
+
+  async function handlePhotoDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDraggingPhoto(false);
+    if (convertingHeic || isAnalyzing) return;
+    const rawFile = event.dataTransfer.files?.[0];
+    if (!rawFile) return;
+    await handleIncomingPhoto(rawFile);
   }
 
   function resetPhoto() {
@@ -402,6 +479,7 @@ export function RecordMealModal({
     setPhotoPreview(null);
     setFileError("");
     setAnalysisError("");
+    setConvertingHeic(false);
     setUploadProgress(0);
     setServerMealLogId(null);
     if (photoInput.current) photoInput.current.value = "";
@@ -482,14 +560,24 @@ export function RecordMealModal({
         <RecordDateNavigator value={recordDate} onChange={(date) => { setRecordDate(date); setSelected(null); }} min={minDate} max={maxDate} />
 
         {draftItems ? (
-          <div className="vision-draft">
-            <p className="eyebrow">사진 인식 확신이 낮아요</p>
-            <h3>인식된 음식을 확인하고 필요하면 지워주세요</h3>
-            {draftConfidence != null && <small>인식 확신도 {Math.round(draftConfidence * 100)}%</small>}
-            {confirmState === "error" && <p className="vision-file-error" role="alert">확정하지 못했어요. 다시 시도해 주세요.</p>}
-            {draftItems.length === 0 ? (
-              <p className="entry-data-state">인식된 음식이 없어요. 다른 사진으로 다시 시도해 주세요.</p>
-            ) : (
+          draftItems.length === 0 ? (
+            // 인식된 음식이 0개인 경우(음식이 아닌 사진, 또는 아무것도 못 알아본 경우).
+            // 예전엔 "확신이 낮아요 / 지워주세요 / 0% / (비활성)확인하고 저장하기"를
+            // 그대로 띄워 앞뒤가 안 맞는 화면이 됐다 — 전용 안내 카드로 분리한다.
+            <div className="vision-error is-soft" role="status">
+              <span aria-hidden="true" />
+              <h3>사진 속에서 음식을 찾지 못했어요.</h3>
+              <p>음식이 화면에 크고 선명하게 담기도록 다시 찍어 올려주시면 더 정확하게 계산할 수 있어요.</p>
+              <div>
+                <button type="button" onClick={() => { setDraftItems(null); setDraftConfidence(null); resetPhoto(); }}>다른 사진 올리기</button>
+              </div>
+            </div>
+          ) : (
+            <div className="vision-draft">
+              <p className="eyebrow">사진 인식 확신이 낮아요</p>
+              <h3>인식된 음식을 확인하고 필요하면 지워주세요</h3>
+              {draftConfidence != null && <small>인식 확신도 {Math.round(draftConfidence * 100)}%</small>}
+              {confirmState === "error" && <p className="vision-file-error" role="alert">확정하지 못했어요. 다시 시도해 주세요.</p>}
               <ul className="vision-draft-list">
                 {draftItems.map((item, index) => (
                   <li key={`${item.name}-${index}`}>
@@ -499,24 +587,30 @@ export function RecordMealModal({
                   </li>
                 ))}
               </ul>
-            )}
-            <footer className="mini-detail-actions">
-              <button type="button" onClick={() => { setDraftItems(null); setDraftConfidence(null); resetPhoto(); }}>다른 사진으로 다시 시도</button>
-              <button
-                type="button"
-                className="solid-button"
-                onClick={confirmDraft}
-                disabled={draftItems.length === 0 || confirmState === "confirming"}
-              >
-                {confirmState === "confirming" ? "저장하고 있어요" : "확인하고 저장하기"}
-              </button>
-            </footer>
-          </div>
+              <footer className="mini-detail-actions">
+                <button type="button" onClick={() => { setDraftItems(null); setDraftConfidence(null); resetPhoto(); }}>다른 사진으로 다시 시도</button>
+                <button
+                  type="button"
+                  className="solid-button"
+                  onClick={confirmDraft}
+                  disabled={confirmState === "confirming"}
+                >
+                  {confirmState === "confirming" ? "저장하고 있어요" : "확인하고 저장하기"}
+                </button>
+              </footer>
+            </div>
+          )
         ) : !selected ? (
           <>
             <div className="entry-source-tabs">{sourceTabs.map((tab) => <button type="button" className={source === tab.id ? "is-active" : ""} key={tab.id} onClick={() => { setSource(tab.id); setCategory("전체"); }}>{tab.label}</button>)}</div>
             {source === "photo" ? (
-              isAnalyzing ? (
+              convertingHeic ? (
+                <div className="vision-loading" role="status" aria-live="polite">
+                  <div className="vision-spinner" aria-hidden="true"><i /></div>
+                  <h3>사진을 변환하고 있어요</h3>
+                  <p>아이폰 HEIC 사진을 올리기 좋은 형식으로 바꾸고 있어요. 잠시만 기다려 주세요.</p>
+                </div>
+              ) : isAnalyzing ? (
                 <div className="vision-loading" role="status" aria-live="polite">
                   <div className="vision-spinner" aria-hidden="true"><i /></div>
                   <h3>{uploadProgress < 55 ? "사진을 안전하게 올리고 있어요" : "사진에서 음식을 찾고 있어요"}</h3>
@@ -527,14 +621,20 @@ export function RecordMealModal({
               ) : analysisError ? (
                 <div className="vision-error" role="alert"><span aria-hidden="true" /><h3>사진을 분석하지 못했어요.</h3><p>{analysisError}</p><div><button type="button" onClick={resetPhoto}>다른 사진 고르기</button><button type="button" className="solid-button" onClick={analyzePhoto}>다시 분석하기</button></div></div>
               ) : (
-                <div className="vision-upload">
-                  <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={selectPhoto} />
-                  {photoPreview ? <div className="vision-photo-preview"><img src={photoPreview} alt="선택한 음식 사진 미리보기" /><div><button type="button" onClick={() => photoInput.current?.click()}>바꾸기</button><button type="button" onClick={resetPhoto}>지우기</button></div></div> : <div className="camera-mark" aria-hidden="true">⌁</div>}
+                <div
+                  className={`vision-upload${isDraggingPhoto ? " is-dragging" : ""}`}
+                  onDragOver={handlePhotoDragOver}
+                  onDragEnter={handlePhotoDragOver}
+                  onDragLeave={handlePhotoDragLeave}
+                  onDrop={handlePhotoDrop}
+                >
+                  <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={selectPhoto} />
+                  {photoPreview ? <div className="vision-photo-preview"><img src={photoPreview} alt="선택한 음식 사진 미리보기" /><div><button type="button" onClick={() => photoInput.current?.click()}>바꾸기</button><button type="button" onClick={resetPhoto}>지우기</button></div></div> : <div className="camera-mark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M4 8.5a2 2 0 0 1 2-2h1.6l.9-1.5A2 2 0 0 1 10.23 4h3.54a2 2 0 0 1 1.73 1l.9 1.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><circle cx="12" cy="12.5" r="3.4" stroke="currentColor" strokeWidth="1.8" /></svg></div>}
                   <h3>음식이나 제품 사진을 올려주세요</h3>
-                  <p>{photoFile ? `${photoFile.name}을 선택했어요.` : "사진을 올리면 음식의 양을 확인하고 당류와 칼로리를 계산해요."}</p>
-                  <small>JPG, PNG, WEBP · 최대 10MB</small>
+                  <p>{photoFile ? `${photoFile.name}을 선택했어요.` : "사진을 올리거나 이 위로 끌어다 놓으면 음식의 양을 확인하고 당류와 칼로리를 계산해요."}</p>
+                  <small>JPG, PNG, WEBP, HEIC · 최대 10MB</small>
                   {fileError && <p className="vision-file-error" role="alert">{fileError}</p>}
-                  <button type="button" className="solid-button" onClick={analyzePhoto}>{photoFile ? "당류·칼로리 확인하기" : "사진 선택하기"}</button>
+                  <button type="button" className="solid-button" onClick={analyzePhoto} disabled={convertingHeic}>{photoFile ? "당류·칼로리 확인하기" : "사진 선택하기"}</button>
                 </div>
               )
             ) : (
@@ -549,8 +649,10 @@ export function RecordMealModal({
         ) : (
           <div className="mini-detail">
             <div className="mini-detail-summary">
-              <div className="mini-food-art"><span>{selected.category}</span><strong>{selected.kind}</strong></div>
-              <div><small>{selected.kind}</small><h3>{selected.name}</h3><p>{selected.note}</p><Link href={selected.href}>영양 정보 더 보기 →</Link></div>
+              {selected.image
+                ? <div className="mini-food-art has-photo"><SafeImage src={selected.image} alt={`${selected.name} 사진`} fallbackLabel={selected.category} /></div>
+                : <div className="mini-food-art"><span>{selected.category}</span><strong>{visibleKind(selected.kind)}</strong></div>}
+              <div><small>{visibleKind(selected.kind)}</small><h3>{selected.name}</h3>{selected.nutritionAvailable && <p className="mini-detail-macros">당류 {sugarText(selected.sugar)}g · {selected.calories.toLocaleString()}kcal</p>}<p>{selected.note}</p><Link href={selected.href}>영양 정보 더 보기 →</Link></div>
             </div>
             {selected.nutritionAvailable ? <div className="projected-change">
               <p className="eyebrow">담으면 이렇게 바뀌어요</p>

@@ -1,0 +1,35 @@
+[
+    {
+        "uid": "",
+        "name": "email receiver",
+        "type": "email",
+        "settings": {
+            "addresses": "<example@email.com>"
+        },
+        "disableResolveMessage": false
+    },
+    {
+        "uid": "efrysd2uvesqod",
+        "name": "slack-alerts",
+        "type": "slack",
+        "settings": {
+            "text": "{{ range .Alerts }}*\uc2ec\uac01\ub3c4*: {{ .Labels.severity }}\n{{ if .Labels.name }}*\ucee8\ud14c\uc774\ub108*: {{ .Labels.name }}\n{{ end }}*\uce21\uc815\uac12*: {{ .Values.A }}\n*\ub300\uc0c1*: {{ .Labels.instance }}\n*\uc124\uba85*: {{ .Annotations.description }}\n*\uc2dc\uc791*: {{ .StartsAt | tz \"Asia/Seoul\" | date \"2006-01-02 15:04:05\" }} KST\n{{ if .DashboardURL }}<{{ .DashboardURL }}|\ub300\uc2dc\ubcf4\ub4dc \ubcf4\uae30> \u00b7 {{ end }}<{{ .SilenceURL }}|\uc54c\ub9bc \ubb34\uc74c(Silence)>\n{{ end }}",
+            "title": "{{ if eq .Status \"firing\" }}\ud83d\udd34{{ else }}\ud83d\udfe2{{ end }} {{ .CommonLabels.alertname }}",
+            "url": "[REDACTED]"
+        },
+        "disableResolveMessage": false,
+        "provenance": "api"
+    },
+    {
+        "uid": "efs1w7b6byb5se",
+        "name": "slack-critical",
+        "type": "slack",
+        "settings": {
+            "text": "{{ range .Alerts }}*\uc2ec\uac01\ub3c4*: {{ .Labels.severity }}\n{{ if .Labels.name }}*\ucee8\ud14c\uc774\ub108*: {{ .Labels.name }}\n{{ end }}*\uce21\uc815\uac12*: {{ .Values.A }}\n*\ub300\uc0c1*: {{ .Labels.instance }}\n*\uc124\uba85*: {{ .Annotations.description }}\n*\uc2dc\uc791*: {{ .StartsAt | tz \"Asia/Seoul\" | date \"2006-01-02 15:04:05\" }} KST\n{{ if .DashboardURL }}<{{ .DashboardURL }}|\ub300\uc2dc\ubcf4\ub4dc \ubcf4\uae30> \u00b7 {{ end }}<{{ .SilenceURL }}|\uc54c\ub9bc \ubb34\uc74c(Silence)>\n{{ end }}",
+            "title": "{{ if eq .Status \"firing\" }}\ud83d\udd34{{ else }}\ud83d\udfe2{{ end }} {{ .CommonLabels.alertname }}",
+            "url": "[REDACTED]"
+        },
+        "disableResolveMessage": false,
+        "provenance": "api"
+    }
+]

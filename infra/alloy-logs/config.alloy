@@ -13,6 +13,14 @@ discovery.docker "containers" {
 discovery.relabel "container_name" {
   targets = discovery.docker.containers.targets
 
+  // 2026-07-21, per-job buildx 빌더가 job마다 새 이름으로 생겨 Loki service_name
+  // 라벨을 무한 증식시킴(카디널리티 오염, 60여개 실측) - 수집에서 제외
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?buildx_buildkit_.*"
+    action        = "drop"
+  }
+
   rule {
     source_labels = ["__meta_docker_container_name"]
     target_label  = "container"

@@ -18,11 +18,16 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/social-access/google/callback"
 
-    # "Services ID" from the Apple Developer portal. Apple login additionally needs
-    # a Team ID / Key ID / private key to sign the client assertion JWT for the
-    # token exchange — not modeled yet, see app/services/oauth/apple.py.
+    # "Services ID" from the Apple Developer portal (client_id).
     apple_client_id: str = ""
     apple_redirect_uri: str = "http://localhost:8000/social-access/apple/callback"
+    # client_secret은 고정값이 아니라 이 3개(Team ID/Key ID/.p8 private key)로
+    # 매 요청 서명하는 JWT다(app/services/oauth/apple.py). private key는 개행이
+    # 있는 PEM이라 .env/compose environment에 그대로 못 넣어서, 실제 개행 대신
+    # 리터럴 "\n"으로 이스케이프한 한 줄 문자열로 받아 코드에서 되돌린다.
+    apple_team_id: str = ""
+    apple_key_id: str = ""
+    apple_private_key: str = ""
 
     jwt_secret: str = "dev-secret-change-me"
     jwt_expire_minutes: int = 180
@@ -49,6 +54,10 @@ class Settings(BaseSettings):
     # 초 단위 - 방화벽이 SYN을 그냥 드롭하면 실패까지 이 시간만큼 걸린다.
     redis_connect_timeout_seconds: float = 3.0
     redis_socket_timeout_seconds: float = 3.0
+
+    @property
+    def apple_private_key_pem(self) -> str:
+        return self.apple_private_key.replace("\\n", "\n")
 
     @property
     def database_url(self) -> str:

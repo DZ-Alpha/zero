@@ -11,8 +11,7 @@ export function AuthFrame({ children, asideTitle = "먹은 만큼 알고, 다음
         <aside className="auth-aside">
           <p className="eyebrow">ZERO · LOW SUGAR · FOOD LOG</p>
           <h1>{asideTitle}</h1>
-          <p>식단을 기록하면 당류와 열량을 한눈에 보고, 실제 제품과 저당 레시피를 이어서 찾을 수 있어요.</p>
-          <ol><li><span>01</span>오늘 먹은 음식 기록</li><li><span>02</span>당류와 열량 바로 계산</li><li><span>03</span>내 관심사에 맞는 식품 추천</li></ol>
+          <ol><li><span>01</span>오늘 먹은 음식 기록</li><li><span>02</span>당류와 열량 바로 계산</li><li><span>03</span>내 관심사에 맞는 저당픽</li></ol>
         </aside>
         <section className="auth-content">{children}</section>
       </div>

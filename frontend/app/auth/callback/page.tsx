@@ -40,9 +40,22 @@ function CallbackContent() {
       const next = new URLSearchParams({ provider });
       const nickname = typeof payload?.nickname === "string" ? payload.nickname : "";
       const birthday = searchParams.get("birthday") ?? "";
+      const email = searchParams.get("email") ?? "";
       if (nickname) next.set("nickname", nickname);
       if (birthday) next.set("birthday", birthday);
+      if (email) next.set("email", email);
       router.replace(`/signup/profile?${next.toString()}`);
+      return;
+    }
+
+    // /social-access/{provider}/link 콜백(마이페이지에서 다른 소셜 계정 연동) —
+    // isNewUser도 아니고 새 로그인도 아니라, 마이페이지로 돌려보내고 결과 메시지를
+    // 남겨둔다. PersonalPage가 마운트 시 이 값을 읽어 토스트로 보여주고 지운다.
+    const linked = searchParams.get("linked")?.toLowerCase() === "true";
+    if (linked) {
+      const alreadyLinked = searchParams.get("alreadyLinked")?.toLowerCase() === "true";
+      window.localStorage.setItem("dangdang-link-result", JSON.stringify({ social: searchParams.get("social"), alreadyLinked }));
+      router.replace("/mypage");
       return;
     }
     router.replace("/");

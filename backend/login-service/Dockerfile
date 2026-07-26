@@ -1,4 +1,6 @@
 # 멀티 스테이지 빌드(Docker 공식 권장 패턴) - 의존성 설치 산출물을 최종 이미지에서 제외한다.
+# build-once: PR에서 1회 빌드/스캔 후 staging에 push, main 병합 시 재빌드 없이
+# production repo로 digest 승격(.github/workflows/build-test.yml 참고).
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28 AS builder
 
 WORKDIR /app

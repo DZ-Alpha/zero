@@ -128,6 +128,13 @@ async def get_user_feature_info(
     profile_stmt = select(UserHealthProfileRef).where(UserHealthProfileRef.user_id == user_id)
     profile_result = await db.execute(profile_stmt)
     profile = profile_result.scalar_one_or_none()
+    # health_data_consent_at이 없으면(동의 전) 프로필이 없는 것과 동일하게
+    # 취급한다 — 동의 안 한 건강정보를 AI(제3자 API) 프롬프트에 실어 보내지
+    # 않기 위함. main-service의 upsert_health_profile이 이 값 없이는 건강
+    # 필드를 저장 자체를 못 하게 막아두므로(DB CHECK 포함), NULL이면 곧
+    # "동의 안 함"이다.
+    if profile is not None and profile.health_data_consent_at is None:
+        profile = None
 
     info = await generate_user_feature_info(
         product=product,

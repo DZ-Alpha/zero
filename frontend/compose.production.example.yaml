@@ -6,6 +6,11 @@ services:
     environment:
       BACKEND_GATEWAY_URL: ${BACKEND_GATEWAY_URL:-http://b-gateway:8080}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL to the public HTTPS origin}
+      # backend-deploy-production/frontend-deploy-production처럼 GitHub Secrets로
+      # 넘겨받는 경로가 없어서(2026-07-26 실측 - :?로 두면 배포/롤백 둘 다
+      # interpolation 단계에서 즉시 실패), diet-service의 MINIO_ENDPOINT 기본값과
+      # 맞춰 기본값을 직접 박아둔다. 서버마다 다르면 .env로 덮어쓸 것.
+      MINIO_URL: ${MINIO_URL:-http://10.10.20.10:9000}
     expose:
       - "3000"
     volumes:

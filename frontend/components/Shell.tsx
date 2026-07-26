@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { ChatWidget } from "@/components/ChatWidget";
 import { HeaderAuth } from "@/components/HeaderAuth";
+import { SavedMenuDrawer } from "@/components/SavedMenuDrawer";
+import { ScrollToTop } from "@/components/ScrollToTop";
 import { SiteNav } from "@/components/SiteNav";
 import { SessionExpiredNotice } from "@/components/SystemFeedback";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <>
+      <ScrollToTop />
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <header className="site-header">
         <Link href="/" className="brand" aria-label="당당 홈">
@@ -17,8 +20,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <HeaderAuth />
       </header>
       <div id="main-content" tabIndex={-1}>{children}</div>
-      <footer className="service-footer"><div className="wrap"><span>당당 · 제로·저당 식품 선택 서비스</span><nav aria-label="서비스 정책"><Link href="/terms">이용약관</Link><Link href="/privacy">개인정보처리방침</Link></nav></div></footer>
+      <footer className="service-footer"><div className="wrap"><span>당당 · 제로·저당 선택 서비스</span><nav aria-label="서비스 정책"><Link href="/terms">이용약관</Link><Link href="/privacy">개인정보처리방침</Link></nav></div></footer>
       <SessionExpiredNotice />
+      <SavedMenuDrawer />
       <ChatWidget />
     </>
   );

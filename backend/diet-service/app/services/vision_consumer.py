@@ -104,39 +104,27 @@ async def _handle_failed(payload: dict) -> None:
         )
 
 
-async def _consume_loop(consumer: AIOKafkaConsumer) -> None:
-    # 바깥 while: async-for 자체에서 나는 예외(예: 미지원 압축 코덱, 브로커
-    # 순단)가 태스크를 조용히 죽이는 사고를 막는다 — 2026-07-21 snappy 배치로
-    # fetch가 죽었는데 heartbeat만 살아서 40분간 아무도 모른 실사례. 여기서
-    # 잡고 백오프 후 재시도하며, 상태는 consumer_state()로 /health에 노출된다.
+async def _consume_once(consumer: AIOKafkaConsumer) -> None:
     global _last_error
-    while True:
+    async for msg in consumer:
         try:
-            async for msg in consumer:
-                try:
-                    payload = json.loads(msg.value)
-                    if msg.topic == _TOPIC_COMPLETED:
-                        await _handle_completed(payload)
-                    else:
-                        await _handle_failed(payload)
-                except Exception:
-                    # commit하지 않고 다음 메시지로 넘어간다 — 재기동하면 이
-                    # 오프셋부터 다시 전달된다 (at-least-once).
-                    # apply_vision_result가 이미 종결 상태(COMPLETED/FAILED)는
-                    # 재적용하지 않으므로 재전달은 안전하다.
-                    logger.exception(
-                        "vision consumer: failed to process message topic=%s offset=%s",
-                        msg.topic, msg.offset,
-                    )
-                    continue
-                await consumer.commit()
-                _last_error = None
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            _last_error = f"{type(exc).__name__}: {exc}"[:300]
-            logger.exception("vision consumer: fetch loop crashed; retrying in 5s")
-            await asyncio.sleep(5)
+            payload = json.loads(msg.value)
+            if msg.topic == _TOPIC_COMPLETED:
+                await _handle_completed(payload)
+            else:
+                await _handle_failed(payload)
+        except Exception:
+            # commit하지 않고 다음 메시지로 넘어간다 — 재기동하면 이
+            # 오프셋부터 다시 전달된다 (at-least-once).
+            # apply_vision_result가 이미 종결 상태(COMPLETED/FAILED)는
+            # 재적용하지 않으므로 재전달은 안전하다.
+            logger.exception(
+                "vision consumer: failed to process message topic=%s offset=%s",
+                msg.topic, msg.offset,
+            )
+            continue
+        await consumer.commit()
+        _last_error = None
 
 
 def consumer_state() -> dict:
@@ -145,6 +133,28 @@ def consumer_state() -> dict:
         return {"enabled": False, "alive": None, "last_error": None}
     alive = _task is not None and not _task.done()
     return {"enabled": True, "alive": alive, "last_error": _last_error}
+
+
+async def _consume_loop(consumer: AIOKafkaConsumer) -> None:
+    # `async for msg in consumer` 바깥에서 터지는 예외(브로커 연결 끊김, 리밸런스
+    # 오류, 역직렬화 실패 등)는 이 태스크를 조용히 죽여서 이후 아무도 메시지를
+    # 소비하지 않게 만든다 — 인프라팀 경고(2026-07-21, snappy 미지원으로 컨슈머가
+    # 소리 없이 죽은 사고와 같은 계열). 최상위 try/except로 감싸 지수 백오프로
+    # 재시작하고, 상태는 consumer_state()로 /health에 노출한다. 종료
+    # (stop_consumer)는 CancelledError로 오므로 그대로 전파한다.
+    global _last_error
+    backoff = 1
+    while True:
+        try:
+            await _consume_once(consumer)
+            return  # consumer가 정상 종료되면 루프도 끝낸다
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _last_error = f"{type(exc).__name__}: {exc}"[:300]
+            logger.exception("vision consumer: consume loop crashed, restarting in %ss", backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
 
 
 async def start_consumer() -> None:

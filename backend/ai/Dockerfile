@@ -8,6 +8,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# OTel zero-code 계측: requirements의 라이브러리에 맞는 instrumentation 자동 설치
+# (login-service와 동일 패턴 - venv 안에 설치되어 최종 스테이지로 복사됨)
+RUN opentelemetry-bootstrap -a install
 
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
 
@@ -35,4 +38,4 @@ EXPOSE 8022
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8022/health', timeout=2)" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8022"]
+CMD ["opentelemetry-instrument", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8022"]

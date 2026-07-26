@@ -26,11 +26,29 @@ class Settings(BaseSettings):
     # pgvector 연결이 준비됐을 때만 실제 Retriever 사용. 기본은 NullRetriever(폴백).
     rag_enabled: bool = False
 
+    # 챗봇 사진 첨부(product_analysis) 원본을 감사·재현 목적으로 24시간만
+    # 보관한다 - 대화 메모리(conversation_ttl_seconds)와 같은 수명. Vision 분석
+    # 자체엔 필요 없다(Bedrock에는 바이트를 직접 보낸다) - 그래서 비어있으면
+    # 저장만 건너뛰고 분석 기능은 그대로 동작한다.
+    minio_endpoint: str = ""
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_bucket: str = "chat-photos"
+
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "test_db"
     postgres_user: str = ""
     postgres_password: str = ""
+
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_password: str = ""
+    # 타임아웃 필수 — 없으면 Redis 연결 실패 시 요청이 무한정 멈춘다
+    # (login-service PRODUCTION_HANDOFF P0-1 이력). best-effort 폴백의 전제.
+    redis_connect_timeout_seconds: float = 3.0
+    redis_socket_timeout_seconds: float = 3.0
+    conversation_ttl_seconds: int = 86400  # 24h, 대화 시마다 갱신
 
     @property
     def database_url(self) -> str:
