@@ -28,7 +28,7 @@
 | 기능ID | 설명 | 참고 |
 |---|---|---|
 | RC-0101~0102 | 한끼/하루 식단 사진 업로드 | `meal_logs` insert (`input_type='VISION'`, `analysis_status='PENDING'`). `mealType`/`eatenAt`은 선택값(PRODUCTION_HANDOFF.md P0-3) — 안 보내면 기존처럼 `mode` 기반 기본값/업로드 시각을 쓴다 |
-| RC-0103 | AI 식단 분석 (실제 구현) | `app/services/vision_service.py` — Claude Vision(`claude-opus-4-8`)으로 사진 속 음식 항목(이름/제공량/칼로리/당류/탄수화물)을 구조화 출력으로 추정, `meal_items` insert 후 `analysis_status='COMPLETED'`. `ANTHROPIC_API_KEY` 없으면 기존과 동일하게 `PREPARING` 반환(무비용 폴백) |
+| RC-0103 | AI 식단 분석 | 분석 주체는 별도 Vision AI(zero-db worker, Kafka 파이프라인)뿐이다 — 회의 결정(2026-07-27). outbox `diet.photo.requested` → worker 분석 → `diet.photo.completed/failed`를 `app/services/vision_consumer.py`가 구독해 `meal_items` insert. 프론트는 `GET /diet/photo/{id}` 폴링. `GET /diet/ai-analyze`는 결과 조회 전용(이전에 있던 Claude Vision 동기 호출은 제거됨) |
 | RC-0104 | OCR 분석 결과로 식단 항목 채우기 | 아직 미구현 — OCR 전용 파이프라인 필요(`services/알릴거.md` 2번 참고) |
 | RC-0105 | 대체 제품 추천 | Product Service 검색 API 호출(이 서비스 데이터 아님) |
 | RC-0106 | 캘린더 (날짜별 식단) | `meal_logs.eaten_at` 기준 조회 |

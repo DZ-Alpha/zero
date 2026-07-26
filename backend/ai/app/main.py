@@ -95,7 +95,7 @@ def build_dependencies() -> chatbot_api.Dependencies:
     llm = _build_llm()
     retriever = build_retriever()
     handlers = {
-        Intent.PRODUCT_ANALYSIS: ProductAnalysisHandler(llm=llm),
+        Intent.PRODUCT_ANALYSIS: ProductAnalysisHandler(),
         Intent.RECOMMEND: RecommendHandler(),
         Intent.DIET_PHOTO: DietPhotoHandler(),
         Intent.RECIPE_SUBSTITUTE: RecipeSubstituteHandler(),

@@ -20,7 +20,6 @@ from app.services.diet_store import (
     MealLogNotFoundError,
     ProductNotFoundError,
     RecipeNotFoundError,
-    complete_meal_log,
     confirm_meal_log,
     create_manual_record,
     create_meal_log,
@@ -40,13 +39,25 @@ from app.services.diet_store import (
     update_record,
 )
 from app.services.storage import StorageUploadError, presign_diet_photo_url, validate_diet_photo_key
-from app.services.vision_service import analyze_meal_photo
 
 _KST = ZoneInfo("Asia/Seoul")
 
 logger = logging.getLogger("diet_service.diet")
 
 router = APIRouter(prefix="/diet")
+
+
+def _recipe_thumbnail_url(recipe) -> str | None:
+    # recipe-service의 app/routers/recipe.py의 _thumbnail_url()과 동일한
+    # 폴백 - source="유튜브" 레시피는 thumbnail_url이 "/data/thumbnails/{id}.jpg"
+    # 같은 상대경로인데 이걸 서빙하는 곳이 없어 항상 깨진다. 여기서 이 폴백을
+    # 안 하면 유튜브 레시피로 기록한 사람만 얌로그 사진이 안 뜨는 것처럼 보인다
+    # (실사용 중 재현 - "유저마다 이미지 들어가는 애/안 들어가는 애가 있다").
+    if recipe.thumbnail_url and not recipe.thumbnail_url.startswith("/"):
+        return recipe.thumbnail_url
+    if recipe.video_id:
+        return f"https://img.youtube.com/vi/{recipe.video_id}/hqdefault.jpg"
+    return recipe.thumbnail_url
 
 
 def _to_uuid(value: str, label: str) -> uuid.UUID:
@@ -118,11 +129,12 @@ async def upload_diet(
     payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
     """RC-0101~0102: object_key(POST /uploads/diet-photo가 반환한 값) 등록 →
-    meal_log(PENDING) 생성. 분석은 GET /diet/photo/{id} 폴링(비동기, zero-db
-    Vision worker가 diet.photo.completed/failed를 Kafka로 발행 →
-    app/services/vision_consumer.py가 구독) 또는 GET /diet/ai-analyze(동기,
-    Claude Vision) 둘 중 실제로 연결된 경로를 프론트가 사용한다 —
-    PRODUCTION_HANDOFF.md P0-3.
+    meal_log(PENDING) 생성. 분석은 항상 zero-db Vision worker(별도 Vision AI)가
+    수행한다 — outbox의 diet.photo.requested를 워커가 처리해 diet.photo.
+    completed/failed를 Kafka로 발행하고 app/services/vision_consumer.py가
+    구독한다. 프론트는 GET /diet/photo/{id}를 폴링한다. 회의 결정(2026-07-27):
+    식사 사진 분석은 이 파이프라인만 사용한다 — 이전에 병행 존재하던
+    Claude Vision 동기 경로(vision_service.py)는 제거됨.
 
     mode='daily'는 mealType 없을 때만 쓰는 하위호환 폴백이다.
     """
@@ -229,18 +241,18 @@ async def confirm_diet_analysis(
 # 없어 삭제했다 — 개발팀 요청서 확인.)
 
 
-# RC-0103: AI 식단 분석 (Vision AI → 음식 인식 + 영양 추정)
+# RC-0103: AI 식단 분석 결과 조회. 분석 자체는 여기서 하지 않는다 — 회의
+# 결정(2026-07-27): 식사 사진 분석은 별도 Vision AI(zero-db worker, Kafka
+# 파이프라인)만 사용한다. 이전에 여기 있던 Claude Vision 동기 호출
+# (vision_service.py)은 프론트가 실제로 쓰지 않는 병행 경로였고, 분석 주체가
+# 이원화되는 문제(+호출 시 Anthropic 비용 발생)로 제거했다. 진행 상태 폴링의
+# 정식 경로는 GET /diet/photo/{meal_log_id}다.
 @router.get("/ai-analyze")
 async def ai_analyze(
     id: str = Query(..., description="meal_log UUID"),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
-    """RC-0103: meal_log의 이미지를 Claude Vision으로 분석해 meal_items 저장.
-
-    ANTHROPIC_API_KEY가 없으면(app/services/vision_service.py) 기존과 동일하게
-    PREPARING을 반환한다 — 키를 안 넣으면 배포해도 동작이 그대로다.
-    """
     user_id: int = payload["user_id"]
     log_id = _to_uuid(id, "meal_log ID")
 
@@ -263,43 +275,11 @@ async def ai_analyze(
             "needs_user_confirmation": log.needs_user_confirmation,
         }
 
-    if not log.image_object_key:
-        raise HTTPException(status_code=422, detail="분석할 이미지가 없습니다.")
-
-    try:
-        analyzed = await analyze_meal_photo(log.image_object_key)
-    except Exception:
-        logger.exception("vision: analysis failed meal_log_id=%s", log_id)
-        analyzed = []
-
-    if not analyzed:
-        return {
-            "status": "PREPARING",
-            "message": "AI 식단 분석 기능은 Vision AI 파이프라인 연동 후 활성화됩니다.",
-            "id": str(log_id),
-            "list-diet": [],
-        }
-
-    items = [
-        make_meal_item_from_analysis(
-            log_id,
-            item_name=entry["name"],
-            serving_value=Decimal(str(entry["servingValue"])),
-            serving_unit=entry["servingUnit"],
-            calories=Decimal(str(entry["calories"])),
-            sugars=Decimal(str(entry["sugars"])),
-            carbohydrate=Decimal(str(entry["carbohydrate"])),
-        )
-        for entry in analyzed
-    ]
-    await complete_meal_log(db, log_id, items)
-    logger.info("diet: vision analysis completed meal_log_id=%s items=%d", log_id, len(items))
-
     return {
+        "status": log.analysis_status,
+        "message": "분석은 Vision AI 파이프라인에서 진행돼요. GET /diet/photo/{meal_log_id}로 상태를 확인하세요.",
         "id": str(log_id),
-        "dang": sum(float(i.sugars) for i in items if i.sugars is not None),
-        "calo": sum(float(i.calories) for i in items if i.calories is not None),
-        "list-diet": [_item_dict(i) for i in items],
+        "list-diet": [],
     }
 
 
@@ -641,18 +621,20 @@ async def internal_meal_records(
 
     records = []
     for (user_id, meal_type), group_rows in groups.items():
-        photo_object_keys: list[str] = []
-        seen_logs: set[uuid.UUID] = set()
+        # meal_log_id -> object_key, 처음 본 순서 유지(dict는 삽입 순서 보존).
+        photo_object_keys: dict[uuid.UUID, str] = {}
+        # 같은 사진(meal_log)에 딸린 비전 인식 음식 이름들 - 레시피/저당픽으로
+        # 연결 안 된 항목(item.product_id도 external_recipe_id도 없음)은
+        # Vision이 그 사진에서 직접 인식한 음식이라는 뜻이다.
+        photo_item_names: dict[uuid.UUID, list[str]] = {}
         recipe_items: list[dict[str, object]] = []
         product_items: list[dict[str, object]] = []
         sugar_total = 0.0
         calories_total = 0.0
 
         for log, item in group_rows:
-            if log.meal_log_id not in seen_logs:
-                seen_logs.add(log.meal_log_id)
-                if log.image_object_key:
-                    photo_object_keys.append(log.image_object_key)
+            if log.image_object_key and log.meal_log_id not in photo_object_keys:
+                photo_object_keys[log.meal_log_id] = log.image_object_key
 
             sugar_total += float(item.sugars) if item.sugars is not None else 0.0
             calories_total += float(item.calories) if item.calories is not None else 0.0
@@ -671,17 +653,32 @@ async def internal_meal_records(
                     "source": "recipe",
                     "id": item.external_recipe_id,
                     "name": recipe.name if recipe else item.item_name,
-                    "imageUrl": recipe.thumbnail_url if recipe else None,
+                    "imageUrl": _recipe_thumbnail_url(recipe) if recipe else None,
                 })
+            elif log.meal_log_id in photo_object_keys and item.item_name:
+                photo_item_names.setdefault(log.meal_log_id, []).append(item.item_name)
 
         # 얌로그 요청사항 - 비전(사진) → 레시피 → 저당픽 순으로 넘겨볼 수 있게
         # 하나의 정렬된 리스트로도 내려준다. photoUrls/connectedItems는 기존
         # 소비자(다른 화면)와의 호환을 위해 그대로 둔다.
         connected_items = recipe_items + product_items
-        photo_urls = [presign_diet_photo_url(key) for key in photo_object_keys]
+        # 사진 넘겨보기 캐러셀이 사진마다 맞는 이름을 보여줄 수 있게, 사진
+        # 하나하나에 그 사진에서 인식된 음식 이름을 같이 실어 보낸다(이전엔
+        # imageUrl만 있어서 프론트가 전부 같은 이름 하나로만 보여줬다).
+        photo_entries = [
+            {
+                "imageUrl": presign_diet_photo_url(object_key),
+                "name": ", ".join(photo_item_names.get(log_id, [])) or "사진으로 기록한 식사",
+            }
+            for log_id, object_key in photo_object_keys.items()
+        ]
+        photo_urls = [entry["imageUrl"] for entry in photo_entries]
         ordered_photos: list[dict[str, object]] = (
-            [{"source": "photo", "imageUrl": url} for url in photo_urls]
-            + [{"source": item["source"], "imageUrl": item["imageUrl"]} for item in connected_items if item.get("imageUrl")]
+            [{"source": "photo", "imageUrl": entry["imageUrl"], "name": entry["name"]} for entry in photo_entries]
+            + [
+                {"source": item["source"], "imageUrl": item["imageUrl"], "name": item["name"]}
+                for item in connected_items if item.get("imageUrl")
+            ]
         )
 
         records.append({

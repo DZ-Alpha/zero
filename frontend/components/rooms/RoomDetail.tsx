@@ -444,12 +444,15 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                       const photos = meal.orderedPhotos.map((photo) => photo.imageUrl);
                       const photoIndex = Math.min(photoIndexes[meal.id] ?? 0, Math.max(0, photos.length - 1));
                       const activeImage = photos[photoIndex] ?? null;
+                      // 넘겨보는 사진마다 그 사진에 맞는 이름을 보여준다 - 예전엔
+                      // meal.title 하나로 고정돼서 사진을 넘겨도 이름이 안 바뀌었다.
+                      const activeName = meal.orderedPhotos[photoIndex]?.name ?? meal.title;
                       const reaction = reactionState[meal.id] ?? { reacted: meal.reactedByMe, count: meal.reactionCount };
                       const mealComments = comments[meal.id];
                       return (
                         <article className={styles.setlogCard} key={meal.id}>
                           <div className={styles.setlogPhoto}>
-                            <SafeImage src={activeImage} alt={`${meal.title} ${photoIndex + 1}번째 사진`} fallbackLabel="식단 사진" />
+                            <SafeImage src={activeImage} alt={`${activeName} ${photoIndex + 1}번째 사진`} fallbackLabel="식단 사진" />
                             {photos.length > 1 && (
                               <button
                                 type="button"
@@ -530,7 +533,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                           </div>
                           <footer className={styles.setlogMeta}>
                             <div>
-                              <strong>{meal.title}</strong>
+                              <strong>{activeName}</strong>
                               <span>당류 {meal.sugar}g · {meal.calories}kcal</span>
                             </div>
                             <div className={styles.sourceSummary} aria-label="한 끼 구성">

@@ -490,7 +490,13 @@ async def build_meal_slots(
             reaction_count = await room_store.count_reactions(db, thread.id)
             reacted_by_me = await room_store.has_reacted(db, thread.id, viewer_id)
 
-            title = connected_items[0]["name"] if connected_items else "식사 기록"
+            ordered_photos = record_data.get("orderedPhotos", [])
+            # 기본 표시 이름 - 처음 보이는 사진(비전 → 레시피 → 저당픽 순 첫 장)
+            # 이름을 우선 쓴다. 넘겨보기로 사진을 바꾸면 프론트가 orderedPhotos의
+            # 각 항목 name으로 갈아끼운다(2026-07-26 - 예전엔 connected_items[0]
+            # 이름 하나로 고정돼서, 비전으로만 기록한 식사는 이름이 아예 안
+            # 뜨고 사진을 넘겨도 이름이 안 바뀌었다).
+            title = ordered_photos[0]["name"] if ordered_photos else (connected_items[0]["name"] if connected_items else "식사 기록")
             member_name = display_names.get(member.user_id, f"회원{member.user_id}")
             slots.append({
                 "memberId": str(member.user_id),
@@ -512,7 +518,7 @@ async def build_meal_slots(
                     # diet-service가 비전(사진) → 레시피 → 저당픽 순으로 이미
                     # 정렬해서 준다 - 그대로 통과시키면 프론트가 순서 걱정 없이
                     # 넘겨보기 캐러셀에 다 쓸 수 있다.
-                    "orderedPhotos": record_data.get("orderedPhotos", []),
+                    "orderedPhotos": ordered_photos,
                     "recordDate": record_date.isoformat(),
                     "reactionCount": reaction_count,
                     "commentCount": comment_count,
