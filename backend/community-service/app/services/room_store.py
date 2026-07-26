@@ -14,6 +14,7 @@ from app.models.room_meal_thread import RoomMealThread
 from app.models.room_member import RoomMember
 from app.models.room_nudge import RoomNudge
 from app.models.room_report import RoomReport
+from app.models.social_account_ref import SocialAccountRef
 from app.models.user_ref import UserRef
 
 MAX_ROOM_COUNT = 3
@@ -91,8 +92,31 @@ async def list_rooms_for_user(db: AsyncSession, user_id: int) -> list[tuple[Room
 async def get_display_names_bulk(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
     if not user_ids:
         return {}
-    result = await db.execute(select(UserRef).where(UserRef.id.in_(set(user_ids))))
-    return {u.id: (u.display_name or f"회원{u.id}") for u in result.scalars().all()}
+    ids = set(user_ids)
+    result = await db.execute(select(UserRef).where(UserRef.id.in_(ids)))
+    names: dict[int, str] = {}
+    missing: list[int] = []
+    for u in result.scalars().all():
+        if u.display_name:
+            names[u.id] = u.display_name
+        else:
+            missing.append(u.id)
+
+    # users.display_name은 마이페이지에서 직접 이름을 바꾼 경우에만 채워진다 -
+    # 그 전까지는 login-service 자신도 소셜 로그인 시점의 provider nickname으로
+    # 폴백한다(app/routers/user.py의 동일 로직). 여기서 이 폴백을 안 타서,
+    # 이름을 한 번도 안 바꾼 대부분의 멤버가 전부 "회원{id}"로만 보이던 버그
+    # (2026-07-26 실사용 중 재현 - 그룹장만 정상, 나머지는 전부 회원n).
+    if missing:
+        social_result = await db.execute(
+            select(SocialAccountRef)
+            .where(SocialAccountRef.user_id.in_(missing))
+            .order_by(SocialAccountRef.id)
+        )
+        for account in social_result.scalars().all():
+            names.setdefault(account.user_id, account.nickname)
+
+    return names
 
 
 def avatar_text(display_name: str) -> str:
