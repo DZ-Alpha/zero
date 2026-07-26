@@ -34,14 +34,6 @@ class Settings(BaseSettings):
     minio_access_key: str = ""
     minio_secret_key: str = ""
     minio_bucket: str = "diet-photos"
-    # presigned GET URL은 서명에 host가 포함돼서(V4 SignedHeaders=host), 발급
-    # 시 쓴 endpoint_url의 호스트가 그대로 URL에 박힌다 - minio_endpoint는
-    # 서버간 통신용 내부 주소(예: http://10.10.20.10:9000)라 브라우저가
-    # 못 여는 문제가 있었다(실사용 중 재현). 브라우저가 실제로 열 수 있는
-    # 공개 주소로 별도로 서명해야 하고, 이 값은 게이트웨이(infra/b-gateway
-    # /nginx.conf)의 /b/diet-photos 라우트와 짝이 맞아야 한다. 비어있으면
-    # minio_endpoint로 폴백한다(기존 동작 유지, 여전히 내부 IP로 서명됨).
-    minio_public_endpoint: str = ""
 
     # 개발팀 요청서 정정 1(2026-07-20) — worker는 HTTP callback을 호출하지 않고
     # diet.photo.completed/diet.photo.failed를 Kafka로 발행한다. diet-service가

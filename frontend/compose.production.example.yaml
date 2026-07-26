@@ -6,6 +6,7 @@ services:
     environment:
       BACKEND_GATEWAY_URL: ${BACKEND_GATEWAY_URL:-http://b-gateway:8080}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL to the public HTTPS origin}
+      MINIO_URL: ${MINIO_URL:?Set MINIO_URL to the internal MinIO endpoint (must match diet-service MINIO_ENDPOINT)}
     expose:
       - "3000"
     volumes:
