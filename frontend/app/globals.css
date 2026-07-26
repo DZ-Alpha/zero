@@ -3681,3 +3681,6 @@ body{font-size:17px}
 
 .home-toast{position:fixed;z-index:250;left:50%;bottom:28px;padding:12px 18px;border-radius:999px;background:var(--ink);box-shadow:0 14px 36px rgba(16,28,19,.2);color:#fff;font-size:13px;font-weight:750;transform:translateX(-50%);animation:home-toast-in 200ms ease both}
 @keyframes home-toast-in{from{opacity:0;transform:translate(-50%,8px)}}
+
+.vision-upload.is-dragging{border-color:var(--green-2,#5c8a3c);background:#eef6e6}
+.vision-upload.is-dragging .camera-mark,.vision-upload.is-dragging .vision-photo-preview{pointer-events:none}
