@@ -2,6 +2,26 @@ export const API_PREFIX = "/b";
 export const AUTH_TOKEN_KEY = "dangdang-access-token";
 export const AUTH_EXPIRED_EVENT = "dangdang-auth-expired";
 
+// FastAPI가 detail=str(...)로 던지는 대부분의 서비스는 payload.detail이 그냥
+// 문자열이지만, community-service(얌로그 §12 오류 응답 규약)는 detail이
+// {code, detail} 중첩 객체다 - 이 경우를 String()으로 바로 감싸면 JS가
+// "[object Object]"로 stringify해서 그대로 토스트에 떠버린다. 두 형태 모두
+// 안에 있는 실제 메시지 문자열과 code를 찾아서 쓴다.
+function extractDetail(payload: unknown): { message: string; code?: string } {
+  if (typeof payload !== "object" || payload === null || !("detail" in payload)) {
+    return { message: "요청을 처리하지 못했어요." };
+  }
+  const detail = (payload as { detail: unknown }).detail;
+  if (typeof detail === "object" && detail !== null && "detail" in detail) {
+    const nested = detail as { detail: unknown; code?: unknown };
+    return {
+      message: typeof nested.detail === "string" ? nested.detail : "요청을 처리하지 못했어요.",
+      code: nested.code !== undefined ? String(nested.code) : undefined,
+    };
+  }
+  return { message: typeof detail === "string" ? detail : "요청을 처리하지 못했어요." };
+}
+
 export class ApiError extends Error {
   readonly code?: string;
 
@@ -11,9 +31,7 @@ export class ApiError extends Error {
     readonly payload?: unknown,
   ) {
     super(message);
-    this.code = typeof payload === "object" && payload && "code" in payload
-      ? String((payload as { code: unknown }).code)
-      : undefined;
+    this.code = extractDetail(payload).code;
   }
 }
 
@@ -71,9 +89,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     : await response.text();
 
   if (!response.ok) {
-    const detail = typeof payload === "object" && payload && "detail" in payload
-      ? String((payload as { detail: unknown }).detail)
-      : "요청을 처리하지 못했어요.";
+    const { message: detail } = extractDetail(payload);
     if (response.status === 401 && typeof window !== "undefined") {
       clearAccessToken();
       window.localStorage.removeItem("dangdang-auth-session");

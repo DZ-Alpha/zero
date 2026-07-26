@@ -21,7 +21,6 @@ import {
   MealType,
   MemberCalendarDay,
   MemberMealSlot,
-  resolveMealCover,
   RoomComment,
   RoomDetailResponse,
 } from "@/lib/rooms/contracts";
@@ -244,6 +243,13 @@ export function RoomDetail({ roomId }: { roomId: string }) {
       setReactionState((current) => ({ ...current, [mealId]: { reacted: result.reacted, count: result.reactionCount } }));
       if (result.reacted) setToast("맛있겠다를 보냈어요.");
     } catch (error) {
+      // 자기 자신 사진 반응 실패 재현용 - 원인 파악 전까지 임시로 남겨둔다.
+      // 재현되면 status/payload로 서버가 실제로 뭘 돌려줬는지 바로 알 수 있다.
+      if (error instanceof ApiError) {
+        console.error("[room reaction failed]", { mealId, status: error.status, code: error.code, message: error.message, payload: error.payload });
+      } else {
+        console.error("[room reaction failed] non-ApiError", error);
+      }
       setReactionState((current) => ({ ...current, [mealId]: { reacted: currentReacted, count: currentCount } }));
       setToast(error instanceof ApiError ? error.message : "반응을 보내지 못했어요.");
     }
@@ -344,7 +350,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                         {mealSlots.map((slot) => {
                           const record = slotsByKey.get(slotKey(member.id, slot.label));
                           const isMissing = !record?.hasRecord;
-                          const cover = record?.record ? resolveMealCover(record.record) : null;
+                          const photos = record?.record?.orderedPhotos ?? [];
                           return (
                             <button
                               type="button"
@@ -361,10 +367,8 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                                 </>
                               ) : (
                                 <>
-                                  <SafeImage src={cover?.imageUrl ?? null} alt="" fallbackLabel={slot.name} />
-                                  {(record?.record?.uploadedPhotoUrls.length ?? 0) > 1 && (
-                                    <span>+{(record?.record?.uploadedPhotoUrls.length ?? 1) - 1}</span>
-                                  )}
+                                  <SafeImage src={photos[0]?.imageUrl ?? null} alt="" fallbackLabel={slot.name} />
+                                  {photos.length > 1 && <span>+{photos.length - 1}</span>}
                                 </>
                               )}
                             </button>
@@ -378,10 +382,10 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                 <section className={styles.mealMoment} aria-labelledby="today-room-title">
                   <header className={styles.mealMomentHeader}>
                     <div>
-                      <p className={styles.eyebrow}>오늘의 {todayView}</p>
-                      <h2 id="today-room-title">{todayView} 식탁</h2>
+                      <p className={styles.eyebrow}>오늘의 {MEAL_LABELS[todayView]}</p>
+                      <h2 id="today-room-title">{MEAL_LABELS[todayView]} 식탁</h2>
                     </div>
-                    <Link href="/" className={styles.mealUploadButton}>＋ 내 {todayView} 올리기</Link>
+                    <Link href="/" className={styles.mealUploadButton}>＋ 내 {MEAL_LABELS[todayView]} 올리기</Link>
                   </header>
 
                   <div
@@ -416,7 +420,9 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                       const meal = slot.record;
                       const recipeCount = meal.connectedItems.filter((item) => item.source === "recipe").length;
                       const foodCount = meal.connectedItems.filter((item) => item.source === "product").length;
-                      const photos = meal.uploadedPhotoUrls.length > 0 ? meal.uploadedPhotoUrls : [resolveMealCover(meal).imageUrl].filter((url): url is string => Boolean(url));
+                      // 비전(사진) → 레시피 → 저당픽 순으로 이미 정렬돼서 온다 - 여러
+                      // 소스가 섞여 있어도 이 순서 그대로 다 넘겨볼 수 있다.
+                      const photos = meal.orderedPhotos.map((photo) => photo.imageUrl);
                       const photoIndex = Math.min(photoIndexes[meal.id] ?? 0, Math.max(0, photos.length - 1));
                       const activeImage = photos[photoIndex] ?? null;
                       const reaction = reactionState[meal.id] ?? { reacted: meal.reactedByMe, count: meal.reactionCount };

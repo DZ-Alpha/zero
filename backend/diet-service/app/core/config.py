@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     # community-service의 동일 이름 설정과 값이 같아야 한다.
     internal_service_secret: str = ""
 
+    # 얌로그(rooms) 연동용 — 식단 기록이 실제로 완료되는 시점에(Vision 분석
+    # 완료/사용자 확정/레시피·저당픽 직접 등록) community-service의
+    # POST /rooms/internal/meal-recorded를 호출해, 그 유저가 속한 방들의 오늘
+    # 스레드를 즉시 만든다(room_meal_thread가 방 화면을 열어봐야만 생기던
+    # 문제 해결 - app/services/room_notify.py 참고).
+    community_service_url: str = "http://community-service:8012"
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)
