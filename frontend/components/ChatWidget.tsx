@@ -36,6 +36,7 @@ export function ChatWidget() {
           alt=""
           width={87}
           height={78}
+          sizes="87px"
           quality={100}
           priority
           draggable={false}
