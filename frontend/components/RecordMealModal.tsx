@@ -68,6 +68,23 @@ const sourceTabs: { id: Source; label: string }[] = [
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxImageBytes = 10 * 1024 * 1024;
 
+// iOS 카메라 기본 포맷 - 브라우저가 <img>/<canvas>에서 못 읽으므로 선택 즉시
+// JPEG로 변환한다. 확장자도 같이 보는 이유는 사파리가 종종 file.type을
+// "application/octet-stream"이나 빈 문자열로 주기 때문.
+function isHeicFile(file: File): boolean {
+  const type = file.type.toLowerCase();
+  if (type === "image/heic" || type === "image/heif") return true;
+  return /\.hei[cf]$/i.test(file.name);
+}
+
+async function convertHeicToJpeg(file: File): Promise<File> {
+  const heic2any = (await import("heic2any")).default;
+  const result = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+  const blob = Array.isArray(result) ? result[0] : result;
+  const newName = file.name.replace(/\.hei[cf]$/i, "") + ".jpg";
+  return new File([blob], newName, { type: "image/jpeg" });
+}
+
 function percent(value: number, max: number) {
   return Math.min(100, Math.round((value / max) * 100));
 }
@@ -114,6 +131,7 @@ export function RecordMealModal({
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState("");
+  const [convertingHeic, setConvertingHeic] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [serverMealLogId, setServerMealLogId] = useState<string | null>(null);
@@ -411,11 +429,26 @@ export function RecordMealModal({
     }
   }
 
-  function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  async function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const rawFile = event.target.files?.[0];
+    if (!rawFile) return;
     setFileError("");
     setAnalysisError("");
+
+    let file = rawFile;
+    if (isHeicFile(file)) {
+      setConvertingHeic(true);
+      try {
+        file = await convertHeicToJpeg(file);
+      } catch {
+        setFileError("HEIC 사진을 변환하지 못했어요. 다른 사진을 선택해 주세요.");
+        event.target.value = "";
+        setConvertingHeic(false);
+        return;
+      }
+      setConvertingHeic(false);
+    }
+
     if (!acceptedImageTypes.has(file.type)) {
       setFileError("JPG, PNG, WEBP 형식의 사진을 선택해 주세요.");
       event.target.value = "";
@@ -437,6 +470,7 @@ export function RecordMealModal({
     setPhotoPreview(null);
     setFileError("");
     setAnalysisError("");
+    setConvertingHeic(false);
     setUploadProgress(0);
     setServerMealLogId(null);
     if (photoInput.current) photoInput.current.value = "";
@@ -561,7 +595,13 @@ export function RecordMealModal({
           <>
             <div className="entry-source-tabs">{sourceTabs.map((tab) => <button type="button" className={source === tab.id ? "is-active" : ""} key={tab.id} onClick={() => { setSource(tab.id); setCategory("전체"); }}>{tab.label}</button>)}</div>
             {source === "photo" ? (
-              isAnalyzing ? (
+              convertingHeic ? (
+                <div className="vision-loading" role="status" aria-live="polite">
+                  <div className="vision-spinner" aria-hidden="true"><i /></div>
+                  <h3>사진을 변환하고 있어요</h3>
+                  <p>아이폰 HEIC 사진을 올리기 좋은 형식으로 바꾸고 있어요. 잠시만 기다려 주세요.</p>
+                </div>
+              ) : isAnalyzing ? (
                 <div className="vision-loading" role="status" aria-live="polite">
                   <div className="vision-spinner" aria-hidden="true"><i /></div>
                   <h3>{uploadProgress < 55 ? "사진을 안전하게 올리고 있어요" : "사진에서 음식을 찾고 있어요"}</h3>
@@ -573,13 +613,13 @@ export function RecordMealModal({
                 <div className="vision-error" role="alert"><span aria-hidden="true" /><h3>사진을 분석하지 못했어요.</h3><p>{analysisError}</p><div><button type="button" onClick={resetPhoto}>다른 사진 고르기</button><button type="button" className="solid-button" onClick={analyzePhoto}>다시 분석하기</button></div></div>
               ) : (
                 <div className="vision-upload">
-                  <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectPhoto} />
+                  <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={selectPhoto} />
                   {photoPreview ? <div className="vision-photo-preview"><img src={photoPreview} alt="선택한 음식 사진 미리보기" /><div><button type="button" onClick={() => photoInput.current?.click()}>바꾸기</button><button type="button" onClick={resetPhoto}>지우기</button></div></div> : <div className="camera-mark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M4 8.5a2 2 0 0 1 2-2h1.6l.9-1.5A2 2 0 0 1 10.23 4h3.54a2 2 0 0 1 1.73 1l.9 1.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><circle cx="12" cy="12.5" r="3.4" stroke="currentColor" strokeWidth="1.8" /></svg></div>}
                   <h3>음식이나 제품 사진을 올려주세요</h3>
                   <p>{photoFile ? `${photoFile.name}을 선택했어요.` : "사진을 올리면 음식의 양을 확인하고 당류와 칼로리를 계산해요."}</p>
-                  <small>JPG, PNG, WEBP · 최대 10MB</small>
+                  <small>JPG, PNG, WEBP, HEIC · 최대 10MB</small>
                   {fileError && <p className="vision-file-error" role="alert">{fileError}</p>}
-                  <button type="button" className="solid-button" onClick={analyzePhoto}>{photoFile ? "당류·칼로리 확인하기" : "사진 선택하기"}</button>
+                  <button type="button" className="solid-button" onClick={analyzePhoto} disabled={convertingHeic}>{photoFile ? "당류·칼로리 확인하기" : "사진 선택하기"}</button>
                 </div>
               )
             ) : (
