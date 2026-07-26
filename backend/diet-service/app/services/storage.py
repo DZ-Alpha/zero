@@ -22,12 +22,12 @@ _ALLOWED_CONTENT_TYPES = {
 }
 
 
-def _client():
+def _client(endpoint_url: str | None = None):
     if not (settings.minio_endpoint and settings.minio_access_key and settings.minio_secret_key):
         raise StorageNotConfiguredError("MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY가 설정되지 않았습니다.")
     return boto3.client(
         "s3",
-        endpoint_url=settings.minio_endpoint,
+        endpoint_url=endpoint_url or settings.minio_endpoint,
         aws_access_key_id=settings.minio_access_key,
         aws_secret_access_key=settings.minio_secret_key,
         config=Config(signature_version="s3v4"),
@@ -64,8 +64,13 @@ def presign_diet_photo_url(object_key: str, expires_in: int = 300) -> str:
     """얌로그(rooms)가 다른 사용자의 식단 사진을 보여줄 때 쓴다 — 버킷이
     비공개라 object_key를 그대로 내려주면 브라우저가 못 연다. 짧은 만료
     시간의 서명 URL로 매 요청 새로 발급한다(캐시 안 함 — room_meal_threads.md
-    설계 메모의 "짧은 만료 signed URL" 요구사항과 일치)."""
-    return _client().generate_presigned_url(
+    설계 메모의 "짧은 만료 signed URL" 요구사항과 일치).
+
+    반드시 minio_public_endpoint(브라우저가 실제로 열 수 있는 주소)로 서명
+    해야 한다 - presigned URL은 SignedHeaders=host라 서명 시점의 endpoint_url
+    호스트가 그대로 URL에 박히는데, minio_endpoint(내부 통신용)로 서명하면
+    브라우저가 절대 못 여는 내부 IP가 나가버린다(실사용 중 재현된 버그)."""
+    return _client(endpoint_url=settings.minio_public_endpoint or settings.minio_endpoint).generate_presigned_url(
         "get_object",
         Params={"Bucket": settings.minio_bucket, "Key": object_key},
         ExpiresIn=expires_in,
