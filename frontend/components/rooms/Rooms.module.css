@@ -1678,6 +1678,16 @@
   font-size: 13px;
 }
 
+.setlogReply input::-webkit-search-cancel-button,
+.setlogReply input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.setlogReply input::-ms-clear {
+  display: none;
+}
+
 .setlogReply button {
   height: 36px;
   padding: 0 13px;

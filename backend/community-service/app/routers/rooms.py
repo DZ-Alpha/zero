@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import UserIdentity, require_room_user
 from app.services import idempotency, room_aggregation, room_store
@@ -567,3 +568,50 @@ async def post_report(
     except RoomError as error:
         raise _err(error)
     return {"status": "received"}
+
+
+# ── diet-service 전용 내부 알림 ────────────────────────────────────────────────
+# room_meal_thread는 원래 방 화면 조회 시점(build_meal_slots)에만 lazy하게
+# 생겼다 - 그래서 아무도 방을 열어보지 않으면 실제로 식단을 기록해도 얌로그
+# 활동 피드/알림에 전혀 안 잡히는 문제가 있었다(팀원이 기록해도 방장이 방을
+# 안 열어보면 감감무소식). diet-service가 식단 기록을 실제로 완료하는 시점에
+# (Vision 분석 완료/사용자 확정/레시피·저당픽 직접 등록) 이 엔드포인트를 호출해서,
+# 그 유저가 속한 모든 방에 해당 날짜/끼니 스레드를 그 자리에서 만들어둔다.
+
+def _verify_internal_secret(x_internal_service_secret: str | None) -> None:
+    # diet-service의 _verify_internal_secret과 동일한 이유 - 빈 값이면 무조건
+    # 거부한다(설정 누락이 "누구나 통과"로 이어지지 않게).
+    if not settings.internal_service_secret or x_internal_service_secret != settings.internal_service_secret:
+        raise HTTPException(status_code=403, detail="internal service 인증에 실패했습니다.")
+
+
+class NotifyMealRecordedBody(BaseModel):
+    userId: int
+    recordDate: str  # YYYY-MM-DD, Asia/Seoul 기준(diet-service가 이미 그 기준으로 계산해서 보낸다)
+    mealType: str  # BREAKFAST | LUNCH | DINNER | SNACK
+
+
+@router.post("/internal/meal-recorded")
+async def notify_meal_recorded(
+    body: NotifyMealRecordedBody,
+    db: AsyncSession = Depends(get_db),
+    x_internal_service_secret: str | None = Header(None),
+) -> dict[str, object]:
+    _verify_internal_secret(x_internal_service_secret)
+
+    try:
+        record_date = date_cls.fromisoformat(body.recordDate[:10])
+    except ValueError:
+        raise HTTPException(status_code=422, detail="recordDate 형식이 올바르지 않습니다 (YYYY-MM-DD).")
+
+    meal_type = body.mealType.upper()
+    if meal_type not in ("BREAKFAST", "LUNCH", "DINNER", "SNACK"):
+        raise HTTPException(status_code=422, detail=f"mealType이 올바르지 않습니다: {body.mealType}")
+
+    rooms = await room_store.list_rooms_for_user(db, body.userId)
+    created_room_ids = []
+    for room, _membership in rooms:
+        await room_store.get_or_create_thread(db, room.id, body.userId, record_date, meal_type)
+        created_room_ids.append(str(room.id))
+
+    return {"status": "OK", "roomIds": created_room_ids}

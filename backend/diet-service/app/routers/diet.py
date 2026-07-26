@@ -643,7 +643,8 @@ async def internal_meal_records(
     for (user_id, meal_type), group_rows in groups.items():
         photo_object_keys: list[str] = []
         seen_logs: set[uuid.UUID] = set()
-        connected_items: list[dict[str, object]] = []
+        recipe_items: list[dict[str, object]] = []
+        product_items: list[dict[str, object]] = []
         sugar_total = 0.0
         calories_total = 0.0
 
@@ -658,7 +659,7 @@ async def internal_meal_records(
 
             if item.product_id is not None:
                 product = products.get(item.product_id)
-                connected_items.append({
+                product_items.append({
                     "source": "product",
                     "id": str(item.product_id),
                     "name": product.product_name if product else item.item_name,
@@ -666,7 +667,7 @@ async def internal_meal_records(
                 })
             elif item.external_recipe_id is not None:
                 recipe = recipes.get(int(item.external_recipe_id))
-                connected_items.append({
+                recipe_items.append({
                     "source": "recipe",
                     "id": item.external_recipe_id,
                     "name": recipe.name if recipe else item.item_name,
@@ -675,14 +676,25 @@ async def internal_meal_records(
                     "imageUrl": None,
                 })
 
+        # 얌로그 요청사항 - 비전(사진) → 레시피 → 저당픽 순으로 넘겨볼 수 있게
+        # 하나의 정렬된 리스트로도 내려준다. photoUrls/connectedItems는 기존
+        # 소비자(다른 화면)와의 호환을 위해 그대로 둔다.
+        connected_items = recipe_items + product_items
+        photo_urls = [presign_diet_photo_url(key) for key in photo_object_keys]
+        ordered_photos: list[dict[str, object]] = (
+            [{"source": "photo", "imageUrl": url} for url in photo_urls]
+            + [{"source": item["source"], "imageUrl": item["imageUrl"]} for item in connected_items if item.get("imageUrl")]
+        )
+
         records.append({
             "userId": user_id,
             "mealType": meal_type,
             "sugar": sugar_total,
             "calories": calories_total,
             # 만료 5분짜리 서명 URL - 캐시하지 말고 매 조회마다 새로 받아써야 한다.
-            "photoUrls": [presign_diet_photo_url(key) for key in photo_object_keys],
+            "photoUrls": photo_urls,
             "connectedItems": connected_items,
+            "orderedPhotos": ordered_photos,
         })
 
     return {"date": day.isoformat(), "records": records}

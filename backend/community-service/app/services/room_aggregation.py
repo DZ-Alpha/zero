@@ -472,6 +472,10 @@ async def build_meal_slots(
                     "calories": record_data.get("calories", 0.0),
                     "uploadedPhotoUrls": record_data.get("photoUrls", []),
                     "connectedItems": connected_items,
+                    # diet-service가 비전(사진) → 레시피 → 저당픽 순으로 이미
+                    # 정렬해서 준다 - 그대로 통과시키면 프론트가 순서 걱정 없이
+                    # 넘겨보기 캐러셀에 다 쓸 수 있다.
+                    "orderedPhotos": record_data.get("orderedPhotos", []),
                     "recordDate": record_date.isoformat(),
                     "reactionCount": reaction_count,
                     "commentCount": comment_count,

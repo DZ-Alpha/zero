@@ -1,6 +1,8 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,21 @@ from app.models.product_ref import ProductRef
 from app.models.recipe_ref import RecipeRef
 from app.models.user_health_profile_ref import UserHealthProfileRef
 from app.services.outbox import enqueue_activity, enqueue_outbox
+from app.services.room_notify import notify_meal_recorded
+
+logger = logging.getLogger("diet_service.diet_store")
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+async def _notify_room_meal_recorded(log: MealLog) -> None:
+    """얌로그(rooms) 실시간 반영용 - 실패해도 식단 기록 자체(이미 커밋된 트랜잭션)에
+    영향을 주면 안 되므로 별도로 감싸서 예외를 삼킨다."""
+    try:
+        record_date = log.eaten_at.astimezone(_KST).date()
+        await notify_meal_recorded(log.user_id, record_date, log.meal_type)
+    except Exception:  # noqa: BLE001 - 얌로그 알림은 부가 기능, 식단 기록 성공에 영향 없어야 한다
+        logger.warning("room notify wrapper failed for meal_log_id=%s", log.meal_log_id, exc_info=True)
 
 
 class MealLogNotFoundError(Exception):
@@ -139,6 +156,7 @@ async def complete_meal_log(db: AsyncSession, meal_log_id: uuid.UUID, items: lis
     log.analysis_status = "COMPLETED"
     await db.commit()
     await db.refresh(log)
+    await _notify_room_meal_recorded(log)
     return log
 
 
@@ -189,6 +207,9 @@ async def apply_vision_result(
     else:
         await _replace_meal_items(db, meal_log_id, items)
         if status == "AWAITING_CONFIRMATION":
+            # 아직 사용자 확정 전이라 얌로그에 알리지 않는다 - confirm_meal_log가
+            # 확정될 때 알린다(그 전에 알리면 사용자가 취소/수정한 기록까지
+            # "기록했다"고 방에 잡히는 오탐이 생긴다).
             log.analysis_status = "AWAITING_CONFIRMATION"
             log.needs_user_confirmation = True
         else:
@@ -206,6 +227,8 @@ async def apply_vision_result(
 
     await db.commit()
     await db.refresh(log)
+    if log.analysis_status == "COMPLETED":
+        await _notify_room_meal_recorded(log)
     return log
 
 
@@ -236,6 +259,7 @@ async def confirm_meal_log(
 
     await db.commit()
     await db.refresh(log)
+    await _notify_room_meal_recorded(log)
     return log
 
 
@@ -361,6 +385,7 @@ async def create_manual_record(
 
     await db.commit()
     await db.refresh(log)
+    await _notify_room_meal_recorded(log)
     return log
 
 

@@ -80,6 +80,11 @@ export type ConnectedMealItem = {
   imageUrl?: string | null;
 };
 
+export type OrderedPhoto = {
+  source: MealSource;
+  imageUrl: string;
+};
+
 export type MealRecord = {
   id: string;
   roomId: string;
@@ -92,6 +97,9 @@ export type MealRecord = {
   calories: number;
   uploadedPhotoUrls: string[];
   connectedItems: ConnectedMealItem[];
+  // 비전(사진) → 레시피 → 저당픽 순으로 이미 정렬된 통합 리스트 - 여러 소스가
+  // 섞여 있을 때 이걸 그대로 순회하면 넘겨보기 캐러셀에 전부 나온다.
+  orderedPhotos: OrderedPhoto[];
   recordDate: string;
   reactionCount: number;
   commentCount: number;
