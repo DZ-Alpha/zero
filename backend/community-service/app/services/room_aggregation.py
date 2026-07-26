@@ -87,7 +87,13 @@ async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMem
     user_ids = await _member_user_ids(members)
     thread_map = await _record_counts_for_range(db, room.id, user_ids, week_start, week_end)
 
-    recorded_today = len({uid for (uid, d, _mt) in thread_map if d == today})
+    # room_meal_thread는 누군가 방 화면을 열어야만 생기는 근사치라(위 주석 참고),
+    # 아직 아무도 방을 안 열어본 오늘 기록은 여기 안 잡힌다 - 홈 화면은 방
+    # 상세를 열지 않고도 "오늘 몇 명 기록했는지"를 보여줘야 하므로, 오늘 하루는
+    # diet-service 원본을 직접 조회해 정확한 값을 쓴다(주간 기록률은 기존처럼
+    # thread 근사치를 유지 - 매번 diet-service를 왕복하면 느려짐).
+    records_today = await get_meal_records(user_ids, today)
+    recorded_today = len({r["userId"] for r in records_today})
     week_record_count = len(thread_map)
     my_participation_days = len({d for (uid, d, _mt) in thread_map if uid == viewer_id})
 
@@ -221,9 +227,12 @@ async def list_recent_activities(
         if room is None:
             continue
         name = display_names.get(thread.user_id, f"회원{thread.user_id}")
-        photo_urls = record.get("photoUrls", []) if record else []
         connected = record.get("connectedItems", []) if record else []
-        image_url = photo_urls[0] if photo_urls else (connected[0].get("imageUrl") if connected else None)
+        ordered_photos = record.get("orderedPhotos", []) if record else []
+        # build_meal_slots와 같은 우선순위(비전 → 레시피 → 저당픽)로 대표 사진
+        # 하나를 고른다 - 이 피드는 카드 하나당 사진 한 장만 보여주므로 전체
+        # orderedPhotos를 다 넘길 필요는 없다.
+        image_url = ordered_photos[0]["imageUrl"] if ordered_photos else None
         items.append({
             "id": str(thread.id),
             "roomId": str(room.id),
