@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "user.activity.raw.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "event_type", "user_id", "occurred_at", "producer", "schema_version", "properties"],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"type": "string", "pattern": "^user\\."},
+    "user_id": {"type": "integer", "minimum": 1, "description": "PostgreSQL public.users.id"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "producer": {"type": "string", "pattern": "-service$"},
+    "schema_version": {"const": 1},
+    "trace_id": {"type": "string", "maxLength": 128},
+    "properties": {"type": "object", "maxProperties": 30}
+  }
+}

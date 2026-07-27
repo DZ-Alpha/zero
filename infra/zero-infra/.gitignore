@@ -1,0 +1,15 @@
+# 실제 시크릿 (절대 커밋 금지)
+.env
+kafka/.env
+config/pgbackrest/pgbackrest.conf
+config/pgbackrest-tls/certs/tls.key
+# 데이터 백업/덤프 (스키마·마이그레이션 .sql은 커밋함)
+*.backup
+*.dump
+# 생성 데이터 (썸네일 이미지 = 재생성 가능, object storage/volume에서 관리)
+data/
+# 파이썬 캐시 / 로그 / 툴 상태
+__pycache__/
+*.pyc
+*.log
+.omc/
