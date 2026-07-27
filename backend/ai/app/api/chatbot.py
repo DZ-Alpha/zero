@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -132,10 +133,14 @@ async def chatbot_stream(
                     answer_parts.append(delta)
                     yield _sse({"delta": delta})
             else:
+                # 사진분석·stub 등 비스트리밍 의도는 답변이 한 번에 완성된다.
+                # 글자 단위로 흘려 GENERAL_QA와 같은 타이핑 체감을 준다(가짜 스트리밍).
                 result = await deps.dispatcher.dispatch(intent, data)
                 image_key = result.image_key
                 answer_parts.append(result.msg)
-                yield _sse({"delta": result.msg})
+                for ch in result.msg:
+                    yield _sse({"delta": ch})
+                    await asyncio.sleep(0.015)
         except Exception:
             logger.exception("stream error")
             yield _sse({"error": "일시적인 오류가 발생했습니다.", "state": "error"})
