@@ -5,6 +5,7 @@
 - `service.products` (17컬럼, PK `product_id` UUID)
 - `service.product_tags` (PK `(product_id, tag_id)`)
 - `product.product_favorites` (PK `(product_id, user_id)`, PR-0307/0308 찜 기능) — `service` 스키마는 데이터팀 소유라 이 서비스 전용 신규 `product` 스키마에 둔다. community-service의 `community.notice_likes`와 같은 패턴.
+- `product.product_ai_summaries` (PK `product_id`, PR-0301/0302 AI 요약 캐시) — 같은 이유로 `product` 스키마. `ai_oneline`/`gammi_info` 각각 없는 값만 채워 넣는다(회의 결정 2026-07-27).
 
 쓰기는 이 서비스만 한다. 다른 서비스는 이 두 테이블에 직접 INSERT/UPDATE하지 않는다.
 
@@ -28,7 +29,9 @@
 | MN-0102 | 홈 통합 검색 | `PR-0101`과 동일 검색 로직 재사용 |
 | PR-0101~0105 | 검색, 자동완성, 카테고리/주의성분 필터, 정렬 | `products` + `product_tags` JOIN `tags`. `/search` 응답에 카드 필드(`brand`/`category`/`serving`/`sugar`/`calories`/`image`/`tags`) 및 `total`/`page`/`pageSize`/`hasNext` 추가(PRODUCTION_HANDOFF.md P1-1) — 태그는 페이지 전체를 한 번에 조회(N+1 방지) |
 | PR-0201~0203 | 상품 상세, 영양성분, 원재료/알레르기 | `products` 컬럼 직접 반환 |
-| PR-0301~0306 | AI 한줄요약/감미료 설명/맞춤 설명/대용량 추천/리뷰 | AI 요약은 런타임 생성(저장 안 함). **PR-0306 상품 리뷰는 이 DB에 테이블이 없다** — 신규 테이블 설계 필요 |
+| PR-0301~0302 | AI 한줄요약/감미료 설명 | 영양성분+원재료 기반 프롬프트로만 생성한다(반드시 지켜야 하는 규칙). 한 번 생성한 결과는 `product.product_ai_summaries`에 캐싱해 재사용 — 없는 상품만 새로 호출한다(회의 결정 2026-07-27) |
+| PR-0303 | 사용자 맞춤 영양 설명 | **AI 호출 제거(회의 결정 2026-07-27)** — "오늘 기록을 바탕으로 한 안내" 섹션은 프론트가 오늘 이미 기록된 당류 + 이 제품 당류를 더한 누적치를 그대로 계산해서 보여준다. 백엔드 `/product/user-feature-info` 엔드포인트는 삭제됨 |
+| PR-0304~0306 | 맞춤 그룹화 코멘트/대용량 추천/리뷰 | 전부 준비 중. **PR-0306 상품 리뷰는 이 DB에 테이블이 없다** — 신규 테이블 설계 필요 |
 | PR-0307~0308 | 상품 찜 등록/해제, 찜 목록 | `POST /product/favorite`, `GET /product/favorite/list`. `get_current_user`가 `usr` 쿼리파라미터와 `Authorization: Bearer` 헤더를 둘 다 받는다(PRODUCTION_HANDOFF.md P0-4로 전 엔드포인트 공통 적용, 헤더 우선) |
 | AD-0101~0102 | 관리자 상품 등록/수정 | Admin Service가 이 서비스의 관리자 전용 write API를 호출 |
 | AD-0103 | 영양성분 등록 | `products`의 calories/carbohydrate/sugars/protein/fat/sodium 컬럼 직접 수정 |

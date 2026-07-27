@@ -9,7 +9,7 @@ import { useAuthSession } from "@/hooks/useAuthSession";
 import { useDailyGauge } from "@/hooks/useDailyGauge";
 import { getTodayKey, useDietRecords } from "@/hooks/useDietRecords";
 import { useUserSettings } from "@/hooks/useUserSettings";
-import { getProductAiSummary, getProductDetail, getProductSweetenerInfo, getProductUserFeatureInfo, ProductDetailResponse } from "@/lib/api/zerocheck";
+import { getProductAiSummary, getProductDetail, getProductSweetenerInfo, ProductDetailResponse } from "@/lib/api/zerocheck";
 
 function format(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
@@ -45,7 +45,6 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   const [liveDetail, setLiveDetail] = useState<ProductDetailResponse | null>(null);
   const [liveSummary, setLiveSummary] = useState<string | null>(null);
   const [liveSweetenerInfo, setLiveSweetenerInfo] = useState<string | null>(null);
-  const [livePersonalInfo, setLivePersonalInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(productId));
   const [unavailable, setUnavailable] = useState(!catalogDetail && !productId);
 
@@ -81,7 +80,6 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   useEffect(() => {
     setLiveSummary(null);
     setLiveSweetenerInfo(null);
-    setLivePersonalInfo(null);
     if (!productId) return;
     let active = true;
 
@@ -91,16 +89,11 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     getProductSweetenerInfo(productId).then((sweetener) => {
       if (active) setLiveSweetenerInfo(sweetener?.["gammi-info"] ?? null);
     }).catch(() => {});
-    if (token) {
-      getProductUserFeatureInfo(productId, token).then((personal) => {
-        if (active) setLivePersonalInfo(personal?.["user-feature-info"] ?? null);
-      }).catch(() => {});
-    }
 
     return () => {
       active = false;
     };
-  }, [productId, token]);
+  }, [productId]);
 
   const detail = useMemo(() => ({
     ...fallbackDetail,
@@ -174,7 +167,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
           {token ? (
             <>
               <h3>{withinGoal ? "오늘 목표 안에서 선택할 수 있어요." : "오늘은 먹는 양을 조금 조절해보세요."}</h3>
-              <p>{livePersonalInfo && <span className="ai-summary-badge">AI 요약</span>}{livePersonalInfo || (withinGoal ? `${detail.serving}을 더해도 설정한 당류 목표까지 ${format(remainingSugar)}g 남아요. 간식으로 먹는다면 실제 섭취량만 기록해 주세요.` : `${detail.serving}을 모두 먹으면 설정한 당류 목표를 ${format(Math.abs(remainingSugar))}g 넘어요. 절반만 먹거나 다음 식사의 당류를 가볍게 골라도 좋아요.`)}</p>
+              <p>오늘 이미 당류 {format(currentSugar)}g을 기록했어요. {detail.serving}을 추가하면 오늘 누적 당류가 {format(todaySugar)}g이 돼요 — {withinGoal ? `목표까지 ${format(remainingSugar)}g 남아요.` : `목표를 ${format(Math.abs(remainingSugar))}g 넘어요.`}</p>
               <div className="analysis-points">
                 <span><b>{format(detail.sugar)}g</b>이 제품의 당류</span>
                 <span><b>{format(detail.calories)}kcal</b>이 제품의 열량</span>

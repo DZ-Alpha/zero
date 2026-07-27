@@ -283,10 +283,6 @@ export function getProductSweetenerInfo(id: string) {
   return apiRequest<{ "gammi-info"?: string }>(query("/product/gammi-info", { id }));
 }
 
-export function getProductUserFeatureInfo(id: string, token: string) {
-  return apiRequest<{ "user-feature-info"?: string }>(query("/product/user-feature-info", { id, usr: token }));
-}
-
 export function getUserRecommendations(token: string) {
   return apiRequest<{ listProducts: HomeProductItem[] }>(query("/home/user-recommend", { usr: token }));
 }
