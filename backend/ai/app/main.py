@@ -1,5 +1,6 @@
 import logging
 import time
+# rebuild trigger — Harbor image re-push
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
