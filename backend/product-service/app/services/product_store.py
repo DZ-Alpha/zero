@@ -6,6 +6,7 @@ from sqlalchemy import select, or_, func, exists, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
+from app.models.product_ai_summary import ProductAiSummary
 from app.models.product_favorite import ProductFavorite
 from app.models.product_tag import ProductTag
 from app.models.tag import Tag
@@ -292,6 +293,29 @@ async def list_favorites(db: AsyncSession, user_id: int) -> list[Product]:
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_ai_summary_cache(db: AsyncSession, product_id: uuid.UUID) -> ProductAiSummary | None:
+    """AI 한줄요약(PR-0301)/감미료 설명(PR-0302) 캐시 조회 — 회의 결정(2026-07-27)
+    으로 한 번 생성한 결과를 재사용한다."""
+    return await db.get(ProductAiSummary, product_id)
+
+
+async def upsert_ai_summary_cache(
+    db: AsyncSession,
+    product_id: uuid.UUID,
+    ai_oneline: str | None = None,
+    gammi_info: str | None = None,
+) -> None:
+    cache = await db.get(ProductAiSummary, product_id)
+    if cache is None:
+        cache = ProductAiSummary(product_id=product_id)
+        db.add(cache)
+    if ai_oneline is not None:
+        cache.ai_oneline = ai_oneline
+    if gammi_info is not None:
+        cache.gammi_info = gammi_info
+    await db.commit()
 
 
 async def update_allergen_tags(
