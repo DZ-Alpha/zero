@@ -49,7 +49,7 @@ class ProductAnalysisHandler(FeatureHandler):
         if parsed is None or parsed[0] not in _SUPPORTED_MEDIA_TYPES:
             return HandlerResult(msg=_UNSUPPORTED_FORMAT_MSG, is_img=True)
         media_type, image_bytes = parsed
-        await store_best_effort(data.context.user_id, media_type, image_bytes)
+        image_key = await store_best_effort(data.context.user_id, media_type, image_bytes)
 
         result = None
         for attempt in range(1, self._max_attempts + 1):
@@ -68,4 +68,4 @@ class ProductAnalysisHandler(FeatureHandler):
                 return HandlerResult(msg=_ANALYSIS_FAILED_MSG, is_img=True)
 
         answer = render_food_analysis(result, data.context)
-        return HandlerResult(msg=strip_chat_markdown(answer), is_img=True)
+        return HandlerResult(msg=strip_chat_markdown(answer), is_img=True, image_key=image_key)

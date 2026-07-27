@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
@@ -76,16 +77,39 @@ def _store_sync(object_key: str, media_type: str, image_bytes: bytes) -> None:
     )
 
 
-async def store_best_effort(user_id: int, media_type: str, image_bytes: bytes) -> None:
-    """챗봇에 첨부된 사진 원본을 감사·재현 목적으로 저장한다. 분석 결과와는
-    무관한 부가 기능이라, 저장에 실패해도 챗봇 응답 자체는 막지 않는다."""
+async def store_best_effort(user_id: int, media_type: str, image_bytes: bytes) -> str | None:
+    """챗봇에 첨부된 사진 원본을 MinIO에 저장하고 object_key를 반환한다.
+    부가 기능이라 저장에 실패하면 None을 반환하고 챗봇 응답은 막지 않는다."""
     if not _configured():
-        return
+        return None
     extension = _EXTENSIONS.get(media_type)
     if extension is None:
-        return
+        return None
     object_key = f"{user_id}/{uuid.uuid4()}.{extension}"
     try:
         await asyncio.to_thread(_store_sync, object_key, media_type, image_bytes)
     except (BotoCoreError, ClientError):
         logger.warning("chat photo 저장 실패: user_id=%s", user_id, exc_info=True)
+        return None
+    return object_key
+
+
+def presign_chat_photo_url(object_key: str, expires_in: int = 300) -> str | None:
+    """복원 시 사진을 브라우저에 보여주기 위한 서명 URL. diet-service의
+    presign_diet_photo_url과 동일 패턴 - 내부 endpoint로 서명하되 경로+쿼리만
+    떼어 "/b" 붙인 상대경로로 내려준다(프론트 app/b/[...path] 프록시가 중계).
+    경로를 바꾸면 SigV4 서명이 깨지므로 경로를 건드리지 않는다.
+    부가 기능이라 실패하면 None(호출 측이 imageUrl 없이 진행)."""
+    if not _configured():
+        return None
+    try:
+        raw = _client().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.minio_bucket, "Key": object_key},
+            ExpiresIn=expires_in,
+        )
+    except (BotoCoreError, ClientError):
+        logger.warning("chat photo presign 실패: key=%s", object_key, exc_info=True)
+        return None
+    parsed = urlsplit(raw)
+    return f"/b{parsed.path}?{parsed.query}"
