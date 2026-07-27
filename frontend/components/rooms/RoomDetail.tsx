@@ -58,6 +58,17 @@ function slotKey(memberId: string, mealType: MealType) {
   return `${memberId}:${mealType}`;
 }
 
+// toISOString()은 UTC 기준이라, KST 자정~오전 9시 사이에는 실제로는 오늘인
+// 날짜가 어제로 잘려서 recordedDates(서버가 KST 날짜로 내려줌)와 하루씩
+// 어긋났다(실사용 중 재현 - "지금 현재시간 기준으로 어제기록이 뜨고있어요").
+// 브라우저 로컬 타임존 getter로 날짜 문자열을 만들어야 서버의 KST 날짜와 맞는다.
+function toLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export function RoomDetail({ roomId }: { roomId: string }) {
   const { ready: authReady, signedIn, token } = useAuthSession();
   const [detail, setDetail] = useState<RoomDetailResponse | null>(null);
@@ -631,7 +642,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                         {Array.from({ length: 28 }, (_, index) => {
                           const date = new Date();
                           date.setDate(date.getDate() - (27 - index));
-                          const filled = recordedDates.has(date.toISOString().slice(0, 10));
+                          const filled = recordedDates.has(toLocalDateKey(date));
                           return <i key={index} data-filled={filled} style={{ "--dot-color": member.color } as CSSProperties} />;
                         })}
                       </div>
