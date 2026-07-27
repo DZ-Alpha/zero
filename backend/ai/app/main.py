@@ -25,6 +25,7 @@ from app.schemas import Intent  # noqa: E402
 from app.core.redis_client import redis_client  # noqa: E402
 from app.memory.conversation_store import ConversationStore  # noqa: E402
 from app.services.chat_photo_storage import ensure_lifecycle as ensure_chat_photo_lifecycle  # noqa: E402
+from app.services.vision_analyzer import build_analyzer  # noqa: E402
 
 logger = logging.getLogger("ai_service")
 
@@ -95,7 +96,10 @@ def build_dependencies() -> chatbot_api.Dependencies:
     llm = _build_llm()
     retriever = build_retriever()
     handlers = {
-        Intent.PRODUCT_ANALYSIS: ProductAnalysisHandler(),
+        Intent.PRODUCT_ANALYSIS: ProductAnalysisHandler(
+            analyzer=build_analyzer(settings),
+            confidence_threshold=settings.vision_confidence_threshold,
+        ),
         Intent.RECOMMEND: RecommendHandler(),
         Intent.DIET_PHOTO: DietPhotoHandler(),
         Intent.RECIPE_SUBSTITUTE: RecipeSubstituteHandler(),
