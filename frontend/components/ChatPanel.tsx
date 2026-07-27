@@ -201,7 +201,7 @@ export function ChatPanel() {
           )}
         </button>
         <input aria-label="질문" value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder="궁금한 성분이나 제품을 물어보세요" />
-        <button onClick={send} disabled={pending || (!value.trim() && !attachedImage)}>{pending ? "전송 중" : "보내기"}</button>
+        <button className="chat-send-button" onClick={send} disabled={pending || (!value.trim() && !attachedImage)}>{pending ? "전송 중" : "보내기"}</button>
       </div>
     </section>
   );
