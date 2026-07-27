@@ -84,71 +84,93 @@ git status --short | Select-Object -First 5
 
 ---
 
-## 단계 3 — 메모리 폴더 배치 ★ 가장 중요
+## 단계 3 — 개인 메모리 저장소 연결 ★ 가장 중요
 
-> 💬 **말할 것**: "이게 이번 세팅에서 제일 중요합니다. 여기에 지금까지 쌓인 팀 규칙·판단 기준이 들어 있어서,
-> 이게 없으면 제가 처음 만난 상태로 시작하게 됩니다."
+> 💬 **말할 것**: "메모리에는 지금까지 쌓인 팀 규칙·판단 기준이 들어 있습니다.
+> 이게 없으면 제가 처음 만난 상태로 시작합니다.
+> 개인 private 저장소로 관리하고 있어서, clone 후 폴더만 연결하면 끝입니다."
 
-**AI가 직접 실행 — 넣어야 할 정확한 위치를 계산:**
+**① 개인 저장소 clone — AI가 직접 실행**
 ```powershell
-$repo = "$env:USERPROFILE\Documents\zero"
+cd $env:USERPROFILE\Documents
+if (-not (Test-Path "zero-memory\.git")) {
+  git clone https://github.com/celtics-korean/zero-memory.git
+}
+cd zero-memory
+# 이 저장소만 celtics-korean 계정으로 인증 (팀 저장소는 love-1006 유지)
+git config credential.helper "!gh auth git-credential"
+git pull origin main
+(Get-ChildItem memory -Filter *.md).Count
+```
+
+> **계정이 둘인 이유**: 팀 저장소는 `love-1006`, 개인 저장소는 `celtics-korean` 이다.
+> 저장소마다 `credential.helper` 를 따로 지정해서 섞이지 않게 한다.
+> `gh auth status` 가 `celtics-korean` 이면 정상.
+
+**② 메모리 폴더를 junction으로 연결 — AI가 직접 실행**
+```powershell
+$repo   = "$env:USERPROFILE\Documents\zero"
 $projId = ($repo -replace ':','-' -replace '\\','-')
 $projId = $projId.Substring(0,1).ToLower() + $projId.Substring(1)
-$mem = "$env:USERPROFILE\.claude\projects\$projId\memory"
-New-Item -ItemType Directory -Force $mem | Out-Null
-"넣을 위치: $mem"
-if (Test-Path $mem) { "현재 파일 수: " + (Get-ChildItem $mem -Filter *.md -EA SilentlyContinue).Count }
+$link   = "$env:USERPROFILE\.claude\projects\$projId\memory"
+$target = "$env:USERPROFILE\Documents\zero-memory\memory"
+
+New-Item -ItemType Directory -Force (Split-Path $link) | Out-Null
+if ((Test-Path $link) -and -not (Get-Item $link).LinkType) {
+  Rename-Item $link "memory.bak-$(Get-Date -Format yyyyMMdd)"
+}
+if (-not (Test-Path $link)) {
+  New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+}
+$i = Get-Item $link
+"LinkType : $($i.LinkType)"
+"파일 수  : $((Get-ChildItem $link -Filter *.md).Count) 개"
 ```
 
-> **왜 계산이 필요한가**: Claude는 **작업 디렉터리 경로**로 프로젝트를 식별한다.
+> **왜 junction인가**: Claude가 메모리를 쓰면 **저장소 안에 바로 기록**된다. 복사 단계가 없다.
+> 훅이 세션 시작 시 pull, 응답 끝날 때 push 하므로 **양쪽 PC가 자동으로 같아진다.**
+>
+> **왜 경로를 계산하나**: Claude는 **작업 디렉터리 경로**로 프로젝트를 식별한다.
 > 노트북은 `c--Users-skyo4-Documents-zero` 였는데, 데스크탑 사용자명이 다르면 식별자도 달라진다.
-> **경로를 억지로 맞출 필요는 없고**, 메모리 폴더 이름만 이 PC 기준으로 맞추면 된다.
+> **경로를 억지로 맞출 필요는 없고**, junction 위치만 이 PC 기준으로 잡으면 된다.
 
-**사용자에게 요청할 것:**
-
-> 💬 "카톡으로 받은 `k8s-handoff.7z` 를 풀어서, 그 안의 `memory` 폴더에 있는 `.md` 파일들을
-> 위에 나온 경로에 **전부** 복사해 주세요. 압축 비밀번호는 따로 알려드린 값입니다."
-
-**복사 후 AI가 검증:**
-```powershell
-Get-ChildItem $mem -Filter *.md | Select-Object Name, Length | Format-Table -AutoSize
-```
-
-**성공 판정**: `.md` 파일이 **25개 이상**, 그중 `MEMORY.md` 가 반드시 있다.
+**성공 판정**: `LinkType : Junction` 이고 `.md` 파일이 **35개 이상**, `MEMORY.md` 포함.
 
 **실패하면:**
-- **파일이 0개** → 압축을 다른 데 풀었을 가능성. `MEMORY.md` 를 검색해서 찾아준다:
-  ```powershell
-  Get-ChildItem $env:USERPROFILE -Recurse -Filter "MEMORY.md" -EA SilentlyContinue |
-    Select-Object -First 5 FullName
-  ```
-- **파일 수가 적다** → 하위 폴더째 복사됐을 수 있다. `memory\memory\` 같은 이중 구조인지 확인.
-- **7z가 안 열린다** → 7-Zip 설치(<https://www.7-zip.org>) 또는 비밀번호 재확인.
+- **clone이 인증 실패** → `gh auth login` 으로 `celtics-korean` 로그인.
+- **junction 생성 실패** → 이미 폴더가 있는 경우다. 이름을 바꾸고(`memory.bak-...`) 다시 시도.
+- **파일이 0개** → `cd zero-memory; git pull origin main` 로 내려받는다.
 
 ---
 
-## 단계 4 — 자격증명 파일 배치
+## 단계 4 — 자격증명 복호화
 
-**사용자에게 요청:**
+> 💬 **말할 것**: "자격증명은 암호화해서 개인 저장소에 올려뒀습니다.
+> private 저장소라도 git 히스토리는 영구적이라, 평문으로 두면 나중에 비밀번호를 바꿔도 옛 값이 남습니다.
+> 암호를 입력하시면 복호화됩니다."
 
-> 💬 "같은 압축 안에 있는 `harbor.credentials.local.md` 를 저장소 루트에 넣어주세요:
-> `%USERPROFILE%\Documents\zero\harbor.credentials.local.md`"
-
-**AI가 검증 — 존재 + gitignore 확인:**
+**AI가 실행 — 스크립트가 알아서 처리한다:**
 ```powershell
-cd $env:USERPROFILE\Documents\zero
-if (Test-Path harbor.credentials.local.md) {
-  "파일 있음"
-  git check-ignore -v harbor.credentials.local.md
-} else { "없음" }
+& "$env:USERPROFILE\Documents\zero\scripts\creds-decrypt.ps1"
 ```
 
-**성공 판정**: 파일이 있고, `git check-ignore` 가 `.gitignore:6:*.credentials.local.md` 를 출력.
+> 암호(passphrase) 입력은 **사용자가 직접** 해야 한다. AI가 대신 넣을 수 없다.
+
+**AI가 검증:**
+```powershell
+cd $env:USERPROFILE\Documents\zero
+if (Test-Path harbor.credentials.local.md) { git check-ignore -v harbor.credentials.local.md }
+else { "복호화 안 됨" }
+```
+
+**성공 판정**: 파일이 있고 `git check-ignore` 가 `*.credentials.local.md` 규칙을 출력.
 
 **실패하면:**
-- **gitignore가 안 걸린다** 🔴 → **절대 커밋하면 안 된다.** `.gitignore` 에 `*.credentials.local.md` 가
-  있는지 확인하고, 없으면 추가한다.
-- **파일이 없다** → 없어도 진행은 가능하다. VM 비밀번호가 필요할 때 다시 요청한다.
+- **`.gpg` 파일이 없다** → 노트북에서 아직 암호화·푸시를 안 한 것.
+  `zero-memory` 에서 `git pull` 후 재시도.
+- **복호화 실패** → 암호가 틀렸다. 다시 입력.
+- **gitignore가 안 걸린다** 🔴 → **절대 커밋하면 안 된다.** `.gitignore` 확인.
+- **파일이 없어도** 진행은 가능하다. VM 비밀번호가 필요할 때 다시 요청한다.
 
 ---
 
