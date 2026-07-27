@@ -1,23 +1,36 @@
-# 네임스페이스 + PSA 라벨
+# 네임스페이스 + PSA 라벨 (16개)
 #
-# 라벨 형식은 공식 문서 예제를 그대로 따른다:
+# ── 네이밍 규칙 ────────────────────────────────────────────────
+#   dang-<약칭|제품명>-ns     ← 예외 없이 전부 -ns 로 끝난다
+#     · 앱 3-tier + 파이프라인은 약칭:  fe / be / pl / db
+#     · 인프라 컴포넌트는 제품명:       kafka / obsv / vault / istio ...
+#   시방서 @NameSpace 탭의 dang-front·dang-backend·dang-data·dang-pipeline·
+#   dang-kafka·dang-cloudflared 는 이 규칙으로 개명이 필요하다.
+#
+# ── PSA 라벨 형식 (공식 문서 예제와 동일) ──────────────────────
 #   pod-security.kubernetes.io/<모드>: <레벨>
 #   pod-security.kubernetes.io/<모드>-version: v1.36
 #
-# 설계 원칙 3가지:
-#   1) 기본은 restricted. 완화는 "그 워크로드가 무엇을 요구하는가"에서 역산해서만 한다.
-#   2) enforce보다 audit/warn을 한 단계 높게 둔다.
-#      → "restricted로 올리면 뭐가 깨질지"가 계속 보인다. 공식 예제와 같은 패턴.
-#   3) 완화가 필요한 워크로드는 네임스페이스를 쪼개서 가둔다.
-#      → 관측 스택 5종 전체를 privileged로 만들지 않고, DaemonSet 2개만 분리했다.
+# ── 레벨 결정 3문 ──────────────────────────────────────────────
+#   Q1. hostPath·hostNetwork·hostPID·privileged 가 필요한가? → YES면 privileged
+#   Q2. 컨테이너가 root(UID 0)로 실행되어야 하는가?          → YES면 baseline
+#   Q3. 아니면                                              → restricted
 #
-# tier 라벨은 NetworkPolicy의 namespaceSelector에서 쓴다(7/29 작업).
-# ⚠️ 네임스페이스는 반드시 이 라벨과 "함께" 생성해야 한다.
-#    먼저 만들고 나중에 라벨을 붙이면, 그 사이에 들어온 워크로드는 검사를 안 받는다.
+# ── 설계 원칙 ──────────────────────────────────────────────────
+#   1) 기본은 restricted. 완화는 워크로드 요구에서 역산해서만.
+#   2) enforce보다 audit/warn을 한 단계 높게 → 승격 가능 시점이 계속 보인다.
+#   3) 완화가 필요한 워크로드는 네임스페이스를 쪼개서 가둔다.
+#
+# ⚠️ 네임스페이스는 반드시 이 라벨과 "함께" 생성한다.
+#    먼저 만들고 나중에 라벨을 붙이면 그 사이 워크로드는 검사를 받지 않는다.
+#
+# tier 라벨은 NetworkPolicy 의 namespaceSelector 에서 쓴다.
 
 ---
-# ── 프론트엔드 ────────────────────────────────────────────────
-# Q1 host 접근? NO / Q2 root 필요? NO → restricted
+# ══ 앱 계층 ══════════════════════════════════════════════════
+
+# 프론트엔드 (dang-fe-main, dang-fe-admin)
+# Q1 NO / Q2 NO → restricted
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -32,9 +45,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.36
 
 ---
-# ── 백엔드 ────────────────────────────────────────────────────
-# Q1 NO / Q2 NO → restricted
-# 도커 단계에서 이미 cap_drop·no-new-privileges를 적용해뒀으므로 요구 조건이 맞는다.
+# 백엔드 9종 (login·admin·main·community·recipe·product·ingredients·diet·ai) + gateway
+# Q1 NO / Q2 NO → restricted (도커 단계에서 이미 cap_drop·no-new-privileges 적용됨)
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -49,12 +61,30 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.36
 
 ---
-# ── 데이터베이스 ──────────────────────────────────────────────
-# Q1 host 접근? NO / Q2 root 필요? YES → baseline
-#   PostgreSQL·MongoDB 공식 이미지는 entrypoint가 root로 시작해 초기화 후 권한을 낮춘다.
-#   root 시작은 restricted의 runAsNonRoot만 위반하고, baseline이 막는 항목(privileged·
-#   hostPath·host 네임스페이스)에는 해당하지 않는다. 그래서 baseline이면 충분하다.
-# 공식 예제와 동일한 형태: enforce는 baseline, audit/warn은 restricted로 한 단계 위.
+# 파이프라인 (vision-worker×3 · activity-consumer×2 · outbox-publisher ·
+#              recipe-crawler(CronJob) · recipe-consumer×2 · thumbnail-worker×2 · pl-api)
+# Q1 NO / Q2 NO → restricted
+# ※ vision-worker 는 Gemini 로 나가는 egress, recipe-crawler 는 YouTube egress 가 필요하다.
+#    PSA와는 무관하고 NetworkPolicy egress 허용 대상이다(7/29 작업).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dang-pl-ns
+  labels:
+    tier: pipeline
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.36
+
+---
+# 데이터 (redis · mongo · pg · pl-db · minio)
+# Q1 NO / Q2 YES → baseline
+#   PostgreSQL·MongoDB 공식 이미지는 entrypoint 가 root 로 시작해 초기화 후 권한을 낮춘다.
+#   root 시작은 restricted 의 runAsNonRoot 만 위반하고,
+#   baseline 이 막는 항목(privileged·hostPath·host 네임스페이스)에는 해당하지 않는다.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -69,10 +99,29 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.36
 
 ---
-# ── 관측 (수집·저장·시각화) ───────────────────────────────────
+# Kafka
+# Q1 NO / Q2 NO → restricted  ⚠️ 이미지 확정 후 non-root 여부 재확인 필요
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dang-kafka-ns
+  labels:
+    tier: database
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.36
+
+---
+# ══ 관측 ═════════════════════════════════════════════════════
+
+# 관측 — 수집·저장·시각화 (prometheus · loki · tempo · alertmanager ·
+#                          grafana · otel-gateway · kube-state-metrics)
 # Q1 NO / Q2 NO → restricted
-#   Prometheus(65534) · Grafana(472) · Loki(10001) 모두 기본이 non-root다.
-#   호스트 접근이 필요한 DaemonSet 2종은 아래 별도 네임스페이스로 뺐다.
+#   Prometheus(65534) · Grafana(472) · Loki(10001) 모두 기본이 non-root.
+#   호스트 접근이 필요한 DaemonSet 2종은 아래 별도 네임스페이스로 분리했다.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -87,15 +136,16 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.36
 
 ---
-# ── 관측 에이전트 (DaemonSet 전용) ★ 유일한 privileged ───────
-# Q1 host 접근? YES → privileged
-#   node-exporter: /proc·/sys 를 hostPath로 읽어야 한다
-#   OTel Agent   : /var/log 를 hostPath로 읽어야 한다
-#   hostPath는 baseline에서도 금지이므로 privileged 외에 선택지가 없다.
+# 관측 에이전트 — DaemonSet 전용 ★ privileged
+# Q1 YES → privileged
+#   node-exporter : /proc·/sys 를 hostPath 로 읽어야 한다
+#   otel-agent    : /var/log 를 hostPath 로 읽어야 한다
+#   🔴 hostPath 는 baseline 에서도 금지다. privileged 외에 선택지가 없다.
+#      시방서 PodSecurity 탭이 이 둘을 dang-obsv-ns(Baseline)에 두고 있는데,
+#      그대로 배포하면 apply 는 성공하고 replica 0 으로 조용히 실패한다.
 #
-# audit는 baseline으로 남겨둔다 → 이 예외를 실제로 누가 쓰는지 감사 로그에 기록된다.
-# warn은 privileged로 맞춘다   → 어차피 위반이 예정된 곳이라 콘솔 경고가 계속 뜨면
-#                               경고 자체를 무시하게 된다(alarm fatigue).
+# audit=baseline  → 이 예외를 누가 쓰는지 감사 로그에 남는다
+# warn=privileged → 위반이 예정된 곳이라 콘솔 경고를 띄우면 경고 자체를 무시하게 된다
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -110,13 +160,14 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.36
 
 ---
-# ── Vault ─────────────────────────────────────────────────────
+# ══ 보안 ═════════════════════════════════════════════════════
+
+# Vault (server · injector)
 # Q1 NO / Q2 NO → restricted
-# ⚠️ 단 조건이 하나 있다: Vault는 메모리 스왑을 막으려고 IPC_LOCK capability(mlock)를
-#    요구하는데, restricted는 capabilities.drop:[ALL]을 요구해서 충돌한다.
-#    → Vault 설정에 `disable_mlock: true`를 넣으면 해결된다.
-#      쿠버네티스 노드는 원래 swap을 끄는 것이 전제라 mlock의 실익이 크지 않다.
-#    → 만약 mlock을 켜야 한다면 이 네임스페이스만 baseline으로 내린다.
+# ⚠️ 조건: Vault 는 IPC_LOCK(mlock)을 요구하는데 restricted 는 drop:[ALL]을 요구해 충돌한다.
+#    → Vault 설정에 disable_mlock: true 를 넣어 해결한다.
+#      쿠버네티스 노드는 swap 을 끄는 것이 전제라 mlock 의 실익이 크지 않다.
+#    → mlock 을 꼭 켜야 하면 이 네임스페이스만 baseline 으로 내린다.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -131,8 +182,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.36
 
 ---
-# ── cert-manager ──────────────────────────────────────────────
-# Q1 NO / Q2 NO → restricted (controller·webhook·cainjector 모두 non-root 기본)
+# cert-manager (controller · webhook · cainjector)
+# Q1 NO / Q2 NO → restricted (공식 차트 기본값이 restricted 를 충족)
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -147,8 +198,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.36
 
 ---
-# ── Kyverno ───────────────────────────────────────────────────
-# Q1 NO / Q2 NO → restricted (admission·background·cleanup·reports 모두 non-root)
+# Kyverno (admission · background · cleanup · reports)
+# Q1 NO / Q2 NO → restricted
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -163,16 +214,37 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.36
 
 ---
-# ── Istio ─────────────────────────────────────────────────────
-# Q1 host 접근? YES → privileged
-#   istio-cni 노드 에이전트가 DaemonSet으로 각 노드의 CNI 설정을 건드린다.
-#   Gateway 자체는 non-root지만, 같은 네임스페이스에 노드 에이전트가 있으므로
-#   네임스페이스 레벨은 privileged가 되어야 한다.
-#   (Istio 공식도 istio-system에 privileged를 요구한다)
+# Sealed Secrets (controller)
+# Q1 NO / Q2 NO → restricted
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: dang-istio-system
+  name: dang-sealed-secrets-ns
+  labels:
+    tier: security
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.36
+
+---
+# ══ 플랫폼 ═══════════════════════════════════════════════════
+
+# Istio ★ privileged
+# Q1 YES → privileged
+#   istio-cni 노드 에이전트가 DaemonSet 으로 각 노드의 CNI 설정을 건드린다.
+#   Gateway 자체는 non-root 지만 네임스페이스 레벨은 privileged 여야 한다.
+#
+# ⚠️ 사이드카 주입 방식 확인 필요:
+#    기본(init 컨테이너) 방식은 NET_ADMIN·NET_RAW 를 요구해서
+#    dang-fe-ns·dang-be-ns 의 restricted 에서 파드가 거부된다.
+#    → istio-cni 플러그인 모드를 쓰면 init 컨테이너가 불필요해져 restricted 유지 가능.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dang-istio-ns
   labels:
     tier: network
     pod-security.kubernetes.io/enforce: privileged
@@ -180,4 +252,75 @@ metadata:
     pod-security.kubernetes.io/audit: baseline
     pod-security.kubernetes.io/audit-version: v1.36
     pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/warn-version: v1.36
+
+---
+# Cloudflared (외부 터널)
+# Q1 NO / Q2 NO → restricted
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dang-cloudflared-ns
+  labels:
+    tier: network
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.36
+
+---
+# ArgoCD (CI/CD — 윤경님 담당, 네임스페이스만 선생성)
+# Q1 NO / Q2 NO → restricted
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dang-argocd-ns
+  labels:
+    tier: cicd
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.36
+
+---
+# ══ 스토리지·백업 ════════════════════════════════════════════
+
+# Longhorn ★ privileged
+# Q1 YES → privileged
+#   분산 블록 스토리지라 노드의 블록 디바이스와 /dev, 커널 모듈에 직접 접근한다.
+#   engine·manager 가 DaemonSet 으로 뜨고 privileged 를 요구한다.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dang-longhorn-ns
+  labels:
+    tier: storage
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.36
+    pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/warn-version: v1.36
+
+---
+# Velero (백업)
+# ⚠️ 백업 방식에 따라 레벨이 갈린다:
+#    · 볼륨 스냅샷만 사용        → controller 만 뜨므로 restricted 가능
+#    · node-agent(파일 수준 백업) → /var/lib/kubelet/pods 를 hostPath 로 읽어야 해서 privileged
+#    지금은 안전한 쪽(baseline)으로 두고, 백업 방식 확정 후 조정한다.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dang-velero-ns
+  labels:
+    tier: storage
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: v1.36
