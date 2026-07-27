@@ -1,0 +1,106 @@
+# kubeadm 클러스터 초기화 설정
+#
+# 이 파일이 하는 일: 아래 3개를 kube-apiserver에 연결한다.
+#   1) encryption-config.yaml  — etcd 저장 시 Secret 암호화
+#   2) admission-config.yaml   — PSA 클러스터 기본값
+#   3) audit-policy.yaml       — 감사 로그
+#
+# 사용법:  sudo kubeadm init --config kubeadm-config.yaml
+#
+# ⚠️ 셋 다 kube-apiserver 기동 옵션이다. init 이후에 넣으려면 매니페스트를 고치고
+#    API 서버를 재시작해야 하고, etcd 암호화는 기존 Secret 전량 재작성까지 필요하다.
+#    지금(init 전) 넣으면 이 파일 하나로 끝난다.
+
+apiVersion: kubeadm.k8s.io/v1beta4   # ⬅ K8s 1.31+ 용. 그 이전이면 v1beta3 + extraArgs를 map 형식으로
+kind: ClusterConfiguration
+
+# ⬅ 결정 필요: 설치할 K8s 버전
+#    cert-manager · Prometheus Operator · CNI의 지원 버전을 먼저 확인하고 정한다.
+kubernetesVersion: v1.36.0
+
+# ⬅ 결정 필요: 마스터 노드 IP
+#    마스터 1대 구성이라도 이 값을 지금 넣어두면, 나중에 마스터를 늘릴 때
+#    인증서를 다시 만들지 않아도 된다. (SAN에 포함되기 때문)
+controlPlaneEndpoint: "___.___.___.___:6443"
+
+networking:
+  # 🔴 여기가 가장 위험한 칸이다. 기존 망과 겹치면 통신이 조용히 깨진다.
+  #
+  #    우리가 이미 쓰는 대역:
+  #      192.168.0.0/24  — 관리망 (harbor 0.53, monitoring 0.51, DB 0.54)
+  #      10.10.10.0/24   — App망  (production 10.10.10.30)
+  #      10.10.20.0/24   — Data망 (DB 10.10.20.10)
+  #
+  #    🔴🔴 Cilium(확정 CNI)의 기본 Pod CIDR은 10.0.0.0/8 이다.
+  #        10.0.0.0/8 은 10.0.0.0 ~ 10.255.255.255 이므로
+  #        우리 App망(10.10.10.x)과 Data망(10.10.20.x)을 통째로 삼킨다.
+  #        Cilium 공식 문서 경고 그대로:
+  #          "If your node network is in the same range as 10.0.0.0/8,
+  #           you will lose connectivity to other nodes."
+  #        → 기본값으로 깔면 노드 간 통신이 끊긴다.
+  #
+  #        게다가 Cilium 공식 문서는 clusterPoolIPv4PodCIDRList의 기존 항목을
+  #        "나중에 바꾸지 말라"고 명시한다(예기치 못한 동작). 설치 시점에 정해야 한다.
+  #
+  #    10.244.0.0/16 을 쓰는 이유: 위 세 대역 어디와도 겹치지 않는다.
+  podSubnet: "10.244.0.0/16"
+
+  # ⚠️ Cilium 설치 시에도 반드시 같은 값을 줘야 한다. 두 값이 다르면 파드 네트워크가 안 뜬다.
+  #    helm install cilium ... \
+  #      --set ipam.operator.clusterPoolIPv4PodCIDRList=10.244.0.0/16 \
+  #      --set ipam.operator.clusterPoolIPv4MaskSize=24
+
+  # 10.96.0.0/12 = 10.96.0.0 ~ 10.111.255.255.
+  # 10.10.x 는 이 범위보다 아래라 겹치지 않는다. 기본값 그대로 둔다.
+  serviceSubnet: "10.96.0.0/12"
+
+apiServer:
+  extraArgs:
+    # ── 1. etcd 암호화 ──
+    - name: encryption-provider-config
+      value: /etc/kubernetes/enc/encryption-config.yaml
+
+    # ── 2. PSA 클러스터 기본값 ──
+    - name: admission-control-config-file
+      value: /etc/kubernetes/admission/admission-config.yaml
+
+    # ── 3. 감사 로그 ──
+    - name: audit-policy-file
+      value: /etc/kubernetes/audit/audit-policy.yaml
+    - name: audit-log-path
+      value: /var/log/kubernetes/audit/audit.log
+    # 로그 회전 설정. 이걸 안 걸면 감사 로그가 마스터 디스크를 채운다.
+    # 마스터 1대 구성이라 디스크가 차면 클러스터 조작 자체가 불가능해진다.
+    - name: audit-log-maxage      # 며칠 보관
+      value: "30"
+    - name: audit-log-maxbackup   # 파일 몇 개 보관
+      value: "10"
+    - name: audit-log-maxsize     # 파일당 MB
+      value: "100"
+
+  # API 서버는 스태틱 파드로 뜬다. 호스트의 파일을 읽으려면 볼륨으로 넣어줘야 한다.
+  # 이 부분을 빠뜨리면 "파일을 못 찾겠다"며 API 서버가 기동에 실패한다.
+  extraVolumes:
+    - name: enc
+      hostPath: /etc/kubernetes/enc
+      mountPath: /etc/kubernetes/enc
+      readOnly: true
+      pathType: DirectoryOrCreate
+
+    - name: admission
+      hostPath: /etc/kubernetes/admission
+      mountPath: /etc/kubernetes/admission
+      readOnly: true
+      pathType: DirectoryOrCreate
+
+    - name: audit-policy
+      hostPath: /etc/kubernetes/audit
+      mountPath: /etc/kubernetes/audit
+      readOnly: true
+      pathType: DirectoryOrCreate
+
+    - name: audit-log
+      hostPath: /var/log/kubernetes/audit
+      mountPath: /var/log/kubernetes/audit
+      readOnly: false          # 로그를 써야 하므로 여기만 쓰기 허용
+      pathType: DirectoryOrCreate
