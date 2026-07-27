@@ -74,4 +74,28 @@ else
   echo "[autosync] 커밋됨 (푸시 실패 — 나중에 'git push' 필요)"
 fi
 
+# ── 개인 메모리 저장소 동기화 ──────────────────────────────────
+# 여기서 -A 를 쓰는 이유: 메모리는 "틀린 것을 지우는" 일이 있어서 삭제도 반영해야 한다.
+# 단 경로를 memory 로 한정하므로 다른 파일이 딸려가지 않는다.
+MEMREPO="$HOME/Documents/zero-memory"
+if [ -d "$MEMREPO/.git" ]; then
+  (
+    cd "$MEMREPO" || exit 0
+    git add -A -- memory 2>/dev/null
+    git diff --cached --quiet 2>/dev/null && exit 0
+
+    # 메모리에도 비밀이 들어가면 안 된다 — 값은 harbor.credentials.local.md 에만 둔다
+    if git diff --cached -U0 | grep -E '^\+' | grep -Eq 'AKIA[0-9A-Z]{16}|hooks\.slack\.com/services/|BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{30,}'; then
+      git reset --quiet HEAD -- . 2>/dev/null
+      echo "[autosync] ⛔ 메모리에 비밀로 보이는 값이 있어 커밋을 중단했습니다."
+      exit 0
+    fi
+
+    N="$(git diff --cached --name-only | wc -l | tr -d ' ')"
+    git commit -q -m "chore(memory): 자동 동기화 ($(date '+%m/%d %H:%M'), ${N}개)" 2>/dev/null || exit 0
+    git pull --rebase --quiet origin main 2>/dev/null
+    git push --quiet origin main 2>/dev/null && echo "[autosync] 메모리 ${N}개 푸시 완료"
+  )
+fi
+
 exit 0

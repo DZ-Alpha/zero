@@ -18,4 +18,14 @@ else
   echo "[autosync] pull 건너뜀 — 원격 연결 실패이거나 충돌. 'git status'로 확인하세요."
 fi
 
+# ── 개인 메모리 저장소도 함께 당긴다 ────────────────────────────
+# ~/.claude/.../memory 는 junction 으로 이 저장소를 가리키므로,
+# 여기서 pull 하면 반대편 PC에서 쌓인 메모리가 즉시 반영된다.
+MEMREPO="$HOME/Documents/zero-memory"
+if [ -d "$MEMREPO/.git" ]; then
+  if (cd "$MEMREPO" && git pull --rebase --autostash --quiet origin main 2>/dev/null); then
+    echo "[autosync] 메모리 저장소 최신화 완료"
+  fi
+fi
+
 exit 0
