@@ -1,0 +1,99 @@
+# Generated from k8s_DangDang_시방서.xlsx — 자동 생성 스캐폴드
+# 검토 필요 항목은 REVIEW.md 참고. 원본 설계는 docs/infra-spec.md 참고.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager
+  namespace: alphaca-security-system
+  labels:
+    app: cert-manager
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/part-of: alphacar
+    tier: security
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cert-manager
+  template:
+    metadata:
+      labels:
+        app: cert-manager
+        app.kubernetes.io/name: cert-manager
+        app.kubernetes.io/part-of: alphacar
+        tier: security
+      annotations:
+        alphacar.io/config-file: cert-manager.conf
+    spec:
+      containers:
+      - name: cert-manager
+        image: cert-manager
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-bench
+  namespace: alphaca-security-system
+  labels:
+    app: kube-bench
+    app.kubernetes.io/name: kube-bench
+    app.kubernetes.io/part-of: alphacar
+    tier: security
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-bench
+  template:
+    metadata:
+      labels:
+        app: kube-bench
+        app.kubernetes.io/name: kube-bench
+        app.kubernetes.io/part-of: alphacar
+        tier: security
+    spec:
+      containers:
+      - name: kube-bench
+        image: kube-bench
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kyverno
+  namespace: alphaca-security-system
+  labels:
+    app: kyverno
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/part-of: alphacar
+    tier: security
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kyverno
+  template:
+    metadata:
+      labels:
+        app: kyverno
+        app.kubernetes.io/name: kyverno
+        app.kubernetes.io/part-of: alphacar
+        tier: security
+      annotations:
+        alphacar.io/config-file: kyverno.conf
+    spec:
+      containers:
+      - name: kyverno
+        image: kyverno
+        resources:
+          requests:
+            cpu: 256m
+          limits:
+            cpu: 512m

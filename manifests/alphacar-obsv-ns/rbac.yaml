@@ -1,0 +1,40 @@
+# Generated from k8s_DangDang_시방서.xlsx — 자동 생성 스캐폴드
+# 검토 필요 항목은 REVIEW.md 참고. 원본 설계는 docs/infra-spec.md 참고.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alphacar-alloy-sa
+  namespace: alphacar-obsv-ns
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alphacar-alloy-cluster-reader
+rules:
+- apiGroups:
+  - ''
+  - apps
+  resources:
+  - pods
+  - services
+  - endpoints
+  - deployments
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alphacar-alloy-cluster-reader-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alphacar-alloy-cluster-reader
+subjects:
+- kind: ServiceAccount
+  name: alphacar-alloy-sa
+  namespace: alphacar-obsv-ns

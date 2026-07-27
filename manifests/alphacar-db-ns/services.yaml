@@ -1,0 +1,80 @@
+# Generated from k8s_DangDang_시방서.xlsx — 자동 생성 스캐폴드
+# 검토 필요 항목은 REVIEW.md 참고. 원본 설계는 docs/infra-spec.md 참고.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alphacar-redis
+  namespace: alphacar-db-ns
+  labels:
+    app: alphacar-redis
+spec:
+  type: ClusterIP
+  selector:
+    app: alphacar-redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alphacar-mongo
+  namespace: alphacar-db-ns
+  labels:
+    app: alphacar-mongo
+spec:
+  type: ClusterIP
+  selector:
+    app: alphacar-mongo
+  ports:
+  - port: 27017
+    targetPort: 27017
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alphacar-maria
+  namespace: alphacar-db-ns
+  labels:
+    app: alphacar-maria
+spec:
+  type: ClusterIP
+  selector:
+    app: alphacar-maria
+  ports:
+  - port: 3306
+    targetPort: 3306
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alphacar-mongo-headless
+  namespace: alphacar-db-ns
+  labels:
+    app: alphacar-mongo
+spec:
+  clusterIP: None
+  selector:
+    app: alphacar-mongo
+  ports:
+  - port: 27017
+    targetPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alphacar-maria-headless
+  namespace: alphacar-db-ns
+  labels:
+    app: alphacar-maria
+spec:
+  clusterIP: None
+  selector:
+    app: alphacar-maria
+  ports:
+  - port: 3306
+    targetPort: 3306

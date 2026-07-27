@@ -1,0 +1,77 @@
+# Generated from k8s_DangDang_시방서.xlsx — 자동 생성 스캐폴드
+# 검토 필요 항목은 REVIEW.md 참고. 원본 설계는 docs/infra-spec.md 참고.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: strimzi
+  namespace: alphacar-striming-ns
+  labels:
+    app: strimzi
+    app.kubernetes.io/name: strimzi
+    app.kubernetes.io/part-of: alphacar
+    tier: data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: strimzi
+  template:
+    metadata:
+      labels:
+        app: strimzi
+        app.kubernetes.io/name: strimzi
+        app.kubernetes.io/part-of: alphacar
+        tier: data
+      annotations:
+        alphacar.io/config-file: strimzi-operator.conf
+    spec:
+      containers:
+      - name: strimzi
+        image: strimzi
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: alphacar-striming-ns
+  labels:
+    app: kafka
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/part-of: alphacar
+    tier: data
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+        app.kubernetes.io/name: kafka
+        app.kubernetes.io/part-of: alphacar
+        tier: data
+      annotations:
+        alphacar.io/config-file: kafka.conf
+        alphacar.io/secret-ref: kafka-secret
+    spec:
+      containers:
+      - name: kafka
+        image: kafka
+        ports:
+        - containerPort: 9092
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: '2'
+            memory: 2Gi
