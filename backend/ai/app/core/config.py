@@ -21,12 +21,15 @@ class Settings(BaseSettings):
     bedrock_region: str = "us-east-1"
     bedrock_model_id: str = ""
 
-    # 챗봇 사진 첨부 분석(product_analysis) 전용 - 비용 협의(2026-07-26)로 이
-    # 경로만 Bedrock이 아니라 Anthropic API를 직접 호출한다. 일반 텍스트 질의는
-    # 여전히 Bedrock(위 bedrock_model_id)을 쓴다 - 이 키는 사진 분석에만 쓰인다.
-    # (식사 사진 분석과는 별개다 - 그쪽은 zero-db Vision worker 파이프라인만 쓴다.)
-    # 비어있으면 사진 분석은 "준비 중" 안내로 폴백한다(기존 무비용 폴백과 동일 패턴).
-    anthropic_api_key: str = ""
+    # 사진분석 Gemini(opt 비전 파이프라인과 같은 키 재사용). 키가 비어있으면
+    # analyzer 미조립 → "준비 중" 안내로 폴백(개발은 provider=stub로 테스트).
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-flash-latest"
+    gemini_thinking_budget: int = 512
+    gemini_max_output_tokens: int = 4096
+    vision_provider: str = "gemini"  # gemini | stub
+    vision_timeout_seconds: float = 30.0
+    vision_confidence_threshold: float = 0.75
 
     # Cohere Embed v4 리전 — 상품벡터를 만든 기존 파이프라인과 동일(ap-northeast-2).
     embed_region: str = "ap-northeast-2"
@@ -35,7 +38,7 @@ class Settings(BaseSettings):
 
     # 챗봇 사진 첨부(product_analysis) 원본을 감사·재현 목적으로 24시간만
     # 보관한다 - 대화 메모리(conversation_ttl_seconds)와 같은 수명. Vision 분석
-    # 자체엔 필요 없다(Anthropic API에 바이트를 직접 보낸다) - 그래서 비어있으면
+    # 자체엔 필요 없다(Gemini API에 바이트를 직접 보낸다) - 그래서 비어있으면
     # 저장만 건너뛰고 분석 기능은 그대로 동작한다.
     minio_endpoint: str = ""
     minio_access_key: str = ""
