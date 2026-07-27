@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     user_context_source: str = "dummy"
     login_service_url: str = "http://localhost:8000"
     main_service_url: str = "http://localhost:8010"
+    diet_service_url: str = "http://localhost:8030"
 
     bedrock_region: str = "us-east-1"
     bedrock_model_id: str = ""

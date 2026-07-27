@@ -16,6 +16,7 @@ def build_provider(source: str) -> "UserContextProvider":
     if source == "backend":
         from app.context.backend import BackendUserContextProvider
         return BackendUserContextProvider(login_url=settings.login_service_url,
-                                          main_url=settings.main_service_url)
+                                          main_url=settings.main_service_url,
+                                          diet_url=settings.diet_service_url)
     from app.context.dummy import DummyUserContextProvider
     return DummyUserContextProvider()
