@@ -15,6 +15,8 @@ class HandlerInput(BaseModel):
 class HandlerResult(BaseModel):
     msg: str
     is_img: bool = False
+    # 사진 첨부 분석 시 MinIO object_key — API 레이어가 대화 저장에 쓴다.
+    image_key: str | None = None
 
 
 class FeatureHandler(ABC):

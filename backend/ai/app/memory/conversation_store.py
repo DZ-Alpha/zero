@@ -4,7 +4,11 @@ from typing import TypedDict
 
 logger = logging.getLogger("ai_chatbot")
 
-Message = TypedDict("Message", {"role": str, "text": str})
+
+class Message(TypedDict, total=False):
+    role: str
+    text: str
+    image_key: str
 
 
 class ConversationStore:
@@ -36,12 +40,15 @@ class ConversationStore:
             return []
         return self._parse(raw)
 
-    async def append(self, session_key: str | None, user_text: str, assistant_text: str) -> None:
+    async def append(self, session_key: str | None, user_text: str, assistant_text: str, image_key: str | None = None) -> None:
         if not session_key:
             return
+        user_msg: dict = {"role": "user", "text": user_text}
+        if image_key:
+            user_msg["image_key"] = image_key
         try:
             async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.rpush(session_key, json.dumps({"role": "user", "text": user_text}, ensure_ascii=False))
+                pipe.rpush(session_key, json.dumps(user_msg, ensure_ascii=False))
                 pipe.rpush(session_key, json.dumps({"role": "assistant", "text": assistant_text}, ensure_ascii=False))
                 pipe.ltrim(session_key, -self._max_msgs, -1)
                 pipe.expire(session_key, self._ttl)
@@ -55,7 +62,10 @@ class ConversationStore:
         for item in raw:
             try:
                 obj = json.loads(item)
-                out.append({"role": obj["role"], "text": obj["text"]})
+                msg: Message = {"role": obj["role"], "text": obj["text"]}
+                if isinstance(obj.get("image_key"), str):
+                    msg["image_key"] = obj["image_key"]
+                out.append(msg)
             except (ValueError, KeyError, TypeError):
                 continue  # 손상 원소는 건너뛴다
         if out and out[-1]["role"] != "assistant":

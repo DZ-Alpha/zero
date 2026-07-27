@@ -52,3 +52,6 @@ class UserContext(BaseModel):
     height_cm: float | None = None
     weight_kg: float | None = None
     activity_level: str | None = None
+    # 오늘 누적 섭취(diet-service). 사진 답변에서 "드시면 목표 대비" 계산에 쓴다.
+    today_sugar: float | None = None
+    today_cal: float | None = None

@@ -26,7 +26,8 @@ def _handler(request: httpx.Request) -> httpx.Response:
 
 async def test_backend_provider_assembles_context():
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-    provider = BackendUserContextProvider(login_url="http://login", main_url="http://main", http_client=client)
+    provider = BackendUserContextProvider(login_url="http://login", main_url="http://main",
+                                          diet_url="http://diet", http_client=client)
     ctx = await provider.load("some-token")
     assert ctx.logged_in is True
     assert ctx.interests == ["저당", "고단백"]
@@ -45,6 +46,7 @@ async def test_backend_provider_assembles_context():
 async def test_backend_provider_401_falls_back_to_anonymous():
     def deny(request): return httpx.Response(401, json={"detail": "무효"})
     client = httpx.AsyncClient(transport=httpx.MockTransport(deny))
-    provider = BackendUserContextProvider(login_url="http://login", main_url="http://main", http_client=client)
+    provider = BackendUserContextProvider(login_url="http://login", main_url="http://main",
+                                          diet_url="http://diet", http_client=client)
     ctx = await provider.load("bad")
     assert ctx.logged_in is False
