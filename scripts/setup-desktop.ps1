@@ -1,4 +1,4 @@
-# 데스크탑 환경 자동 세팅
+﻿# 데스크탑 환경 자동 세팅
 #
 # 사용법 (PowerShell에서):
 #   irm https://raw.githubusercontent.com/DZ-Alpha/zero/work/k8s-security-20260727/scripts/setup-desktop.ps1 | iex

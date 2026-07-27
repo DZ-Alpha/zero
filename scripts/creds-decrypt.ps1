@@ -1,11 +1,33 @@
-# 개인 private 저장소에서 받은 암호문을 복호화해 제자리에 놓는다.
+﻿# 개인 private 저장소에서 받은 암호문을 복호화해 제자리에 놓는다.
 #
 # 사용법:  .\scripts\creds-decrypt.ps1
 #          → 암호(passphrase)를 입력하면 harbor.credentials.local.md 가 복원된다.
 #
 # 복원 위치는 .gitignore 로 제외되는 경로이므로, 공용 저장소에 실수로 올라가지 않는다.
+#
+# 실행 정책에 막히면:  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 $ErrorActionPreference = "Stop"
+
+# ── gpg 찾기 (PowerShell PATH에 없다 — Git for Windows의 usr\bin 에 있음) ──
+function Find-Gpg {
+  $c = Get-Command gpg -ErrorAction SilentlyContinue
+  if ($c) { return $c.Source }
+  foreach ($p in @(
+    "C:\Program Files\Git\usr\bin\gpg.exe",
+    "C:\Program Files\Git\mingw64\bin\gpg.exe",
+    "C:\Program Files (x86)\Git\usr\bin\gpg.exe",
+    "C:\Program Files (x86)\GnuPG\bin\gpg.exe",
+    "$env:LOCALAPPDATA\Programs\Git\usr\bin\gpg.exe"
+  )) { if (Test-Path $p) { return $p } }
+  return $null
+}
+
+$gpg = Find-Gpg
+if (-not $gpg) {
+  Write-Host "gpg를 찾을 수 없습니다. Git for Windows를 설치하세요." -ForegroundColor Red
+  exit 1
+}
 
 $src = Join-Path $env:USERPROFILE "Documents\zero-memory\harbor.credentials.local.md.gpg"
 $dst = Join-Path $env:USERPROFILE "Documents\zero\harbor.credentials.local.md"
@@ -22,7 +44,7 @@ if (Test-Path $dst) {
   if ($a -ne "y") { Write-Host "취소했습니다."; exit 0 }
 }
 
-gpg --decrypt --yes --output $dst $src
+& $gpg --decrypt --yes --output $dst $src
 
 if ($LASTEXITCODE -eq 0 -and (Test-Path $dst)) {
   Write-Host "복호화 완료: $dst" -ForegroundColor Green

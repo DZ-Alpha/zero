@@ -54,6 +54,31 @@ foreach ($t in @('git','node','claude','tailscale','code')) {
 
 > 💬 **말할 것**: "설치 후에는 PowerShell을 새로 열어야 PATH가 반영됩니다. 다시 확인해 드릴게요."
 
+### 1-2. PowerShell 실행 정책 ⚠️ 이거 안 하면 4단계에서 막힌다
+
+Windows 기본값은 `Restricted` 라서 `.ps1` 스크립트가 아예 실행되지 않는다.
+(노트북에서 실제로 여기서 막혔다 — 2026-07-27)
+
+**AI가 확인:**
+```powershell
+Get-ExecutionPolicy -List | Format-Table -AutoSize
+```
+
+**`CurrentUser` 가 `Undefined` 또는 `Restricted` 이면 사용자에게 요청:**
+
+> 💬 "PowerShell이 기본값으로 스크립트 실행을 막고 있습니다. 뒤에서 복호화 스크립트를 써야 해서
+> 지금 풀어두는 게 좋습니다. 관리자 권한은 필요 없습니다."
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
+
+> **`RemoteSigned` 인 이유**: 로컬 스크립트는 실행하되 **인터넷에서 받은 것은 서명을 요구**한다.
+> `Bypass`/`Unrestricted` 보다 안전하고 실무 표준이다.
+> git clone 한 스크립트에는 "인터넷 표식"이 붙지 않으므로 정상 실행된다.
+> (브라우저로 받은 `.ps1` 이 막히면 `Unblock-File .\파일.ps1`)
+
+**바꾸기 싫어하면**: 스크립트 없이 gpg 명령을 직접 쓰는 방법을 4단계에 적어뒀다.
+
 ---
 
 ## 단계 2 — 저장소 확인
@@ -155,6 +180,13 @@ $i = Get-Item $link
 ```
 
 > 암호(passphrase) 입력은 **사용자가 직접** 해야 한다. AI가 대신 넣을 수 없다.
+
+**실행 정책 때문에 스크립트가 막히면 — gpg를 직접 쓴다 (동일한 동작):**
+```powershell
+gpg --decrypt --yes `
+  --output "$env:USERPROFILE\Documents\zero\harbor.credentials.local.md" `
+  "$env:USERPROFILE\Documents\zero-memory\harbor.credentials.local.md.gpg"
+```
 
 **AI가 검증:**
 ```powershell
