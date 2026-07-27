@@ -416,7 +416,7 @@ export function sendChatbotMessage(msg: string, token?: string | null, template?
   });
 }
 
-export type ChatHistoryMessage = { role: "user" | "assistant"; text: string };
+export type ChatHistoryMessage = { role: "user" | "assistant"; text: string; imageUrl?: string };
 
 // conversation-memory-frontend-spec.md §2 — 채팅창을 열 때 이전 대화를 복원한다.
 export function getChatHistory(token?: string | null) {

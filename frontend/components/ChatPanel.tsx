@@ -52,7 +52,11 @@ export function ChatPanel() {
     let active = true;
     getChatHistory(getAccessToken()).then(({ messages: history }) => {
       if (!active || history.length === 0) return;
-      setMessages(history.map((item) => ({ role: item.role === "user" ? "question" : "answer", text: item.text })));
+      setMessages(history.map((item) => ({
+        role: item.role === "user" ? "question" : "answer",
+        text: item.text,
+        ...(item.imageUrl ? { imageUrl: item.imageUrl } : {}),
+      })));
     }).catch(() => {
       // 히스토리 복원 실패 — 빈 로그(안내 문구)를 그대로 둔다.
     });
@@ -155,7 +159,16 @@ export function ChatPanel() {
         {messages.length === 0 && !pending && <p className="answer chat-empty-hint">무엇을 도와드릴까요?</p>}
         {messages.map((message, index) => (
           <p className={message.role} key={`${message.role}-${index}`}>
-            {message.imageUrl && <img className="chat-log-image" src={message.imageUrl} alt="첨부한 사진" />}
+            {message.imageUrl && (
+              <img
+                className="chat-log-image"
+                src={message.imageUrl}
+                alt="첨부한 사진"
+                // 사진 원본은 24시간만 보관된다 - 만료 후 imageUrl은 404가 나므로
+                // 깨진 이미지 아이콘 대신 조용히 숨긴다.
+                onError={(event) => { event.currentTarget.style.display = "none"; }}
+              />
+            )}
             {message.text && renderInlineMarkdown(message.text)}
           </p>
         ))}
