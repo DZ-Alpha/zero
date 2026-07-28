@@ -1,0 +1,164 @@
+# kubeadm 클러스터 초기화 설정 — 확정본
+#
+# 확정 정보 (2026-07-27 성애님 슬랙 기준)
+#   K8s      : v1.36.3 (apt 최신 패치, 4대 전부 설치+hold 완료)
+#   CNI      : Cilium (kube-proxy 대체 모드)
+#   토폴로지 : 마스터 1 + 워커 3 = 4노드, 물리 호스트 2대(h1/h2)
+#              k8s-control 192.168.0.68 (h1)
+#              worker-1    192.168.0.71 (h1)
+#              worker-2    192.168.0.72 (h2)
+#              worker-3    192.168.0.73 (h2)
+#
+# 이 파일이 하는 일: 아래 3개를 kube-apiserver 에 연결한다.
+#   1) encryption-config.yaml  — etcd 저장 시 Secret 암호화
+#   2) admission-config.yaml   — PSA 클러스터 기본값
+#   3) audit-policy.yaml       — 감사 로그
+#
+# 사용법:
+#   sudo kubeadm init --config kubeadm-config.yaml
+#   (skipPhases 를 config 에 넣었으므로 --skip-phases 플래그는 불필요)
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+
+localAPIEndpoint:
+  advertiseAddress: "192.168.0.68"   # k8s-control
+  bindPort: 6443
+
+nodeRegistration:
+  criSocket: "unix:///var/run/containerd/containerd.sock"
+  # 마스터 taint 는 기본값 유지(NoSchedule).
+  # 관측 DaemonSet 은 toleration 을 달아 마스터에도 띄운다 —
+  # 마스터가 1대뿐이라 여기가 관측 사각지대가 되면 죽어가는 것도 모른다.
+
+# kube-proxy 를 설치하지 않는다. Cilium 이 kubeProxyReplacement=true 로 대신한다.
+# ⚠️ 이 단계를 건너뛰면 Cilium 설치 전까지 Service 가 동작하지 않는다. 정상이다.
+skipPhases:
+  - addon/kube-proxy
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+
+kubernetesVersion: v1.36.3
+
+# 마스터가 1대여도 지금 넣어둔다.
+# 나중에 마스터를 늘릴 때 이 값이 없으면 인증서를 다시 만들어야 한다.
+controlPlaneEndpoint: "192.168.0.68:6443"
+
+apiServer:
+  # ⬅ 결정 필요: 미래 VIP 주소
+  #    나중에 kube-vip 로 마스터를 늘릴 때 쓸 IP 를 지금 SAN 에 넣어두면
+  #    그때 인증서를 재발급하지 않아도 된다.
+  #    조건: 192.168.0.0/24 안에서 미사용 + DHCP 할당 범위 밖일 것.
+  #    (노드가 .68/.71/.72/.73 이므로 .70 같은 값이 자연스럽다)
+  certSANs:
+    - "192.168.0.68"          # 현재 마스터
+    - "k8s-control"           # 호스트명
+    - "192.168.0.___"         # ⬅ 미래 VIP — 값 확정 후 채울 것
+    - "k8s-api.hizero.local"  # ⬅ 미래 VIP 의 DNS 이름(쓸 계획이면 유지, 아니면 삭제)
+    - "127.0.0.1"
+    - "kubernetes"
+    - "kubernetes.default"
+    - "kubernetes.default.svc"
+    - "kubernetes.default.svc.cluster.local"
+
+  extraArgs:
+    # ── 1. etcd 암호화 ──
+    - name: encryption-provider-config
+      value: /etc/kubernetes/enc/encryption-config.yaml
+
+    # ── 2. PSA 클러스터 기본값 ──
+    - name: admission-control-config-file
+      value: /etc/kubernetes/admission/admission-config.yaml
+
+    # ── 3. 감사 로그 ──
+    - name: audit-policy-file
+      value: /etc/kubernetes/audit/audit-policy.yaml
+    - name: audit-log-path
+      value: /var/log/kubernetes/audit/audit.log
+    # 회전 설정. 이걸 안 걸면 감사 로그가 마스터 디스크를 채운다.
+    # 마스터 1대 구성이라 디스크가 차면 클러스터 조작 자체가 불가능해진다.
+    - name: audit-log-maxage
+      value: "30"
+    - name: audit-log-maxbackup
+      value: "10"
+    - name: audit-log-maxsize
+      value: "100"
+
+  # API 서버는 스태틱 파드로 뜬다. 호스트 파일을 읽으려면 볼륨으로 넣어야 한다.
+  # 이 부분을 빠뜨리면 "파일을 못 찾겠다"며 API 서버가 기동에 실패한다.
+  extraVolumes:
+    - name: enc
+      hostPath: /etc/kubernetes/enc
+      mountPath: /etc/kubernetes/enc
+      readOnly: true
+      pathType: DirectoryOrCreate
+
+    - name: admission
+      hostPath: /etc/kubernetes/admission
+      mountPath: /etc/kubernetes/admission
+      readOnly: true
+      pathType: DirectoryOrCreate
+
+    - name: audit-policy
+      hostPath: /etc/kubernetes/audit
+      mountPath: /etc/kubernetes/audit
+      readOnly: true
+      pathType: DirectoryOrCreate
+
+    - name: audit-log
+      hostPath: /var/log/kubernetes/audit
+      mountPath: /var/log/kubernetes/audit
+      readOnly: false          # 로그를 써야 하므로 여기만 쓰기 허용
+      pathType: DirectoryOrCreate
+
+networking:
+  # 🔴 Cilium 기본 Pod CIDR 은 10.0.0.0/8 이라 데이터망(10.10.10.x / 10.10.20.x)을 삼킨다.
+  #    Cilium 공식 경고: "If your node network is in the same range as 10.0.0.0/8,
+  #                      you will lose connectivity to other nodes."
+  #    또 공식 문서는 clusterPoolIPv4PodCIDRList 의 기존 항목을 나중에 바꾸지 말라고 명시한다.
+  #    → 설치 시점에 확정해야 한다.
+  #
+  #    10.244.0.0/16 은 관리망(192.168.0.x)·데이터망(10.10.x) 어디와도 겹치지 않는다.
+  podSubnet: "10.244.0.0/16"
+
+  # 10.96.0.0/12 = 10.96.0.0 ~ 10.111.255.255. 위 대역들과 겹치지 않는다.
+  serviceSubnet: "10.96.0.0/12"
+
+  dnsDomain: "cluster.local"
+
+# etcd 는 kubeadm 기본값(stacked, /var/lib/etcd)을 그대로 쓴다.
+# 마스터 1대라 피어 통신이 필요 없으므로 2379-2380 을 외부로 열지 않는다(방화벽에서 차단).
+#
+# 참고: listen-client-urls 를 127.0.0.1 로만 제한하는 방법도 있으나,
+#       나중에 마스터를 추가할 때 되돌려야 하므로 방화벽 차단으로 충분하다고 판단.
+# etcd:
+#   local:
+#     dataDir: /var/lib/etcd
+
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+
+# containerd 가 SystemdCgroup=true 이므로 kubelet 도 systemd 여야 한다.
+# 안 맞으면 파드는 뜨는데 자원 제한이 제대로 안 걸리고 노드가 불안정해진다.
+# 에러가 안 나서 발견이 늦는 유형이라 명시해 둔다.
+cgroupDriver: systemd
+
+# v1.36 기본값도 "swap 감지 시 실패" 이지만 명시해 둔다.
+# swap 이 켜져 있으면 메모리 limit·OOM 판정이 흐려져 자원 산정이 무의미해진다.
+failSwapOn: true
+
+# 노드 자원 고갈로 kubelet 까지 죽는 것을 막는 예약분.
+# 마스터 1대 구성이라 컨트롤플레인 노드가 자원 압박으로 죽으면 복구가 어렵다.
+systemReserved:
+  cpu: "200m"
+  memory: "512Mi"
+kubeReserved:
+  cpu: "200m"
+  memory: "512Mi"
+evictionHard:
+  memory.available: "300Mi"
+  nodefs.available: "10%"

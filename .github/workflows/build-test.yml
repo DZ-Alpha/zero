@@ -10,10 +10,32 @@ on:
   # 안 쓰임) 브랜치 검증은 pull_request 실행이 전담해도 손실이 없다. PR 없는
   # 브랜치 push엔 CI가 안 도는 게 유일한 트레이드오프 - PR을 여는 게 팀 표준
   # 플로우이므로 수용(윤경님 사례처럼 "push=배포" 오해도 함께 줄어듦).
+  # 2026-07-28, paths-ignore 추가. K8s 이관 작업으로 문서·매니페스트 커밋이 잦아졌는데
+  # 이것들이 main에 들어갈 때마다 job 18개가 통째로 돌았다 - 러너 점유, Sonar 전체 분석,
+  # 배포 job의 production VM SSH(배포할 게 없어도 접속은 함), Slack 알림까지.
+  # 아래 경로는 빌드/배포 산출물과 무관하므로 파이프라인을 돌리지 않는다.
+  # ⚠️ 주의: infra/** 는 제외하지 않았다. infra/b-gateway 가 실제 배포 대상이고,
+  #    7/24에 "프론트 배포 감지 경로에 infra/ 누락"으로 배포가 안 된 사고가 있었다.
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'k8s/**'
+      - 'scripts/**'
+      - '.claude/**'
+      - '**/*.md'
+      - '**/*.drawio.xml'
+      - '**/*.csv'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'k8s/**'
+      - 'scripts/**'
+      - '.claude/**'
+      - '**/*.md'
+      - '**/*.drawio.xml'
+      - '**/*.csv'
   # production VM(재헌님이 이미 구축, 10.10.10.30)에 올리는 실제 배포는 main push 시
   # 자동 실행된다(2026-07-18, 지훈 지시 - "그 대신 CI를 신중하게"로 맞바꿈. 상세 근거는
   # backend-deploy-production job 주석 참고). workflow_dispatch는 이전 태그로 수동

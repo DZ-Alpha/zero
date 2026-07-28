@@ -1,0 +1,597 @@
+# K8s 오브젝트 28종 최종 대비 — 통합본 (핵심 정리 + 예상 Q&A 35)
+
+> **사용법**: ① 정정 공지 1분 → ② 1부 오브젝트 정리 40~50분 → ③ 2부 Q&A로 셀프 테스트(답 가리고 소리 내어 답해보기) 20~30분 → ④ 3부 링크는 애매한 항목만 원문 확인.
+> 2026-07-26 기준 최신 공식문서(kubernetes.io·prometheus-operator.dev·cert-manager.io·kyverno.io·bitnami/sealed-secrets)로 전 항목 재검증 완료 — **정정 1건 + 뉘앙스 다수 반영**.
+
+## 🚨 정정 공지 — 재검증에서 바로잡은 핵심 1건 (반드시 먼저 읽기)
+
+**원 학습문서(01·16 등)의 "obsv-ns는 hostPath 때문에 baseline" → 부정확.**
+
+- 공식 Pod Security Standards 기준, **hostPath 볼륨과 host 네임스페이스(hostNetwork/hostPID/hostIPC)는 baseline 레벨에서 이미 금지**다. Baseline 표 원문: *"HostPath volumes must be forbidden"*, *"Sharing the host namespaces must be disallowed"*.
+- 따라서 node-exporter·OTel Agent(DaemonSet)는 **baseline 네임스페이스에서도 거부**되며, **privileged 라벨(또는 exemption)이 필요**하다.
+- **`dang-db-ns`의 baseline은 유효**: DB 공식 이미지가 root로 도는 것은 restricted 전용 요구(runAsNonRoot) 위반일 뿐, baseline은 root 실행을 허용한다.
+- restricted의 볼륨 타입 화이트리스트에 **persistentVolumeClaim은 포함**된다 — "PVC 쓰니까 완화 필요"라는 논리는 성립하지 않는다(Prometheus의 PVC 사용 자체는 restricted에서도 가능).
+- **내일 답변 가이드**: "당초 baseline으로 잡았지만 공식문서 재검증에서 hostPath·hostNetwork가 baseline에서도 금지임을 확인했고, hostPath를 쓰는 DaemonSet만 별도 네임스페이스로 분리해 privileged 범위를 최소화하는 방향으로 재조정 중"이라고 답하는 것이 정확하고, 오히려 검증 과정을 보여줘 안전하다.
+
+기타 반영된 뉘앙스: cert-manager `renewBefore`는 기본값 없음(기본 동작 = 수명 2/3 지점 갱신, duration 90일이면 결과적으로 만료 30일 전) · StatefulSet PVC는 기본 미삭제이나 v1.32 GA `persistentVolumeClaimRetentionPolicy`로 opt-in 자동삭제 가능 · Kyverno `failureAction`은 v1.13부터의 rule 단위 필드(구 `validationFailureAction`은 deprecated) · Service 공식 4타입은 ClusterIP/NodePort/LoadBalancer/ExternalName이고 Headless는 타입이 아니라 `clusterIP: None` 설정.
+
+## 목차
+
+- **1부. 오브젝트 정리** — 1-1 개요 지도 / 1-2 오브젝트별 핵심 정리(28종: 정의+핵심 동작·함정) / 1-3 비교표 7+1세트 / 1-4 결정 카드 8
+- **2부. 예상 Q&A 35문항** — A 기본 개념(10) / B 비교·구분(11) / C 프로젝트 결정 근거(8) / D 실무 함정(6)
+- **3부. 공식 링크 + 출제 예측 근거**
+
+---
+
+# 1부. 오브젝트 정리
+
+## 1-1. 개요 지도 — 누가 무엇을 지키나/재나
+
+```
+■ 어드미션 관문 (파드가 뜨기까지 — 요청이 지나는 순서)
+  인증 SA(04) → 인가 RBAC: Role(05)·ClusterRole(06) ⟵배선⟵ RoleBinding·CRB(07)
+  → Mutating(Kyverno mutate·Vault Injector) → Validating(PSA(01)·Kyverno(12) validate)
+    ※ 두 단계의 동작 원리 = Admission Webhook(13), Mutating이 항상 먼저
+  → ResourceQuota(26)·LimitRange(27) 자원 검사 → etcd 저장(암호화 10)
+  … 이 전 과정을 "누가·언제·무엇을"로 기록 = Audit Policy(14)
+
+■ 뜬 파드를 지키는 것
+  Namespace(23)=정책 경계 + NetworkPolicy(03)=L3/L4 화이트리스트 + SecurityContext(02)=최소 권한 실행값
+  시크릿: SealedSecret(09, Git 봉인) → Secret(08, 종착지) → etcd 암호화(10, 자물쇠) / TLS = Certificate·Issuer(11)
+
+■ 파드를 돌리는 것
+  Deployment(25, 무상태·롤링) / StatefulSet(15, 고유 신원+전용 PVC) / DaemonSet(16, 노드당 1)
+  + Probes(19, 재시작·트래픽·시작보호) + HPA(20, 개수 자동) + PDB(28, 동시다운 제한) + Service(24, 고정 VIP·DNS)
+
+■ 재는 것 · 담는 것
+  ServiceMonitor·PodMonitor(17, 무엇을 긁나) → PrometheusRule(18, 언제 울리나) → Alertmanager(발송)
+  StorageClass(22, 공장) ─동적 생성→ PV(21, 실물) ⟵1:1 바인딩─ PVC(21, 요청서) ⟵참조─ 파드
+```
+
+## 1-2. 오브젝트별 핵심 정리 (정의 + 핵심 동작·함정)
+
+> 각 항목 = **정의**(왜 존재하고 무엇을 하는가, 쉬운 말로) + **핵심**(동작 원리와 절대 틀리면 안 되는 함정). 프로젝트 적용은 1-4 결정 카드와 2부 C 참조.
+
+### 🔴 Tier 1 · 보안 (01~14)
+
+#### 01 PSA (Pod Security Admission)
+
+**정의** — 파드가 만들어질 때 그 파드의 보안 설정이 기준(Pod Security Standards)을 지키는지 **네임스페이스 라벨 기준**으로 검사해 통과·거부·경고를 결정하는, API 서버에 **기본 내장**된 어드미션 컨트롤러다(v1.25 GA). 별도 설치가 없고, v1.25에서 완전 제거된 PSP의 후계다 — PSP는 RBAC 바인딩 기반이라 "누구에게 적용되는지" 예측이 어려웠고, PSA는 네임스페이스 라벨이라 단순·예측 가능하다.
+
+- **3레벨(PSS)**: `privileged`(무제한) → `baseline`(알려진 권한 상승 경로 차단) → `restricted`(하드닝 모범사례 강제). **누적적** — restricted는 baseline을 포함한다.
+- **레벨별 금지선(자주 틀림)**: privileged 컨테이너·host 네임스페이스(hostNetwork/hostPID/hostIPC)·**hostPath 볼륨**은 **baseline에서 이미 금지**. restricted는 여기에 runAsNonRoot·allowPrivilegeEscalation=false·drop ALL·seccomp 명시 + 볼륨 타입 화이트리스트(PVC·configMap·emptyDir 등만 허용)를 추가한다.
+- **3모드**: `enforce`(위반 파드 거부) / `audit`(감사 로그만) / `warn`(경고만). 모드는 독립적이라 한 네임스페이스에 서로 다른 레벨을 동시 적용 가능 — 예: enforce=baseline + warn=restricted로 "승격 준비 상태"를 만든다.
+- **최대 함정**: `enforce`는 **최종 파드 객체에만** 적용된다(공식: "enforce mode is not applied to workload resources, only to the resulting pod objects"). 위반 Deployment는 apply가 성공하고 파드만 거부돼 **replica 0으로 조용히 실패**한다. warn/audit은 워크로드 리소스에도 적용되므로 반드시 함께 건다.
+- `pod-security.kubernetes.io/<mode>-version` 라벨로 기준 버전을 고정 — 클러스터 업그레이드 때 기준이 몰래 강화되는 사고 방지. 예외는 AdmissionConfiguration의 exemption(사용자·RuntimeClass·네임스페이스 단위).
+
+#### 02 SecurityContext
+
+**정의** — 파드/컨테이너가 **어떤 사용자(UID)로, 어떤 권한과 커널 능력을 갖고** 실행될지를 매니페스트에 적는 필드다. PSA가 "검문소"라면 SecurityContext는 그 검문을 통과할 **실제 실행 값**을 채우는 쪽 — 정책(PSA)과 값(SecurityContext)의 관계다.
+
+- **`runAsNonRoot: true`**는 "UID 0이면 실행 거부"라는 **검증**이고, 실제 UID 지정은 `runAsUser`(예: 1000)가 한다. 전자만 켜고 이미지가 root면 CreateContainerError로 시작 실패 — 둘은 보완 관계라 함께 쓴다.
+- **`allowPrivilegeEscalation: false`**는 리눅스 `no_new_privs`를 켜 setuid 바이너리 등으로 부모 프로세스보다 높은 권한을 얻는 것을 차단한다. `privileged: true`는 이를 무력화하므로 금지가 전제.
+- **`capabilities.drop: [ALL]`** 후 필요한 것만 `add`로 복원 — 최소 권한의 정석. restricted 레벨에서 되돌릴 수 있는 것도 `NET_BIND_SERVICE`(1024 미만 포트 바인딩)뿐이다.
+- **`seccompProfile.type: RuntimeDefault`** — 위험 시스템콜을 커널 수준에서 차단. restricted는 "명시"를 요구한다(Unconfined도, 미설정도 금지).
+- **적용 위치**: 파드 레벨(`spec.securityContext` — runAsUser·fsGroup 등 공통값) vs 컨테이너 레벨(privileged·capabilities·readOnlyRootFilesystem 등 전용값). 겹치면 **컨테이너 레벨이 덮어쓴다**(공식: "they override settings made at the Pod level when there is overlap").
+- `readOnlyRootFilesystem`은 강력한 모범사례지만 **restricted 필수 조건이 아니다** — "필수와 권장을 구분"하는 것이 검증 포인트. 무작정 강제하면 임시파일 쓰는 앱이 깨지므로 emptyDir로 쓰기 경로만 열어 개별 적용한다.
+
+#### 03 NetworkPolicy
+
+**정의** — 어떤 파드가 어떤 대상과 통신할 수 있는지를 **IP·포트 수준(L3/L4)**에서 선언하는 파드 단위 방화벽 규칙이다. 방화벽 장비 설정이 아니라 쿠버네티스 오브젝트(YAML)로 선언하면 CNI가 실제 차단을 구현한다.
+
+- **기본은 전부 허용(비격리)**: 어떤 정책이 파드를 "선택"하고 그 방향(Ingress/Egress)이 policyTypes에 있는 순간 격리되며, 그때부터 명시적으로 허용된 트래픽만 통과한다(화이트리스트 모델).
+- **정책은 가산적(합집합)**: 여러 정책이 한 파드를 선택하면 허용의 합집합. 우선순위도 **명시적 deny도 없다** — "차단"은 default-deny(`podSelector: {}` + 허용 규칙 없음)를 깔고 필요한 것만 여는 방식으로만 가능.
+- **policyTypes 함정**: 생략하면 Ingress는 항상 설정되지만 **Egress는 egress 규칙이 있을 때만** 설정된다. 나가는 트래픽을 막으려면 `Egress`를 명시해야 한다.
+- **양방향 허용 필요**: 연결이 성립하려면 소스의 egress와 목적지의 ingress가 **둘 다** 허용해야 한다.
+- **CNI 필수**: 정책을 구현하는 네트워크 플러그인(Calico·Cilium 등)이 없으면 리소스가 저장만 되고 **오류 없이 조용히 무시**된다(공식: "without a controller that implements it will have no effect"). "정책 잘 짰는데 왜 안 막히지?"의 1순위 원인.
+- **L3/L4 전용**: HTTP 경로·TLS 같은 L7 제어는 불가(서비스 메시·게이트웨이 영역). default-deny egress 도입 시 최다 장애는 **DNS(UDP/TCP 53) 예외 누락**.
+
+#### 04 SA (ServiceAccount)
+
+**정의** — 파드(워크로드)가 쿠버네티스 API 서버에 자기 신원을 증명할 때 쓰는 **기계용 신분증**이다. 쿠버네티스에는 사람용 User 오브젝트가 아예 없고 API로 추가도 불가하다(공식: "Normal users cannot be added to a cluster through an API call") — 사람은 인증서·OIDC 등 외부 인증, 워크로드는 SA로 역할이 갈린다.
+
+- **default SA 자동 할당**: 모든 네임스페이스에 `default` SA가 자동 생성되고, 파드가 지정하지 않으면 자동으로 붙어 토큰까지 마운트된다(`/var/run/secrets/kubernetes.io/serviceaccount`). 이 "기본 동작"이 곧 기본 리스크다.
+- **`automountServiceAccountToken: false`**로 토큰 볼륨 주입을 끈다 — API를 안 쓰는 워크로드는 반드시 꺼서 파드 탈취 시 토큰 도난 피해를 없앤다. SA와 파드 양쪽에 설정하면 **파드 spec이 우선**.
+- **바운드 토큰**: 현재 토큰은 TokenRequest API로 발급되는 **단명·자동 회전** 토큰으로 시간·대상(audience)·파드에 묶인다 — 과거의 만료 없는 Secret 토큰과 다르다.
+- **인증 ≠ 인가**: SA는 "누구인가"만 증명한다. 권한은 RoleBinding/CRB를 연결해야 생기고, 연결 전엔 0이다. 반대로 권한이 없어도 토큰 마운트(신분 노출) 자체가 리스크다.
+- 실제 권한 검증: `kubectl auth can-i --as=system:serviceaccount:<ns>:<sa>`로 사칭 확인.
+
+#### 05 Role
+
+**정의** — **하나의 네임스페이스 안**에서 "어떤 리소스에 어떤 동작을 허용할지"를 모아 놓은 권한 묶음(허용 규칙 목록)이다. 권한의 "내용물"만 정의하며, 그 자체로는 아무 효력이 없다.
+
+- **규칙 = apiGroups + resources + verbs**: 세 요소가 모두 매칭돼야 허용. `""`(빈 문자열)은 "모든 그룹"이 아니라 **코어 그룹**(pods·services·configmaps·secrets 등)이다 — 흔한 오해.
+- **verbs 구분**: 읽기(get/list/watch) vs 쓰기(create/update/patch/delete). `list`는 객체 본문까지 노출되므로 get과 별개로 신중히 — secrets에 list를 주면 값 전체가 새는 것과 같다.
+- **RBAC은 허용만 존재(deny 없음)**: 명시하지 않은 것은 전부 거부(default deny)지만, 규칙은 누적(additive)이라 한 번 열면 다른 규칙으로 좁힐 수 없다 — 처음부터 좁게 주는 것이 유일한 방어.
+- **RoleBinding 필수**: Role은 RoleBinding으로 주체(User·Group·SA)에 연결해야 효력이 생긴다.
+- Node·PV 같은 클러스터 전역(non-namespaced) 리소스는 Role의 범위 밖 — ClusterRole 영역이다.
+
+#### 06 ClusterRole
+
+**정의** — **네임스페이스 경계가 없는** 권한 묶음이다. non-namespaced 리소스(Node·PV·StorageClass), 여러 네임스페이스를 횡단하는 권한, 그리고 리소스가 아닌 URL 경로(`/metrics`·`/healthz`)까지 다룬다. 규칙 문법은 Role과 동일하고 차이는 범위뿐이다.
+
+- **namespace 필드가 없다**: cluster-scoped 리소스의 권한은 오직 ClusterRole로만 부여 가능.
+- **바인딩에 따른 이중 성격(최다 오답 지점)**: ClusterRoleBinding으로 묶으면 클러스터 전역이지만, **RoleBinding으로 묶으면 그 네임스페이스로만 축소**된다. 즉 "ClusterRole = 무조건 전역"이 아니라, 전역 여부는 바인딩이 결정한다 — 공용 권한 템플릿을 한 번 정의해 여러 ns에서 재사용하는 패턴의 근거.
+- **nonResourceURLs는 ClusterRole 전용**: 한 규칙에는 resources 또는 nonResourceURLs 중 하나만 쓸 수 있다.
+- **기본 제공 롤**: cluster-admin / admin / edit / view. cluster-admin은 사실상 루트라 부여에 극도로 주의.
+- **집계(aggregation)**: aggregationRule+라벨로 작은 ClusterRole들을 자동 합성 — CRD 권한을 admin/edit/view에 얹을 때 쓰는 메커니즘.
+- 전형적 수요처: Prometheus·kube-state-metrics — 전 ns의 Pod/Service/Endpoints 디스커버리 + non-namespaced인 Node + `/metrics` URL이 필요해 Role로는 불가능.
+
+#### 07 RoleBinding & ClusterRoleBinding
+
+**정의** — 권한 묶음(Role/ClusterRole)을 대상(SA·User·Group)에게 **연결하는 배선(wiring)** 오브젝트다. 규칙은 `roleRef`가 가리키는 Role 쪽에 있고, 바인딩 자체는 권한을 담지 않는다 — "무엇을(Role)"과 "누구에게(Binding)"의 분리.
+
+- **4조합 (단골 시험 문제)**: ① RB+Role = 그 ns 권한 ② RB+ClusterRole = 전역 정의를 그 ns로 축소(재사용 패턴) ③ CRB+ClusterRole = 클러스터 전역 ④ **CRB+Role = 유일한 불가** — 전역 바인딩이 ns 스코프 역할을 가리키는 스코프 모순이라 API가 막는다(API 레퍼런스: "RoleRef can only reference a ClusterRole").
+- **`roleRef`는 불변(immutable)**: 참조하는 Role/ClusterRole을 바꾸려면 바인딩을 삭제하고 재생성해야 한다 — 실수로 권한 대상이 바뀌는 것을 막는 설계.
+- **RBAC은 더하기 전용**: 특정 주체만 콕 집어 deny할 수 없다. 애초에 권한을 안 주거나, NetworkPolicy·Admission 등 다른 계층으로 막는다.
+- **default SA에 바인딩 금지**: default에 권한을 주면 SA를 지정하지 않은 모든 파드가 그 권한을 상속받는 사고가 된다.
+
+#### 08 Secret
+
+**정의** — 비밀번호·API 키·토큰·TLS 인증서 같은 **민감한 소량 데이터**를 파드 정의·이미지와 분리해 저장하고, 환경변수나 볼륨으로 주입하는 오브젝트다. "분리"가 목적이지 "암호화"가 목적이 아니라는 점이 핵심이다.
+
+- **base64 ≠ 암호화**: `data` 값은 인코딩일 뿐 누구나 디코드한다. 게다가 공식 문서 그대로 "기본적으로 etcd에 암호화되지 않은 채 저장"된다 — 진짜 보호는 RBAC 최소권한 + etcd Encryption at Rest를 켜야 완성.
+- **`data` vs `stringData`**: data는 base64로 넣고, stringData는 평문으로 넣으면 API 서버가 인코딩해 data로 병합한다. 편의 차이일 뿐 보안 차이는 없다.
+- **타입 = "어떤 키가 들어야 하는가"의 약속**: `Opaque`(기본) / `kubernetes.io/dockerconfigjson`(imagePullSecrets — Opaque로 만들면 kubelet이 인식 못 함) / `kubernetes.io/tls`(tls.crt/tls.key).
+- **소비 2방식**: 환경변수(재시작 전까지 고정) vs 볼륨 마운트(tmpfs 메모리에 올라가고 갱신이 반영됨 — 단 **subPath 마운트는 갱신 안 됨**).
+- 크기 제한 **1MiB**. ConfigMap과 API 구조는 거의 같고, 민감/비민감이라는 "의미와 취급"(필요 노드에만 전달, tmpfs)이 다르다 — "자동으로 안전"은 아니다.
+
+#### 09 SealedSecret (Bitnami Sealed Secrets)
+
+**정의** — Secret을 클러스터의 **공개키로 암호화(봉인)**해 Git에 안전하게 커밋할 수 있게 만드는 CRD다. 클러스터 안의 컨트롤러(개인키 보유)만 복호화해 진짜 Secret으로 되돌린다. 비유: 넣기는 누구나 할 수 있지만 여는 열쇠는 주인 하나뿐인 우편함 — GitOps의 "모든 것을 Git에"를 시크릿까지 확장하는 도구다.
+
+- **비대칭 암호**: `kubeseal`이 공개키로 암호화 → 공개 저장소에 올려도 안전. 개인키(sealing key)는 클러스터를 절대 벗어나지 않으며, 원저작자조차 복호화 못 한다.
+- **봉인 스코프 3종**: `strict`(기본 — 이름+네임스페이스까지 고정, 다른 곳에 옮겨 심기 불가) / `namespace-wide` / `cluster-wide`. 느슨할수록 편하지만 격리가 무너진다.
+- **sealing key 관리가 운영의 전부**: 키는 기본 30일마다 갱신되고 구 키는 보존된다 — 백업 대상은 "최신 하나"가 아니라 **축적된 키 전체**. 키 유실 = Git의 모든 SealedSecret이 영구 복호화 불가.
+- **오프라인 복구**: 백업 키가 있으면 `kubeseal --recovery-unseal --recovery-private-key`로 클러스터 없이도 복호화 가능(재해 복구 안전망).
+- **etcd 암호화를 대체하지 않는다**: 컨트롤러가 언실하면 결국 평범한 Secret이 etcd에 남는다. SealedSecret은 "Git 이동·저장" 보호, etcd 암호화는 "런타임 저장" 보호 — 구간이 달라 직렬로 겹쳐야 한다.
+- 다른 클러스터에 그대로 복사 불가(그 클러스터의 공개키로 봉인됨) — 키 이관 또는 재봉인 필요.
+
+#### 10 etcd Encryption at Rest
+
+**정의** — kube-apiserver가 Secret 등 리소스를 **etcd에 쓰기 전에 암호화**하도록 하는 컨트롤플레인 설정(`EncryptionConfiguration`)이다. 안 켜면 etcd 데이터 파일이나 스냅샷 백업 하나를 얻은 사람이 클러스터의 모든 Secret을 평문으로 읽는다.
+
+- **기본값은 `identity`(평문)**: resources(무엇을) + providers(어떻게) 목록을 `--encryption-provider-config`로 apiserver에 전달해야 켜진다.
+- **순서 규칙(가장 중요)**: 목록의 **첫 번째 프로바이더만 새 쓰기를 암호화**하고, 읽을 때는 순서대로 전부 복호화를 시도한다. identity가 맨 앞이면 암호화가 꺼진 것. 키 회전 = 새 키를 맨 앞에 추가 → apiserver 재시작 → 전체 재기록 → 옛 키 제거.
+- **소급 적용 안 됨**: 켜도 기존 Secret은 평문 그대로다 — `kubectl get secrets -A -o json | kubectl replace -f -`로 재기록해야 실제 암호화된다. "설정만 켜면 안전"이 대표 착각.
+- **프로바이더 선택**: `aescbc`(공식 문서상 padding oracle 취약성으로 비권장) / `aesgcm`(20만 회 쓰기마다 키 교체 필요) / `secretbox` / `kms` v2(권장 — DEK 봉투암호화로 키를 클러스터 밖 KMS에 분리).
+- **로컬 프로바이더의 한계**: 키가 마스터 노드의 설정 파일에 그대로 있어, 노드 root를 탈취당하면 무력하다 — 진짜 키 분리는 KMS만 가능.
+- **etcd 암호화 ≠ RBAC 대체**: API로 조회하면 apiserver가 복호화해서 준다. at-rest(디스크·백업) 방어와 API 접근 방어(RBAC)는 서로 다른 층이다.
+
+#### 11 Certificate · Issuer (cert-manager)
+
+**정의** — cert-manager가 TLS 인증서를 **자동 발급·자동 갱신**하게 하는 CRD 짝이다. `Issuer`/`ClusterIssuer`가 "발급 기관", `Certificate`가 "요청서". 진짜 가치는 최초 발급이 아니라 **평생 자동 갱신** — 수동 인증서는 만료 장애가 예약된 구조다.
+
+- **Issuer vs ClusterIssuer**: Issuer는 네임스페이스 스코프라 **같은 ns의 Certificate만 참조 가능**(다른 ns Issuer 참조 시도가 흔한 발급 실패 원인), ClusterIssuer는 클러스터 전역 — 여러 ns가 한 발급 정책을 공유하면 ClusterIssuer.
+- **Issuer 종류**: ACME(Let's Encrypt 등 공인 — HTTP-01/DNS-01 챌린지로 도메인 소유 증명) / CA·SelfSigned(사내 PKI·mTLS) / Vault 등.
+- **발급 파이프라인**: Certificate → 개인키 + CertificateRequest 생성 → Issuer 서명 → `kubernetes.io/tls` Secret(tls.crt/tls.key)에 저장. ACME는 중간에 Order·Challenge가 추가된다.
+- **갱신 동작**: 기본 duration 90일, 기본 동작은 **수명의 2/3 지점**(=만료 30일 전)에 갱신 시작 — `renewBefore`는 기본 미설정이고 명시하면 그 값이 우선한다. 갱신 시 Certificate·Secret 오브젝트는 유지되고 **Secret 안 내용물만 교체** — Ingress는 Secret 이름만 참조하므로 대개 무중단.
+- **두 개의 `ca.crt` 구분**: 파드에 자동 마운트되는 클러스터 PKI ca.crt(kube-apiserver 검증용, cert-manager 무관) vs TLS Secret 안의 ca.crt(cert-manager의 CA가 리프를 서명) — 섞으면 TLS 디버깅이 미궁에 빠진다.
+- 9402 포트로 Prometheus 메트릭(인증서 만료 시각·ready 상태) 노출 — "자동 갱신 실패"까지 관측으로 잡는 것이 완성형.
+
+#### 12 Kyverno Policy · ClusterPolicy
+
+**정의** — "리소스가 지켜야 할 규칙"을 **쿠버네티스 YAML 그대로** 선언하면, 어드미션 단계에서 검사(validate)·수정(mutate)·생성(generate)·이미지 서명 검증(verifyImages)을 해 주는 정책 엔진 CRD다. 웹훅 서버 코드를 직접 짜지 않는 Policy as Code — 정책이 Git/PR 리뷰 대상이 된다.
+
+- **rule 구조**: 각 rule은 `match`(+선택적 `exclude`) + 4종(validate/mutate/generate/verifyImages) 중 **정확히 하나**. `ClusterPolicy`=클러스터 전역, `Policy`=네임스페이스 범위.
+- **`failureAction`**(v1.13+ rule 단위 필드, 구 `validationFailureAction`은 deprecated): `Enforce`=요청 차단 / `Audit`=허용하되 PolicyReport 기록. **Audit으로 관측 → 안정화 후 Enforce 승격**이 정석 운영.
+- **웹훅 자동 구성**: 정책 내용에 맞춰 Validating/MutatingWebhookConfiguration을 동적으로 **좁게** 등록한다 — 매칭되는 정책이 없는 요청은 Kyverno로 오지도 않는다.
+- **mutate가 validate보다 먼저**: 어드미션 파이프라인이 Mutating→Validating 순이므로, mutate 결과가 validate 규칙과 모순되면 안 된다.
+- **background scan**: 신규 요청 차단뿐 아니라 **기존 리소스**도 주기 스캔해 PolicyReport 생성 — 감사 겸용.
+- **vs PSA**: PSA는 3레벨 고정 프로파일(세밀 조정 불가), Kyverno는 임의 조건(레지스트리 제한·latest 금지)+mutate/generate. 배타가 아니라 "PSA=넓은 벽, Kyverno=세밀 보완"으로 병용. **vs Gatekeeper**: Rego 별도 언어 없이 쿠버네티스 YAML — 학습 곡선이 낮고 mutate·generate가 1급 기능.
+- **Kyverno 파드가 죽으면?**: 웹훅 `failurePolicy`에 달렸다 — Fail이면 매칭 요청이 전부 막힐 수 있어, Kyverno 자신과 kube-system은 정책에서 제외하는 것이 안전.
+
+#### 13 Admission Webhook (Validating·MutatingWebhookConfiguration)
+
+**정의** — API 서버가 리소스를 etcd에 저장하기 **직전**, 외부 HTTP 서비스를 호출해 요청을 검증(Validating)하거나 수정(Mutating)하게 하는 확장 지점이다. Kyverno·cert-manager·Vault Agent Injector 같은 도구가 전부 이 메커니즘 위에서 동작한다 — 직접 웹훅을 짜지 않아도 트러블슈팅의 원리로 알아야 한다.
+
+- **처리 순서**: 인증 → 인가 → **Mutating** → 스키마 검증 → **Validating** → etcd 저장. 수정이 끝난 최종 오브젝트를 검증해야 하므로 Mutating이 항상 먼저고, **Validating은 오브젝트를 바꿀 수 없다**.
+- **왕복 구조**: API 서버가 AdmissionReview JSON을 TLS(HTTPS + caBundle)로 웹훅에 POST → 웹훅이 허용/거부 또는 JSONPatch(수정 내용)를 응답.
+- **`failurePolicy`**: 웹훅 장애·타임아웃 시 `Fail`(요청 거부 — **기본값**) vs `Ignore`(통과시킴). "정책 미집행 위험" vs "클러스터 마비 위험"의 트레이드오프 — 웹훅은 요청 경로의 직렬 단일 장애점이므로 kube-system 제외 + namespaceSelector로 범위 축소가 필수.
+- `timeoutSeconds` 기본 10초(1~30, 짧게 권장). `reinvocationPolicy: IfNeeded`(Mutating 전용)는 다른 플러그인이 오브젝트를 또 바꾸면 재호출.
+- **Admission Controller와의 관계**: 컨트롤러는 API 서버 내장 플러그인들이고, 그중 `MutatingAdmissionWebhook`/`ValidatingAdmissionWebhook` 두 플러그인이 외부 웹훅을 호출하는 창구다. (CEL 기반 인-프로세스 검증인 ValidatingAdmissionPolicy는 별개 기능 — 혼동 주의.)
+
+#### 14 Audit Policy (감사 로깅)
+
+**정의** — kube-apiserver를 거치는 모든 요청을 "**누가·언제·무엇을·어디서·결과**"로 규칙에 따라 기록하는 보안 감사 설정이다. 앱 로그는 컨테이너 내부 동작만 말해준다 — "누가 이 Secret을 읽었나, 누가 이 RBAC을 바꿨나"는 감사 로그만 답할 수 있다.
+
+- **4레벨**: `None` → `Metadata`(요청자·시각·리소스·verb) → `Request`(+요청 본문) → `RequestResponse`(+응답 본문). 아래로 갈수록 상세하고 로그량이 폭증한다.
+- **첫 매칭 승리**: 규칙을 위에서부터 평가해 **처음 일치한 규칙의 레벨**이 적용된다 — 구체적 예외를 위에, catch-all을 맨 아래에. catch-all을 맨 위에 두면 아래 규칙은 영원히 도달 못 한다(순서가 곧 정책).
+- **4스테이지**: RequestReceived / ResponseStarted(watch 등 장시간 요청) / ResponseComplete / Panic — `omitStages`로 중복·소음 제거.
+- **기본 비활성**: `--audit-policy-file` + 백엔드 플래그(Log 파일 `--audit-log-path` 또는 Webhook)를 명시해야 켜진다. 보관·회전은 `-maxage`/`-maxbackup`/`-maxsize`.
+- **Secret은 Metadata로만 기록**: RequestResponse로 남기면 응답 본문에 Secret 값이 들어가 **감사 로그 자체가 새 유출 경로**가 된다. 차등 기록(민감 리소스는 상세히, 반복 watch는 None)이 설계의 핵심.
+
+### 🔵 Tier 2 · 모니터링 (15~22)
+
+#### 15 StatefulSet
+
+**정의** — 각 파드에 **바뀌지 않는 고유 이름(신원)**과 **파드 전용 영속 볼륨**을 보장하는 상태 저장 워크로드 컨트롤러다. 비유: 아무 상담원이나 받는 콜센터(Deployment) vs 지정 좌석+개인 사물함이 있는 "3번 창구 직원"(StatefulSet).
+
+- **공식 4조건** — 하나라도 필요하면 StatefulSet: ① 안정적·고유한 네트워크 식별자 ② 안정적인 영속 스토리지 ③ 순서 보장 배포·스케일링 ④ 순서 보장 롤링 업데이트.
+- **안정적 신원**: 파드 이름이 `$(이름)-$(ordinal)`(0~N-1)로 고정되고 재스케줄돼도 유지된다.
+- **volumeClaimTemplates**: 템플릿 1개당 **파드마다 PVC가 자동 생성**된다(`www`+`web-0/1/2` → `www-web-0/1/2`). 파드가 죽어도 같은 PVC에 다시 붙어 데이터가 이어진다 — Deployment의 "PVC 공유 참조"와 결정적 차이.
+- **Headless Service 필수**: 네트워크 신원용 Headless Service(`clusterIP: None`)는 **사용자가 직접 만들어** `serviceName`으로 지정해야 하며, `pod-0.svc.ns.svc.cluster.local` 같은 파드별 고정 DNS를 제공한다.
+- **볼륨 미삭제**: StatefulSet 삭제/스케일 다운 시 PVC/PV는 기본적으로 **지워지지 않는다** — 데이터 안전이 자동 정리보다 우선. (v1.32 GA `persistentVolumeClaimRetentionPolicy`로 opt-in 자동 삭제 가능, 기본값은 Retain.)
+- **순서 보장**(기본 `OrderedReady`): 스케일 업은 0→N-1 순서로 하나씩, 다운·롤링 업데이트는 역순.
+- **StatefulSet ≠ 자동 HA**: 신원·순서·스토리지만 보장한다. 복제·정족수·리더 선출은 애플리케이션 몫(MySQL 복제, Raft 등) — "StatefulSet이면 HA"는 오해.
+
+#### 16 DaemonSet
+
+**정의** — 클러스터의 모든(또는 조건에 맞는 일부) 노드마다 똑같은 파드를 **정확히 1개씩** 돌게 보장하는 워크로드 컨트롤러다. 비유: 건물 각 층마다 두는 소화기 — "개수"가 아니라 "빠짐없이"가 목적이다.
+
+- **노드당 1개 보장**: replica 필드가 없고 **노드 수가 곧 파드 수**. 노드 추가 시 자동 생성, 제거 시 자동 회수.
+- **용도는 노드-로컬 작업**: 노드 자신의 지표·로그·디바이스는 그 노드 위에서만 접근할 수 있다 → 메트릭/로그 수집기(node-exporter 등), CNI·CSI 플러그인이 전형적 사용처.
+- **일부 노드만 선택 가능**: `nodeSelector`/`nodeAffinity`로 라벨이 맞는 노드로 좁힐 수 있다(기본은 전체).
+- **배치는 기본 스케줄러가 수행**: 컨트롤러가 노드 지정 nodeAffinity를 주입하고 kube-scheduler가 바인딩한다 — 리소스 부족·우선순위·프리엠션이 정상 적용된다("DaemonSet은 스케줄러를 안 탄다"는 옛말).
+- **자동 톨러레이션**: unschedulable 등 톨러레이션이 자동 부여돼 cordon된 노드·컨트롤플레인 노드에도 뜰 수 있다 — 빼려면 셀렉터로 좁혀야 한다.
+- **Deployment replica=노드수로 대체 불가**: 같은 노드에 몰릴 수 있고, 노드 증가에 자동 추종하지 않는다.
+- 업데이트 전략: `RollingUpdate`(기본, 노드별 한 번에 하나) / `OnDelete`(수동 삭제 시 교체).
+
+#### 17 ServiceMonitor · PodMonitor (Prometheus Operator CRD)
+
+**정의** — "이 라벨을 가진 Service(또는 Pod)를 이런 경로·주기로 긁어라(scrape)"를 선언하는 Prometheus Operator의 CRD다. `prometheus.yml`을 수기로 편집하지 않고 **수집 대상을 쿠버네티스 오브젝트로** 관리한다 — 관측 대상도 코드가 된다.
+
+- **선언과 실행의 분리**: CRD는 "의도"만 담고, Operator가 Prometheus 스크레이프 설정으로 번역해 **재시작 없이** 동적 반영한다. **긁는 주체는 Prometheus**지 CRD가 아니다.
+- **누가 볼지는 Prometheus가 정한다**: Prometheus 오브젝트의 `serviceMonitorSelector`/`podMonitorSelector`(+NamespaceSelector)가 라벨로 CRD를 선택한다. **빈 셀렉터 `{}`=전부 매치, null(미지정)=매치 안 함** — 정반대 의미라 주의.
+- **ServiceMonitor**: Service를 라벨로 골라 그 뒤 파드들을 긁는다. `endpoints[].port`는 **Service의 named port**(숫자 불가) — 대상에 Service가 있어야 한다.
+- **PodMonitor**: Service 없이 **파드를 직접** 라벨로 긁는다(`podMetricsEndpoints`). DaemonSet·Job·사이드카처럼 Service를 안 두는 워크로드에 적합.
+- **안 긁힐 때 점검 순서(라벨 3단 매칭)**: ① Prometheus↔CRD 셀렉터 ② NamespaceSelector에 대상 ns 포함 여부 ③ CRD selector↔Service 라벨 ④ port가 named인지 — 여기까지 아니면 NetworkPolicy가 scrape를 막는지 확인.
+- **크로스 네임스페이스 패턴**: CRD는 워크로드와 같은 ns에 두고, 다른 ns의 Prometheus가 NamespaceSelector로 가로질러 발견 — GitOps에서 "워크로드+관측 선언"을 한 폴더에 두는 근거.
+
+#### 18 PrometheusRule (Prometheus Operator CRD)
+
+**정의** — Prometheus의 **알림 규칙(alerting rule)**과 **기록 규칙(recording rule)**을 쿠버네티스 오브젝트로 선언하는 CRD다. "언제 울릴지"와 "무거운 쿼리 미리 계산"을 UI가 아니라 코드로 정의한다.
+
+- **구조**: 하나의 PrometheusRule = 여러 RuleGroup. 그룹 안에 recording과 alerting을 섞을 수 있고, 그룹 단위 평가 주기(`interval`)를 갖는다.
+- **알림 규칙 필드**: `alert`(이름), `expr`(PromQL 조건), `for`(지속 시간 — 이 시간 동안 계속 참이어야 pending→firing 승격, 순간 튐 오탐 방지), `labels`(severity 등 라우팅용), `annotations`(사람용 설명).
+- **기록 규칙**: `record`+`expr` 결과를 **새 시계열로 저장**(알람 안 울림) — 자주 쓰는/무거운 쿼리의 성능 최적화. 네이밍 관례 `level:metric:operations`.
+- **역할 분리(단골 문제)**: 규칙 **평가·발화는 Prometheus**, 발화된 알람의 **중복제거·그룹핑·라우팅·발송은 Alertmanager**(push로 전달받음). Alertmanager는 규칙을 평가하지 않는다 — "PrometheusRule 만들면 슬랙 오나요?"의 답이 "아니오"인 이유.
+- `for`(Prometheus의 지속 조건)와 Alertmanager의 `group_wait`/`group_interval`(발송 타이밍)은 **서로 다른 지연**이다.
+- 선택은 Prometheus의 `ruleSelector`가 하고 변경은 무재시작 반영, 잘못된 PromQL은 admission webhook이 생성 시점에 차단한다.
+
+#### 19 Probes (liveness · readiness · startup)
+
+**정의** — kubelet이 컨테이너 상태를 주기적으로 점검해 "**재시작할지**(liveness), **트래픽을 보낼지**(readiness), **아직 시작 중인지**(startup)"를 판단하는 진단 장치다. 세 프로브는 같은 검사를 하더라도 실패 시 **행동이 완전히 다르다**.
+
+- **liveness = 재시작 판단**: `failureThreshold`만큼 연속 실패하면 kubelet이 컨테이너를 재시작한다 — 데드락·행처럼 스스로 못 빠져나오는 상태의 복구용.
+- **readiness = 트래픽 판단**: 실패해도 재시작하지 **않고**, 파드를 Service Endpoints에서 빼 트래픽만 끊는다. 준비되면 자동 복귀 — 무중단 배포와 과부하 회피의 필수 장치.
+- **startup = 시작 보호**: startup이 성공하기 전까지 liveness·readiness는 **실행되지 않는다**. 허용 시작 시간 = `failureThreshold × periodSeconds`. liveness의 initialDelay를 키우는 것과의 차이: 그 방식은 시작 후의 데드락 감지까지 늦춘다(관측 공백) — startup은 시작 구간에만 유예를 준다.
+- **4가지 검사 방식**: `httpGet`(성공 = **상태코드 200 이상 400 미만** — "200만"이 아니다) / `tcpSocket` / `exec`(종료코드 0) / `grpc`.
+- **기본값**: initialDelaySeconds 0 / periodSeconds 10 / timeoutSeconds 1 / failureThreshold 3 / successThreshold 1(liveness·startup은 1 고정).
+- **설계 원칙**: liveness는 **자기 생존만** 검사 — 헬스 엔드포인트가 DB 등 외부 의존성까지 보면, DB 지연 때 멀쩡한 파드들이 연쇄 재시작된다. 외부 의존성은 readiness로. 프로브 요청엔 앱 인증 헤더가 안 붙으므로 헬스 엔드포인트는 인증 없이 연다.
+
+#### 20 HPA (HorizontalPodAutoscaler) + Metrics API
+
+**정의** — CPU 등 지표를 보고 **파드 개수(replica)**를 자동으로 늘리고 줄이는 컨트롤러이며, Metrics API는 그 판단에 쓸 사용률 숫자를 공급하는 표준 통로다. (Pod당 requests/limits **크기**를 조절하는 VPA와 방향이 다르다 — 수평 vs 수직.)
+
+- **계산식**: `desiredReplicas = ceil[currentReplicas × (현재값/목표값)]`. 비율이 1.0±10%(기본 tolerance 0.1) 이내면 무동작 — 출렁임(flapping) 방지.
+- **파이프라인**: cAdvisor(kubelet 내장) → kubelet → **metrics-server**(약 15초 주기 집계) → Metrics API(`metrics.k8s.io`) → HPA. **metrics-server가 없으면 지표가 unknown이 되어 HPA는 동작 불가**.
+- **Prometheus가 있어도 대체 안 됨**: 기본 HPA는 Metrics API만 읽고 이는 metrics-server만 채운다. Prometheus 지표로 HPA를 하려면 prometheus-adapter로 custom metrics API를 별도 연결해야 한다.
+- **requests 필수**: CPU 사용률(%) = 사용량 ÷ requests — requests 미지정이면 CPU% 기반 HPA가 성립하지 않는다.
+- **비대칭 안정화**: 스케일 업은 즉시(안정화 윈도우 기본 0초), 다운은 보수적(기본 300초, 윈도우 내 최고 추천값 채택) — 갑작스런 축소로 인한 장애 방지.
+- **메모리 HPA가 잘 안 되는 이유**: JVM·Go 런타임·캐시는 부하가 빠져도 메모리를 반납하지 않아 사용률이 높게 유지 → 스케일 다운 불가. 1차 지표는 CPU, 메모리는 limits로 OOM 방어.
+- **적용 불가 대상**: DaemonSet 등 스케일할 수 없는 오브젝트. HPA와 VPA를 같은 지표(CPU)에 동시 적용하면 서로 싸우므로 금지.
+
+#### 21 PV (PersistentVolume) & PVC (PersistentVolumeClaim)
+
+**정의** — PV는 클러스터에 **실제로 존재하는 스토리지 자원**, PVC는 사용자가 내는 "**이만큼 이런 방식으로 쓰겠다**"는 요청서다. 파드는 PV가 아니라 **PVC를 마운트**한다 — 이 간접 계층이 "앱이 무엇을 원하는가"와 "스토리지가 어떻게 구현되는가"를 분리한다.
+
+- **스코프(단골 함정)**: PV는 클러스터 스코프(네임스페이스 없음), **PVC만 네임스페이스 스코프**다.
+- **바인딩은 배타적 1:1**: 한 PVC는 한 PV에만 묶이고, 묶인 PV는 다른 PVC가 못 쓴다. 요청보다 큰 PV가 배정될 수는 있다(최소 요청량 보장).
+- **accessModes(최다 오답)**: `RWO`는 파드가 아니라 **노드 단위** — 같은 노드에 뜬 여러 파드는 하나의 RWO 볼륨에 동시 접근할 수 있다(공식 문서 명시). 단일 파드로 강제하려면 `RWOP`(ReadWriteOncePod). 그 외 `ROX`(여러 노드 읽기), `RWX`(여러 노드 읽기·쓰기) — 플러그인마다 지원이 다르다.
+- **생명주기**: Provisioning(정적=관리자가 미리 / 동적=StorageClass) → Binding → Using → Reclaiming. PV phase는 Available → Bound → Released → Failed.
+- **Reclaim 정책**: `Retain`(PVC를 지워도 데이터 보존 — PV가 Released로 남아 수동 정리 필요) / `Delete`(실제 스토리지까지 삭제) / `Recycle`(폐기됨, deprecated).
+
+#### 22 StorageClass
+
+**정의** — "이런 성격의 스토리지를 만들어 달라"는 **주문서(템플릿)**다. PVC가 StorageClass를 참조하면 provisioner(CSI 드라이버)가 PV를 **동적으로 자동 생성**해 바인딩한다 — 관리자가 PV를 미리 만들어 둘 필요가 없어진다.
+
+- **provisioner가 실제 생성 주체**: StorageClass는 규칙일 뿐이고, 볼륨은 지정된 CSI 드라이버가 만든다. `parameters`로 복제 수·파일시스템 등 드라이버별 세부 옵션을 전달.
+- **reclaimPolicy 기본값 함정**: **동적 생성 PV의 기본은 `Delete`**(PVC를 지우면 실제 볼륨까지 삭제)다 — 정적 PV의 기본이 Retain이라 헷갈리기 쉽다. 지워지면 안 되는 데이터는 Retain 클래스를 명시해야 한다.
+- **volumeBindingMode**: `Immediate`(기본 — PVC 생성 즉시 프로비저닝, 볼륨 위치가 먼저 고정돼 파드가 다른 노드/존에 뜨면 못 붙을 수 있음) vs `WaitForFirstConsumer`(파드 스케줄까지 지연 → 파드와 같은 노드/존에 볼륨 생성, 토폴로지가 중요한 로컬·존 스토리지에 권장).
+- `allowVolumeExpansion: true`면 PVC 용량 온라인 확장 가능.
+- **default StorageClass**: `storageclass.kubernetes.io/is-default-class` 애너테이션이 붙은 클래스가 `storageClassName` 생략 시 자동 적용 — 클러스터당 1개만 두는 게 안전.
+
+### ⚪ Tier 3 · 공통 (23~28)
+
+#### 23 Namespace
+
+**정의** — 하나의 클러스터 안을 이름으로 구획해 여러 팀·용도가 리소스를 논리적으로 나눠 쓰게 하는 오브젝트다. 본질은 폴더가 아니라 "**정책을 걸 자리**" — RBAC·ResourceQuota·LimitRange·NetworkPolicy·PSA가 전부 네임스페이스 단위로 적용된다.
+
+- **이름 스코프**: 오브젝트 이름은 같은 네임스페이스 안에서만 유일하면 된다. Service DNS는 `<서비스명>.<네임스페이스>.svc.cluster.local` — 같은 ns끼리는 짧은 이름으로 통신.
+- **스코프 구분(단골 문제)**: Pod·Service·Deployment·PVC 등은 네임스페이스 소속 / Node·PV·StorageClass·ClusterRole·Namespace 자체는 클러스터 스코프. `kubectl api-resources --namespaced=false`로 확인.
+- **소프트 격리(핵심)**: 네임스페이스 자체는 네트워크·커널·자원을 **차단하지 않는다**. 공식 문서도 "네임스페이스 간 보안을 강제하지 않는다"고 명시 — 기본 상태에선 타 ns 파드로 네트워크 접근이 된다. 실질 격리는 정책(RBAC+NetworkPolicy+PSA+Quota)을 얹어야 생기고, 공식 표현으로 "궁극의 네임스페이스는 별도의 클러스터"다.
+- **삭제 파급**: 네임스페이스를 지우면 내부 모든 오브젝트가 연쇄 삭제(cascade)되며 되돌릴 수 없다.
+
+#### 24 Service (ClusterIP · NodePort · LoadBalancer · Headless)
+
+**정의** — 수시로 생기고 죽는 파드 집합 앞에 **고정된 가상 IP(VIP)와 DNS 이름**을 세워, 클라이언트가 개별 파드 IP를 몰라도 안정적으로 접속하게 하는 추상화다. 라벨 셀렉터로 파드를 고르고, **ready 상태인 파드**의 IP만 EndpointSlice에 올라 kube-proxy가 분산한다 — readiness 프로브와 직결되는 지점.
+
+- **공식 4타입**: `ClusterIP`(기본 — 클러스터 내부 전용 VIP) / `NodePort`(모든 노드의 같은 포트 개방, 기본 범위 30000–32767) / `LoadBalancer`(외부 LB로 고정 IP 노출 — 베어메탈은 MetalLB 같은 구현체 필요) / `ExternalName`(외부 DNS로의 CNAME).
+- **겹겹 구조**: 상위 타입은 하위를 포함한다 — LoadBalancer는 내부에 NodePort와 ClusterIP를 그대로 갖는다. "NodePort로 바꾸면 ClusterIP가 없어진다"는 오해.
+- **Headless는 타입이 아니라 설정**(`clusterIP: None`): VIP도 kube-proxy 로드밸런싱도 없이, DNS가 파드 IP들을 **직접 반환**(A 레코드 다수)한다. 분산은 명단을 받은 클라이언트 몫 — "Headless도 로드밸런싱한다"는 틀린 말.
+- **StatefulSet에 Headless가 필수인 이유**: 각 파드가 개별 고정 주소(`pod-0.svc...`)를 가져야 하기 때문 — VIP 하나로 묶어 분산하면 "0번 복제본에게만 붙기" 같은 stateful 요구를 못 맞춘다.
+
+#### 25 Deployment
+
+**정의** — 똑같은(서로 **대체 가능한**) 파드를 원하는 개수만큼 유지하고, 새 버전을 무중단 롤링 업데이트로 배포·롤백해 주는 **무상태** 워크로드 컨트롤러다. "원하는 상태"만 선언하면 컨트롤러가 현재 상태를 계속 그쪽으로 수렴(reconcile)시킨다.
+
+- **3계층 구조**: Deployment → ReplicaSet → Pod. RS가 "N개 유지"만 담당하고, Deployment는 리비전마다 새 RS를 만들어 **버전 관리**를 얹는다 — 실무에서 RS를 직접 만들지 않는 이유.
+- **롤링 업데이트**: `spec.template`이 바뀌면 새 RS를 서서히 키우고 옛 RS를 줄여 무중단 교체. `maxSurge`/`maxUnavailable` 기본 각 25%로 속도·안전성 조절. 전략은 `RollingUpdate`(기본)/`Recreate`.
+- **롤백**: 이전 RS들이 리비전 히스토리로 남아(`revisionHistoryLimit` 기본 10) `kubectl rollout undo`로 복원 — 단 **스펙만** 되돌릴 뿐 데이터는 무관하다.
+- **스토리지는 참조만(단골 문제)**: Deployment는 PVC를 만들어주지 않고 `claimName`으로 **기존 PVC를 공유 참조**할 뿐이다. RWX가 아니면 여러 replica가 나눠 쓸 수 없어 사실상 replica=1 — 파드별 전용 볼륨 자동 생성은 StatefulSet의 volumeClaimTemplates 기능이다.
+
+#### 26 ResourceQuota
+
+**정의** — 한 네임스페이스 **전체가 합쳐서** 쓸 수 있는 자원 총량(CPU·메모리·스토리지)과 오브젝트 개수의 상한을 정해, 한 네임스페이스의 자원 독식을 막는 오브젝트다. 노드가 아니라 네임스페이스에 거는 예산이다.
+
+- **컴퓨트 총량**: `requests.cpu`/`requests.memory`(예약 합계 — 스케줄링 기준), `limits.cpu`/`limits.memory`(상한 합계) — 네임스페이스 내 모든 비종료 파드의 합을 제한한다.
+- **오브젝트 개수**: `pods`, `persistentvolumeclaims`, `services` 등 + 일반형 `count/<resource>` — 오브젝트 폭주 자체를 입구에서 차단.
+- **admission 문지기**: 생성/증설 요청 시점에 검사하고 한도 초과면 **403 Forbidden**. **소급 적용은 없다** — Quota를 낮춰도 이미 떠 있는 파드는 죽지 않고, 새 요청부터 적용된다.
+- **강제성 연쇄(중요)**: CPU/메모리 Quota가 걸리면 그 네임스페이스의 **모든 새 파드는 requests/limits를 명시해야** 한다(안 적으면 거부) → 짝꿍 LimitRange의 기본값 자동 주입으로 보완하는 것이 표준 패턴.
+- `scopeSelector`로 적용 대상 파드를 좁힐 수 있다(BestEffort, PriorityClass 등).
+
+#### 27 LimitRange
+
+**정의** — 한 네임스페이스 안에서 **개별** 컨테이너·Pod·PVC **한 개**가 가질 수 있는 CPU·메모리·스토리지의 기본값·최솟값·최댓값을 강제하는 정책이다. ResourceQuota가 "네임스페이스 전체 예산"이라면 LimitRange는 "1인당 한도" — 둘은 별개이며 짝으로 쓴다.
+
+- **주요 필드**: `defaultRequest`(requests 누락 시 주입) / `default`(limits 누락 시 주입) / `min`·`max`(허용 범위) / `maxLimitRequestRatio`(limit/request 비율 상한).
+- **admission 시점에만 적용**: 검증·기본값 주입은 파드 생성/수정 때만 일어난다. 규칙을 바꿔도 **이미 실행 중인 파드는 영향받지 않는다**(재생성될 때 새 규칙 적용).
+- **위반 시 403 거부**. 단 정합성은 미검사 — `default`(limit)만 있고 파드가 그보다 큰 request를 적으면 request>limit 모순으로 생성 실패한다.
+- **노드 용량은 안 본다**: "숫자가 규칙 범위 안인가"만 검사한다. 실제 배치 가능 여부는 스케줄러, 네임스페이스 총량은 ResourceQuota의 몫.
+- PVC 스토리지 요청의 min/max도 강제 가능 — "실수로 500Gi PVC 요청" 같은 사고를 입구에서 차단.
+
+#### 28 PDB (PodDisruptionBudget)
+
+**정의** — 노드 드레인 같은 "**자발적 중단**" 상황에서 한 애플리케이션의 파드가 **동시에 몇 개까지 내려갈 수 있는지**(또는 최소 몇 개는 살아있어야 하는지)를 보장하는 오브젝트다. 유지보수 작업이 서비스를 침묵시키지 않도록 축출 속도를 조율하는 안전벨트다.
+
+- **두 가지 지정 방식**: `minAvailable` 또는 `maxUnavailable` — **동시 지정 불가**, 절대 수 또는 백분율(올림).
+- **Eviction API에만 작동(핵심)**: `kubectl drain` 등 축출 API 경유만 통제한다. `kubectl delete pod`나 Deployment 삭제는 **PDB를 우회**한다 — 유지보수는 반드시 drain(축출 경로)으로.
+- **자발적 중단만 보호**: 하드웨어 고장·커널 패닉 같은 비자발적 중단은 막지 못한다(단, 그 손실도 예산에서 차감돼 이후 축출이 더 보수적으로 된다). HA는 PDB만으로 안 되고 복제본 수·안티어피니티·노드 분산이 함께 필요하다.
+- **너무 빡빡하면 drain 블록**: 축출 여유가 0이면(예: replica 3 + minAvailable 3) drain이 **영원히 대기**한다. minAvailable은 정족수 유지에 필요한 만큼만 잡고 축출 여유를 최소 1개 남긴다. 복제본이 1개면 PDB로도 무중단은 불가능하다.
+- 셀렉터는 대상 컨트롤러(Deployment/StatefulSet)의 label selector와 일치해야 한다. `unhealthyPodEvictionPolicy`(v1.31 GA): 기본 IfHealthyBudget — 오작동 앱 때문에 드레인이 막히지 않게 하려면 `AlwaysAllow` 권장.
+
+## 1-3. 헷갈리는 세트 비교표 (7+1)
+
+**① Role vs ClusterRole**
+
+| 구분 | Role | ClusterRole |
+| --- | --- | --- |
+| 범위 | 한 네임스페이스 | 전역(namespace 필드 없음) |
+| 대상 | ns 내 리소스만 | + non-namespaced(Node·PV·StorageClass) + nonResourceURLs(/metrics) |
+| 용도 | 일반 워크로드 기본 | 전 ns 디스커버리·Node 접근이 필요한 소수(Prometheus 등), 읽기 전용 좁게 |
+
+**② RoleBinding 4조합**
+
+| 바인딩 | 참조 | 가능? | 효과 |
+| --- | --- | --- | --- |
+| RoleBinding | Role | ✅ | 그 네임스페이스 권한 |
+| RoleBinding | ClusterRole | ✅ | 전역 정의를 그 ns로 **축소**(재사용 패턴) |
+| ClusterRoleBinding | ClusterRole | ✅ | 클러스터 전역 부여 |
+| ClusterRoleBinding | Role | ❌ | **유일한 불가** — 스코프 모순 |
+
+**③ Deployment vs StatefulSet vs DaemonSet**
+
+| 구분 | Deployment | StatefulSet | DaemonSet |
+| --- | --- | --- | --- |
+| 파드 성격 | 대체 가능(무상태) | 고유 신원(ordinal 고정) | 노드당 정확히 1 |
+| 스토리지 | 기존 PVC 참조(공유) | volumeClaimTemplates로 파드별 전용 | 노드 로컬(hostPath 등) |
+| 개수 | replicas | replicas + 순서 보장 | 노드 수 = 파드 수 |
+| 대표 사례 | 웹/API·Grafana·Gateway | DB·Prometheus·Alertmanager·Vault | node-exporter·OTel Agent·CNI |
+
+**④ Secret vs SealedSecret vs etcd 암호화**
+
+| 구분 | 보호 구간 | 원리 | 한계 |
+| --- | --- | --- | --- |
+| Secret | (보호장치 아님) 주입 통로 | base64 인코딩 | 암호화 아님, 기본 etcd 평문 |
+| SealedSecret | Git 이동·저장 | 공개키 봉인, 컨트롤러만 복호화 | 언실 후엔 평범한 Secret |
+| etcd 암호화 | etcd 디스크·백업(at-rest) | apiserver가 쓰기 전 암호화 | API 조회는 복호화됨 → RBAC 별도 필요 |
+
+**⑤ PSA vs SecurityContext vs Kyverno**
+
+| 구분 | 역할 | 단위 | 성격 |
+| --- | --- | --- | --- |
+| PSA | 기준선 검사(gate) | 네임스페이스 라벨 | 내장, 3레벨 고정(세밀 조정 불가) |
+| SecurityContext | 검사를 통과할 실제 실행값 | 파드/컨테이너 매니페스트 | 워크로드가 스스로 선언 |
+| Kyverno | 세밀 맞춤 정책 + mutate/generate | ClusterPolicy(전역)/Policy(ns) | CRD, PSA 빈틈 보완 |
+
+**⑤-보충 PSS 3레벨 — 뭐가 어디서 금지되나 (정정 반영, 시험 포인트)**
+
+| 레벨 | 내용 |
+| --- | --- |
+| privileged | 무제한(관측 DaemonSet·CNI 등 시스템 워크로드용) |
+| baseline | privileged 컨테이너·host 네임스페이스(hostNetwork/PID/IPC)·**hostPath**·과도 capabilities 등 명백한 권한 상승 차단. root 실행은 허용 |
+| restricted | baseline 전부 + runAsNonRoot·allowPrivilegeEscalation:false·drop ALL(+NET_BIND_SERVICE만 복원 가능)·seccomp 명시 + 볼륨 타입 화이트리스트(**PVC는 허용**) |
+
+**⑥ PV vs PVC vs StorageClass**
+
+| 구분 | 정체 | 스코프 | 비유 |
+| --- | --- | --- | --- |
+| PV | 실제 스토리지 자원 | 클러스터 | 실물 |
+| PVC | 사용 요청서(파드가 마운트) | 네임스페이스 | 주문서 |
+| StorageClass | 동적 프로비저닝 템플릿 | 클러스터 | 공장 설정 |
+
+**⑦ liveness vs readiness vs startup**
+
+| 구분 | 실패 시 행동 | 목적 | 설계 포인트 |
+| --- | --- | --- | --- |
+| liveness | 컨테이너 재시작 | 데드락·행 복구 | 자기 생존만(외부 의존성 금지) |
+| readiness | Endpoints 제거(트래픽만 차단) | 무중단 배포·과부하 회피 | DB 미연결 시 재시작 대신 트래픽 차단 |
+| startup | 성공 전까지 다른 프로브 정지 | 느린 시작 보호 | 허용 시작 시간 = failureThreshold × periodSeconds |
+
+## 1-4. 우리 프로젝트 결정 카드 (선생님이 물을 8가지)
+
+1. **PSA: restricted 원칙 + 완화 최소 (정정 반영)** — 전 ns `enforce=restricted`, `dang-db-ns`만 baseline(root DB 이미지 — runAsNonRoot는 restricted 전용 요구라 baseline으로 충분).
+   근거: 공식 PSS상 hostPath·hostNetwork는 **baseline에서도 금지** → node-exporter·OTel Agent는 privileged 필요, 해당 DaemonSet만 별도 ns 분리로 privileged 범위 최소화 방향(원 "obsv-ns baseline" 결정은 재검증에서 정정).
+2. **Vault replica 1 (PoC)** — StatefulSet 구조는 올바로 잡되 replica 1 고정.
+   근거: Raft 정족수 3은 물리 3호스트 필요, 우리는 2호스트 — 가짜 HA 대신 PoC 명시, `vault sealed` 조기 알람으로 보완.
+3. **Alertmanager 3 (gossip)** — 3-replica HA + PDB `minAvailable: 2`.
+   근거: gossip은 정족수 불요라 물리 2호스트에서도 HA 유효(Raft와 대비), 피어 발견은 Headless DNS.
+4. **Grafana provisioning + SQLite** — Deployment 무상태 운영, 대시보드·데이터소스는 provisioning 코드로.
+   근거: 데이터는 각 수집기(Prometheus·Loki)에 있고 설정은 Git으로 재생성 가능 — 전용 PVC 불필요.
+5. **requests/limits 실측 기반** — 도커 실측 관측치 + 노드 용량(8Gi/2CPU) 상한으로 설정, LimitRange max로 강제.
+   근거: 임의 수치는 과소(OOMKill)·과대(스케줄 불가) 양쪽 위험 — 실측이 유일한 근거.
+6. **CNI는 Calico/Cilium 필수** — NetworkPolicy 지원 CNI를 이관 전제조건으로 못박음.
+   근거: 미지원 CNI(flannel 단독)면 default-deny 전 정책이 조용히 무효 — 적용 후 연결 테스트로 실차단 검증.
+7. **시크릿 3계층** — SealedSecret(Git 부트스트랩) + Vault(런타임 동적, PoC) + etcd 암호화(최후방어) 직렬.
+   근거: 각 층의 보호 구간이 다름(Git/런타임/디스크·백업) — 서로 대체 불가라 겹친다.
+8. **부하테스트는 K8s 이관 후로 이월** — HPA 임계값·Quota 수치는 1차 상한만, 확정은 이관 후 실측으로.
+   근거: 도커 실측치는 있으나 K8s 환경 특성이 다름 — metrics-server 설치 후 `kubectl top` 실측으로 확정.
+
+---
+
+# 2부. 예상 Q&A 35문항 (모범답안)
+
+> 출제 예측 기준: "암기"가 아니라 **"이해하고 결정했는가"**. C(결정 근거)가 최다 출제 예상.
+
+## A. 기본 개념 (10문항) — 2~3문장으로 답하기
+
+**A1. PSA(Pod Security Admission)가 뭐예요?**
+- **A**: 파드가 생성될 때 보안 설정을 네임스페이스 라벨 기준으로 검사해 통과·거부·경고를 결정하는 쿠버네티스 기본 내장 어드미션 컨트롤러입니다. privileged/baseline/restricted 3개 레벨과 enforce/audit/warn 3개 모드를 조합해 쓰며, v1.25에서 제거된 PSP의 후계입니다. 저희는 원칙적으로 enforce=restricted를 걸고, DB 네임스페이스만 baseline으로 완화했으며 관측 DaemonSet은 공식문서 재검증 결과 privileged가 필요해 별도 분리로 재조정 중입니다.
+
+**A2. SecurityContext는 뭐예요?**
+- **A**: 파드나 컨테이너가 어떤 사용자(UID)·권한·커널 능력으로 실행될지를 매니페스트에 지정하는 필드입니다. PSA가 검사하는 관문(gate)이라면 SecurityContext는 그 관문을 통과할 실제 값을 채우는 쪽입니다. 저희 팀 표준은 runAsNonRoot, allowPrivilegeEscalation=false, capabilities drop ALL, seccomp RuntimeDefault의 하드닝 4종 세트입니다.
+
+**A3. NetworkPolicy는 뭐고, 기본 동작은 어떻게 되나요?**
+- **A**: 어떤 파드가 어떤 대상과 통신할 수 있는지를 IP·포트(L3/L4) 수준에서 선언하는 쿠버네티스 방화벽 규칙입니다. 기본 상태의 파드는 비격리, 즉 전부 허용이고, 어떤 정책이 그 파드를 선택하는 순간 격리되어 명시적으로 허용된 트래픽만 통과하는 화이트리스트 모델입니다. 적용에는 Calico·Cilium 같은 정책 지원 CNI가 필수입니다.
+
+**A4. ServiceAccount는 뭐예요?**
+- **A**: 파드(워크로드)가 쿠버네티스 API 서버에 자기 신원을 증명할 때 쓰는 기계용 신분증입니다. 쿠버네티스에는 사람용 User 오브젝트가 아예 없고, 사람은 인증서나 OIDC 같은 외부 수단으로 인증합니다. SA는 인증(누구인가)만 담당하며, 권한(무엇을 할 수 있는가)은 RoleBinding으로 따로 연결해야 하고 연결 전에는 권한이 0입니다.
+
+**A5. Secret에 값을 넣으면 암호화되나요?**
+- **A**: 아닙니다. Secret의 data는 base64 인코딩일 뿐이라 누구나 디코드할 수 있고, 기본 설정에서는 etcd에도 평문으로 저장됩니다(공식 문서 명시). 실제 보호는 RBAC 최소권한과 etcd Encryption at Rest를 명시적으로 켜야 완성됩니다.
+
+**A6. StatefulSet은 뭐고 언제 쓰나요?**
+- **A**: 파드마다 바뀌지 않는 고유 이름(신원)과 파드 전용 영속 볼륨을 보장하는 상태 저장 워크로드 컨트롤러입니다. 공식 문서 기준으로 ①안정적 네트워크 식별자 ②안정적 영속 스토리지 ③순서 보장 배포·스케일링 ④순서 보장 롤링 업데이트 — 이 4가지 중 하나라도 필요하면 StatefulSet, 아니면 Deployment입니다. 저희는 Prometheus·Alertmanager·Vault가 여기 해당합니다.
+
+**A7. DaemonSet은 뭐예요?**
+- **A**: 클러스터의 모든(또는 조건에 맞는) 노드마다 똑같은 파드를 정확히 1개씩 돌게 보장하는 워크로드 컨트롤러입니다. replica 필드가 없고 노드 수가 곧 파드 수이며, 노드가 늘거나 줄면 자동으로 따라갑니다. 노드 자체의 지표·로그를 걷어야 하는 node-exporter, OTel Collector Agent에 씁니다.
+
+**A8. HPA는 어떻게 동작하나요?**
+- **A**: CPU 같은 지표를 보고 파드 개수(replica)를 자동으로 늘리고 줄이는 컨트롤러입니다. 기본 지표는 "사용량 ÷ requests"의 사용률(%)이고, 이 숫자는 cAdvisor→kubelet→metrics-server→Metrics API 파이프라인이 공급합니다. 그래서 requests 미지정이거나 metrics-server가 없으면 HPA는 동작하지 못합니다.
+
+**A9. Namespace는 보안 경계인가요?**
+- **A**: 아닙니다, 소프트 격리입니다. 네임스페이스 자체는 네트워크·커널·자원을 차단하지 않으며, 공식 문서도 "네임스페이스 간 보안을 강제하지 않는다"고 명시합니다. 대신 RBAC·NetworkPolicy·PSA·Quota 같은 정책을 걸 수 있는 경계를 제공하므로, 저희는 그 위에 default-deny 등 정책을 얹어 실질 격리를 만들었습니다.
+
+**A10. PDB(PodDisruptionBudget)는 뭐예요?**
+- **A**: 노드 드레인 같은 "자발적 중단" 상황에서 한 애플리케이션의 파드가 동시에 몇 개까지 내려갈 수 있는지(또는 최소 몇 개는 살아있어야 하는지)를 보장하는 오브젝트입니다. minAvailable 또는 maxUnavailable 중 하나로 지정하고, Eviction API를 거치는 축출에만 작동합니다. 하드웨어 고장 같은 비자발적 중단은 막지 못합니다.
+
+## B. 비교·구분 (11문항)
+
+**B1. Role과 ClusterRole의 차이는?**
+- **A**: 범위가 다릅니다. Role은 특정 네임스페이스 안의 리소스에만 권한을 주고, ClusterRole은 네임스페이스 경계 없이 Node·PV 같은 non-namespaced 리소스와 /metrics 같은 nonResourceURLs까지 다룹니다. 규칙 문법(apiGroups·resources·verbs)은 완전히 같고 차이는 범위뿐입니다. 저희는 "네임스페이스 안에서 끝나는 일에 전역 권한 금지" 원칙으로 Role이 기본, ClusterRole은 Prometheus 등 소수만 씁니다.
+
+**B2. RoleBinding과 ClusterRoleBinding의 4가지 조합을 설명해보세요.**
+- **A**: RoleBinding+Role은 그 네임스페이스 권한, RoleBinding+ClusterRole은 전역 정의를 그 네임스페이스로 축소하는 재사용 패턴, ClusterRoleBinding+ClusterRole은 클러스터 전역 부여 — 이 3개는 가능합니다. ClusterRoleBinding+Role만 불가능한데, 전역 바인딩이 네임스페이스 스코프 역할을 가리키는 스코프 모순이라 API가 막습니다. 즉 "ClusterRole=무조건 전역"이 아니라, 전역 여부는 어떤 바인딩으로 붙이느냐가 결정합니다.
+
+**B3. Deployment와 StatefulSet은 뭐가 다른가요?**
+- **A**: 파드가 서로 대체 가능(무상태)하면 Deployment, 고유 신원·순서·전용 스토리지가 필요하면 StatefulSet입니다. 결정적 차이는 스토리지인데, Deployment는 기존 PVC를 참조(공유)만 하는 반면 StatefulSet은 volumeClaimTemplates로 파드마다 전용 PVC를 자동 생성해 재스케줄돼도 같은 볼륨에 다시 붙습니다. 웹/API는 Deployment, DB나 Prometheus처럼 데이터를 파드 곁에 남겨야 하면 StatefulSet입니다.
+
+**B4. Deployment replica를 노드 수만큼 주면 DaemonSet과 같지 않나요?**
+- **A**: 다릅니다. Deployment는 파드가 같은 노드에 몰릴 수 있고, 노드가 늘어나도 자동으로 따라 뜨지 않습니다. DaemonSet은 "노드당 정확히 1개 + 노드 증감 자동 추종"을 보장하므로, 노드마다 재야 의미가 있는 node-exporter 같은 워크로드는 반드시 DaemonSet이어야 관측 사각지대가 안 생깁니다.
+
+**B5. Secret, SealedSecret, etcd 암호화는 각각 뭘 보호하나요?**
+- **A**: 보호 구간이 다릅니다. SealedSecret은 Git에 올리는 이동·저장 구간을 공개키 암호로 보호하고, etcd Encryption at Rest는 클러스터 디스크·백업(at-rest) 구간을 보호하며, Secret 자체는 보호 장치가 아니라 파드로 값을 전달하는 통로입니다. SealedSecret이 컨트롤러에서 언실되면 결국 평범한 Secret으로 etcd에 남기 때문에 서로 대체가 안 되고 직렬로 겹쳐야 합니다.
+
+**B6. PSA가 있는데 Kyverno는 왜 또 필요한가요?**
+- **A**: PSA는 내장 어드미션의 3레벨 고정 프로파일이라 단순하고 예측 가능하지만 세밀한 조정이 안 됩니다. Kyverno는 "Harbor 레지스트리만 허용", "latest 태그 금지" 같은 임의 조건을 검사(validate)할 수 있고 수정(mutate)·생성(generate)까지 됩니다. 배타 관계가 아니라 PSA가 넓은 벽, Kyverno가 세밀 보완으로 병용하며, 저희는 PSA를 완화한 네임스페이스를 Kyverno로 다시 조입니다.
+
+**B7. PV, PVC, StorageClass의 관계를 설명해보세요.**
+- **A**: PVC는 "이만큼 이런 방식으로 쓰겠다"는 요청서, PV는 클러스터에 실존하는 스토리지 자원, StorageClass는 PVC 요청에 맞춰 PV를 자동으로 찍어내는 공장 설정입니다. 파드는 PV가 아니라 PVC를 마운트하고, PVC와 PV는 배타적 1:1로 바인딩됩니다. 스코프도 달라서 PVC만 네임스페이스 소속이고 PV·StorageClass는 클러스터 스코프입니다.
+
+**B8. liveness, readiness, startup 프로브의 차이는?**
+- **A**: 실패했을 때의 행동이 다릅니다. liveness 실패는 컨테이너 재시작(데드락·행 복구), readiness 실패는 재시작 없이 Service Endpoints에서 빼서 트래픽만 차단(회복 시 자동 복귀), startup은 성공하기 전까지 나머지 두 프로브를 정지시켜 느리게 시작하는 앱을 조기 킬에서 보호합니다. 운영 원칙은 "liveness는 자기 생존만 검사, DB 같은 외부 의존성은 readiness로"입니다.
+
+**B9. ClusterIP와 Headless Service의 차이는?**
+- **A**: ClusterIP는 대표 가상 IP(VIP) 하나를 만들고 kube-proxy가 뒤의 파드들로 로드밸런싱합니다. Headless(clusterIP: None — 별도 타입이 아니라 설정입니다)는 VIP도 로드밸런싱도 없이 DNS가 파드 IP 명단을 직접 반환합니다. "하나의 대표 vs 명단 전체"의 차이라서, 각 파드를 개별 지목해야 하는 StatefulSet에는 Headless가 필수입니다.
+
+**B10. ResourceQuota와 LimitRange의 차이는?**
+- **A**: ResourceQuota는 네임스페이스 전체 합계의 상한("requests 합 최대 16Gi"), LimitRange는 개별 컨테이너·파드·PVC 하나의 기본값·최소·최대("한 파드 최대 2Gi")입니다. CPU/메모리 Quota가 걸리는 순간 모든 새 파드는 requests/limits를 명시해야 하는데, 이때 LimitRange의 기본값 자동 주입이 누락 파드를 구제합니다. 그래서 둘은 항상 짝으로 배포합니다.
+
+**B11. ServiceMonitor와 PodMonitor의 차이는?**
+- **A**: ServiceMonitor는 Service를 라벨로 골라 그 뒤의 파드들을 긁고(Service 존재 + Service의 named port 필수), PodMonitor는 Service 없이 파드를 직접 라벨로 긁습니다. 기본은 ServiceMonitor, Service를 안 두는 DaemonSet 계열에는 PodMonitor가 자연스럽습니다. 주의할 점은 실제로 긁는 주체는 CRD가 아니라 Prometheus이고, CRD는 "대상 선언"일 뿐이라는 것입니다.
+
+## C. 프로젝트 결정 근거 (8문항) — 가장 중요
+
+**C1. 관측 네임스페이스는 PSA를 어떻게 잡았나요? (구: 왜 obsv-ns는 baseline?)**
+- **A**: node-exporter가 /proc·/sys를, OTel Agent가 /var/log를 hostPath로 읽고 hostNetwork·hostPID도 쓰는데, 공식 Pod Security Standards상 이것들은 **baseline에서도 금지**라 이 DaemonSet들에는 사실상 privileged 레벨이 필요합니다. 당초 baseline으로 잡았다가 공식문서 재검증에서 이를 확인했고, privileged 범위를 최소화하려고 해당 DaemonSet만 별도 네임스페이스로 분리하는 방향으로 재조정 중입니다. dang-db-ns는 다릅니다 — DB 공식 이미지가 root로 도는 것은 restricted 전용 요구(runAsNonRoot) 위반일 뿐이라 baseline으로 충분합니다. 어느 경우든 SecurityContext 하드닝·Kyverno validate·NetworkPolicy 격리는 동일하게 유지합니다.
+- **꼬리질문 대비**: "baseline이면 뭐까지 허용되나요?" → baseline은 privileged 컨테이너·host 네임스페이스·hostPath 같은 명백한 권한 상승 경로를 차단하되, runAsNonRoot·drop ALL·seccomp 명시는 요구하지 않습니다(restricted 전용) — 그 빈틈은 SecurityContext+Kyverno로 자발적으로 메웁니다.
+
+**C2. 왜 Vault는 replica 1인데 Alertmanager는 3이죠?**
+- **A**: 두 시스템의 합의 방식이 다르기 때문입니다. Vault의 Raft는 정족수(3노드) 기반이라 물리 호스트가 2대뿐인 우리 환경에서는 replica 3을 띄워도 호스트 하나가 죽으면 정족수가 깨지는 가짜 HA가 됩니다. 반면 Alertmanager는 gossip 프로토콜이라 정족수가 필요 없어 물리 2호스트에서도 HA가 유효합니다. 그래서 Vault는 StatefulSet 구조만 올바로 잡고 replica 1 PoC로 명시했고, Alertmanager는 3 replica + PDB minAvailable 2로 운영합니다.
+- **꼬리질문 대비**: "그럼 Vault가 죽으면 어떻게 되나요?" → 런타임 동적 발급만 멈추고 정적 시크릿은 SealedSecret 계층이 담당하므로 부트스트랩은 무사 — `vault sealed` PrometheusRule 알람으로 조기 감지합니다.
+
+**C3. Prometheus는 왜 StatefulSet이죠?**
+- **A**: TSDB와 WAL을 로컬 디스크에 쓰는 상태 저장 워크로드이기 때문입니다. StatefulSet의 volumeClaimTemplates로 prometheus-0 전용 PVC가 자동 생성·고정되고, 파드가 재시작해도 같은 PVC에 다시 붙어 WAL을 이어받으므로 수집 공백과 데이터 유실을 막습니다. 공식 4조건 중 "안정적 영속 스토리지 + 안정적 신원"에 해당하는 전형적 사례입니다.
+- **꼬리질문 대비**: "StatefulSet을 지우면 데이터도 날아가나요?" → 아니요, 기본값으로는 PVC/PV가 삭제되지 않고 남아 재배포 시 다시 붙습니다(v1.32 GA retentionPolicy로 자동 삭제를 opt-in할 수는 있지만 기본은 Retain).
+
+**C4. Grafana는 왜 Deployment죠? 대시보드는 어디 저장돼요?**
+- **A**: Grafana를 의도적으로 무상태로 설계했기 때문입니다. 지표·로그 데이터 자체는 Prometheus·Loki 같은 각 수집기에 있고, 대시보드·데이터소스 설정은 provisioning 파일로 Git에 코드로 두었습니다. 그래서 파드가 죽어도 GitOps 재프로비저닝으로 동일하게 복원되며, 전용 PVC가 필요 없어 StatefulSet이 아닌 Deployment가 맞습니다.
+- **꼬리질문 대비**: "UI에서 수정한 대시보드는요?" → provisioning이 원본이므로 UI 수정은 휘발 전제입니다 — 변경은 Git을 거치는 게 운영 원칙이고, 알람도 인프라 알람은 PrometheusRule(GitOps)로 표준화하는 방향입니다.
+
+**C5. requests/limits 값은 어떻게 정했나요?**
+- **A**: 도커 환경에서 실측한 관측치를 기반으로 하고, 워커 노드 용량(8Gi/2CPU)을 상한으로 잡았습니다. 임의 수치는 과소면 OOMKill, 과대면 스케줄 불가·자원 낭비라 양쪽 다 위험해서 실측이 유일한 근거라고 판단했습니다. LimitRange의 max가 이 상한을 admission에서 강제하고 defaultRequest가 누락을 자동으로 메웁니다. 최종 확정치는 K8s 이관 후 부하테스트로 재검증하는 전제입니다.
+- **꼬리질문 대비**: "부하테스트는 왜 아직인가요?" → 도커 수치는 이미 있고 K8s 환경은 특성이 달라, 이관 완료 후 실환경에서 해야 의미가 있어 일정상 이월했습니다.
+
+**C6. 시크릿 관리는 어떻게 설계했어요?**
+- **A**: 3계층 직렬 방어입니다. ① SealedSecret이 Git 부트스트랩 구간(DB 초기 비밀번호, Harbor 자격증명)을 공개키 봉인으로 지키고, ② Vault가 런타임 동적 발급을 담당하며(물리 한계로 replica 1 PoC), ③ etcd Encryption at Rest가 최종 저장 구간을 지킵니다. 어느 계층을 거치든 최종 형태는 K8s Secret으로 etcd에 남기 때문에, ③이 없으면 etcd 스냅샷 하나가 곧 전체 유출이 됩니다.
+- **꼬리질문 대비**: "SealedSecret이 있는데 etcd 암호화가 왜 또 필요하죠?" → SealedSecret은 Git 구간만 보호하고 언실 후엔 평문 Secret이 etcd에 남습니다 — 보호 구간이 달라 서로 대체 불가입니다.
+
+**C7. CNI를 왜 Calico/Cilium으로 전제했나요?**
+- **A**: NetworkPolicy가 우리 보안 설계의 축인데, 정책 지원 CNI가 없으면(flannel 단독 등) NetworkPolicy 리소스가 저장은 되지만 오류 없이 조용히 무시되기 때문입니다. 그러면 default-deny 3계층(fe→be→db)이 통째로 무효가 되는 치명적 리스크라 CNI 선정을 이관 전제조건으로 못박았습니다. 그래서 체크리스트에 "default-deny 적용 후 파드 간 연결 테스트로 실제 차단 확인"을 포함했습니다.
+- **꼬리질문 대비**: "적용됐는지 어떻게 검증해요?" → 리소스 존재 ≠ 동작이므로, 정책 적용 후 실제 연결 테스트(수동 워크스루)로 차단 여부를 확인합니다.
+
+**C8. 알람 규칙은 왜 PrometheusRule CRD로 관리하나요?**
+- **A**: 알람을 UI 수기 설정이 아니라 Git(ArgoCD) 코드로 두면 리뷰·버전 관리·롤백이 가능해지기 때문입니다. Operator가 재시작 없이 반영해 주고, 잘못된 PromQL은 어드미션 웹훅이 생성 시점에 차단합니다. 대상은 up==0, 메모리 limit 90%, TLS 만료 임박, Vault sealed 같은 인프라·플랫폼 알람이고, 대시보드 밀착 알람만 Grafana Alerting에 남기는 소유권 구분이 진행 중입니다.
+- **꼬리질문 대비**: "PrometheusRule만 만들면 슬랙 알람이 오나요?" → 아니요, CRD는 발화까지만 책임입니다 — 발송은 Alertmanager 라우팅/리시버 + default-deny 위 슬랙 egress 허용 + webhook 시크릿까지 갖춰져야 합니다.
+
+## D. 실무 함정 (6문항)
+
+**D1. enforce=restricted 네임스페이스에 위반 Deployment를 apply하면 어떻게 되나요?**
+- **A**: apply 자체는 성공합니다. PSA의 enforce는 최종 파드에만 적용되기 때문에 Deployment 오브젝트는 저장되고, 그 밑에서 만들어지는 파드만 거부되어 replica 0으로 조용히 실패합니다. 공식 문서가 "enforce는 워크로드 리소스가 아니라 결과 파드에만 적용된다"고 명시한 동작이고, 가장 잘 걸리는 함정입니다. 그래서 저희는 warn·audit 모드(워크로드 리소스에도 적용됨)를 같은 레벨로 함께 걸어 apply 시점에 경고가 보이게 했습니다.
+- **꼬리질문 대비**: "그 조용한 실패는 어떻게 탐지해요?" → kube-state-metrics의 spec replica 대비 available replica 불일치 지표와 ReplicaSet의 FailedCreate 이벤트로 잡습니다.
+
+**D2. 메모리 limit 초과와 CPU limit 초과는 어떻게 다르게 동작하나요?**
+- **A**: 메모리는 비압축성 자원이라 limit을 초과하면 컨테이너가 OOMKill로 죽습니다. CPU는 압축성 자원이라 초과분이 throttle(속도 제한)될 뿐 죽지 않습니다. 그래서 메모리 limit은 실측 대비 여유를 두어야 하고, CPU limit은 상대적으로 관대해도 됩니다.
+- **꼬리질문 대비**: "그럼 메모리 기반 HPA는 왜 잘 안 써요?" → JVM·캐시 계열은 부하가 빠져도 메모리를 반납하지 않아 스케일 다운이 안 됩니다 — 1차 지표는 CPU, 메모리는 limits로 OOM 방어만 합니다.
+
+**D3. RWO PVC를 쓰는 파드가 여러 개 뜨면 어떻게 되나요?**
+- **A**: RWO는 파드 단위가 아니라 노드 단위 제약입니다. 같은 노드에 스케줄된 파드들은 하나의 RWO PVC에 동시 접근할 수 있고, 다른 노드의 파드만 못 붙습니다. 단일 파드로 강제하려면 RWOP(ReadWriteOncePod)를 써야 합니다. 그래서 Deployment가 RWO PVC를 참조하면 replica가 다른 노드로 갈리는 순간 깨지므로 사실상 replica 1로 봐야 합니다.
+- **꼬리질문 대비**: "PVC를 지우면 데이터도 지워지나요?" → reclaimPolicy에 달렸습니다 — Retain이면 PV가 Released로 남아 수동 정리가 필요하고, Delete(동적 프로비저닝 기본값)일 때만 실제 볼륨까지 삭제됩니다.
+
+**D4. NetworkPolicy를 잘 짰는데 트래픽이 안 막힙니다. 원인이 뭘까요?**
+- **A**: 십중팔구 CNI가 NetworkPolicy를 지원하지 않는 경우입니다. flannel 단독 같은 미지원 CNI에서는 정책 리소스가 저장은 되지만 오류 없이 조용히 무시됩니다. 그다음 후보는 policyTypes 누락입니다 — Egress를 명시하지 않으면 egress 규칙이 없는 한 나가는 트래픽은 그대로 열려 있습니다. 그래서 저희는 CNI를 전제조건으로 두고 적용 후 실제 연결 테스트로 검증합니다.
+- **꼬리질문 대비**: "default-deny egress를 걸었더니 전부 장애가 났어요. 왜죠?" → DNS(kube-system CoreDNS, UDP/TCP 53) egress 허용을 빠뜨린 것 — default-deny egress 도입 시 가장 흔한 장애 원인이라 예외 1순위입니다.
+
+**D5. kubectl drain이 끝나지 않고 무한 대기합니다. 왜죠?**
+- **A**: PDB의 축출 여유가 0인 경우가 대표적입니다. 예를 들어 replica 3에 minAvailable: 3이면 어떤 파드도 축출할 수 없어 drain이 영원히 블록됩니다. minAvailable은 정족수 유지에 필요한 수까지만 잡고 축출 여유를 최소 1개는 남겨야 합니다 — 저희 Alertmanager가 replica 3 + minAvailable 2인 이유입니다.
+- **꼬리질문 대비**: "그럼 kubectl delete pod로 지우면 되지 않나요?" → 지워지긴 하지만 Eviction API를 우회해 PDB 보호가 무력화됩니다 — 유지보수는 반드시 축출 경로(drain)로 하는 게 원칙입니다.
+
+**D6. ServiceMonitor를 만들었는데 Prometheus targets에 안 뜹니다. 어디부터 보나요?**
+- **A**: 90%는 라벨 매칭 문제라 순서대로 봅니다. ① Prometheus의 serviceMonitorSelector와 CRD 라벨 불일치, ② NamespaceSelector가 대상 네임스페이스 미포함, ③ ServiceMonitor의 selector와 Service 라벨 불일치, ④ port에 숫자를 적은 경우(Service의 named port여야 함). 그래도 안 되면 NetworkPolicy가 scrape 트래픽을 막는지 확인합니다 — default-deny 환경에서는 메트릭 포트 ingress 허용이 있어야 실제로 긁힙니다.
+- **꼬리질문 대비**: "셀렉터를 빈 값({})으로 두면요?" → 빈 셀렉터는 전부 매치, null(필드 미지정)은 매치 안 함 — 정반대 동작이라 주의해야 합니다.
+
+---
+
+# 3부. 공식 링크 + 출제 예측 근거
+
+## 사실 검증용 핵심 공식 링크 (2026-07-26 재검증 완료)
+
+- PSA·PSS: <https://kubernetes.io/docs/concepts/security/pod-security-admission/> · <https://kubernetes.io/docs/concepts/security/pod-security-standards/>
+- RBAC: <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> · <https://kubernetes.io/docs/concepts/security/rbac-good-practices/>
+- Secret·etcd 암호화: <https://kubernetes.io/docs/concepts/configuration/secret/> · <https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/>
+- Sealed Secrets: <https://github.com/bitnami/sealed-secrets>
+- NetworkPolicy: <https://kubernetes.io/docs/concepts/services-networking/network-policies/>
+- 워크로드: <https://kubernetes.io/docs/concepts/workloads/controllers/deployment/> · <https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/> · <https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/>
+- Probes: <https://kubernetes.io/docs/concepts/workloads/pods/probes/>
+- HPA·Metrics: <https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/>
+- 스토리지: <https://kubernetes.io/docs/concepts/storage/persistent-volumes/> · <https://kubernetes.io/docs/concepts/storage/storage-classes/>
+- PDB: <https://kubernetes.io/docs/concepts/workloads/pods/disruptions/>
+- Quota·LimitRange: <https://kubernetes.io/docs/concepts/policy/resource-quotas/> · <https://kubernetes.io/docs/concepts/policy/limit-range/>
+- Operator·도구: <https://prometheus-operator.dev/docs/api-reference/api/> · <https://cert-manager.io/docs/usage/certificate/> · <https://kyverno.io/docs/policy-types/cluster-policy/validate/>
+
+## 출제 예측 근거
+
+- **C가 최다 출제 예상**: 검증 포인트는 "이해하고 결정했는가" — 우리 구성(PSA 레벨 배치, Vault 1 vs Alertmanager 3, StatefulSet 선택, 실측 기반 수치)의 "왜"를 물을 확률이 가장 높음. 특히 C1은 정정된 내용으로 답할 것.
+- **B는 고전 구분 문제**: RBAC 4조합(특히 Role+CRB 불가), PV/PVC 방향, base64≠암호화가 단골.
+- **D는 "그럼 그거 없으면/틀리면 어떻게 되는데요?" 패턴**: 각 오브젝트의 부재·오설정 시나리오를 답할 수 있어야 꼬리질문에서 안 무너짐.

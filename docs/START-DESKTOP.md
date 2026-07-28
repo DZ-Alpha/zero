@@ -1,0 +1,369 @@
+# 데스크탑 시작 가이드 — AI 진행 대본
+
+> 작성 2026-07-27 (노트북 세션에서) · 김지훈 · 보안·모니터링
+> **사용법**: 데스크탑의 새 Claude Code 세션에서 `@docs/START-DESKTOP.md 대로 진행해줘.` 라고 입력.
+
+---
+
+# 🤖 0. AI에게 — 이 문서를 읽었으면 이렇게 진행할 것
+
+**진행 원칙 (반드시 지킬 것)**
+
+1. **한 번에 한 단계씩.** 전체 목록을 한꺼번에 쏟지 않는다. 명령 하나 주고 → 결과 확인 → 다음.
+2. **매 단계마다 성공 판정을 명시**하고, 사용자가 결과를 붙여넣으면 판정해 준다.
+3. **실패하면 "실패하면" 항목대로 대응**하고, 그래도 안 되면 원인을 좁히는 질문을 한다.
+4. **도구를 직접 실행할 수 있으면 직접 실행한다.** 사용자에게 타이핑을 미루지 않는다.
+   단, Tailscale 로그인·7z 압축 해제처럼 **사람만 할 수 있는 것**은 안내만 한다.
+5. 세팅이 끝나면 **8장**의 마무리 멘트를 하고, `docs/세션인계_데스크탑_20260727.md` 를 읽어
+   실제 업무로 넘어간다.
+
+**첫 발화는 이렇게 시작한다 (그대로 써도 됨)**
+
+> "데스크탑 세팅을 8단계로 진행하겠습니다. 한 번에 하나씩 확인하면서 갈게요.
+> 대부분 제가 직접 확인하고, 사람이 해야 하는 것만 요청드리겠습니다.
+> 먼저 어떤 도구가 깔려 있는지 보겠습니다."
+>
+> → 바로 **단계 1**의 명령을 실행한다.
+
+---
+
+# 📋 세팅 8단계
+
+## 단계 1 — 도구 확인
+
+**AI가 직접 실행:**
+```powershell
+foreach ($t in @('git','node','claude','tailscale','code')) {
+  $c = Get-Command $t -ErrorAction SilentlyContinue
+  if ($c) { "OK   $t -> $($c.Source)" } else { "없음 $t" }
+}
+```
+
+**성공 판정**: `git`, `claude`, `tailscale` 3개가 OK.
+(`node`는 claude를 npm으로 설치했을 때만 필요, `code`는 있으면 편한 정도)
+
+**실패하면 — 없는 것만 안내:**
+
+| 없는 것 | 설치 |
+| --- | --- |
+| `git` | <https://git-scm.com/download/win> — 설치 후 **PowerShell 새로 열기** |
+| `node` | <https://nodejs.org> LTS |
+| `claude` | `npm i -g @anthropic-ai/claude-code` 또는 데스크탑 앱 |
+| `tailscale` | <https://tailscale.com/download/windows> |
+| `code` | VS Code — 설치 시 "PATH에 추가" 체크 |
+
+> 💬 **말할 것**: "설치 후에는 PowerShell을 새로 열어야 PATH가 반영됩니다. 다시 확인해 드릴게요."
+
+### 1-2. PowerShell 실행 정책 ⚠️ 이거 안 하면 4단계에서 막힌다
+
+Windows 기본값은 `Restricted` 라서 `.ps1` 스크립트가 아예 실행되지 않는다.
+(노트북에서 실제로 여기서 막혔다 — 2026-07-27)
+
+**AI가 확인:**
+```powershell
+Get-ExecutionPolicy -List | Format-Table -AutoSize
+```
+
+**`CurrentUser` 가 `Undefined` 또는 `Restricted` 이면 사용자에게 요청:**
+
+> 💬 "PowerShell이 기본값으로 스크립트 실행을 막고 있습니다. 뒤에서 복호화 스크립트를 써야 해서
+> 지금 풀어두는 게 좋습니다. 관리자 권한은 필요 없습니다."
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
+
+> **`RemoteSigned` 인 이유**: 로컬 스크립트는 실행하되 **인터넷에서 받은 것은 서명을 요구**한다.
+> `Bypass`/`Unrestricted` 보다 안전하고 실무 표준이다.
+> git clone 한 스크립트에는 "인터넷 표식"이 붙지 않으므로 정상 실행된다.
+> (브라우저로 받은 `.ps1` 이 막히면 `Unblock-File .\파일.ps1`)
+
+**바꾸기 싫어하면**: 스크립트 없이 gpg 명령을 직접 쓰는 방법을 4단계에 적어뒀다.
+
+---
+
+## 단계 2 — 저장소 확인
+
+**AI가 직접 실행:**
+```powershell
+cd $env:USERPROFILE\Documents\zero
+git branch --show-current
+git log --oneline -3
+git status --short | Select-Object -First 5
+```
+
+**성공 판정**: 브랜치가 `work/k8s-security-20260727` 이고, 로그에
+`feat(k8s): 네임스페이스 16개 -ns 통일...` 이 보인다.
+
+**실패하면:**
+
+- **폴더가 없다** → clone부터:
+  ```powershell
+  cd $env:USERPROFILE\Documents
+  git clone https://github.com/DZ-Alpha/zero.git
+  cd zero
+  git checkout work/k8s-security-20260727
+  ```
+- **브랜치가 main이다** → `git fetch origin; git checkout work/k8s-security-20260727`
+- **최신이 아니다** → `git pull origin work/k8s-security-20260727`
+- **인증을 묻는다** → GitHub 계정으로 로그인. 브라우저가 뜨면 승인.
+
+---
+
+## 단계 3 — 개인 메모리 저장소 연결 ★ 가장 중요
+
+> 💬 **말할 것**: "메모리에는 지금까지 쌓인 팀 규칙·판단 기준이 들어 있습니다.
+> 이게 없으면 제가 처음 만난 상태로 시작합니다.
+> 개인 private 저장소로 관리하고 있어서, clone 후 폴더만 연결하면 끝입니다."
+
+**① 개인 저장소 clone — AI가 직접 실행**
+```powershell
+cd $env:USERPROFILE\Documents
+if (-not (Test-Path "zero-memory\.git")) {
+  git clone https://github.com/celtics-korean/zero-memory.git
+}
+cd zero-memory
+# 이 저장소만 celtics-korean 계정으로 인증 (팀 저장소는 love-1006 유지)
+git config credential.helper "!gh auth git-credential"
+git pull origin main
+(Get-ChildItem memory -Filter *.md).Count
+```
+
+> **계정이 둘인 이유**: 팀 저장소는 `love-1006`, 개인 저장소는 `celtics-korean` 이다.
+> 저장소마다 `credential.helper` 를 따로 지정해서 섞이지 않게 한다.
+> `gh auth status` 가 `celtics-korean` 이면 정상.
+
+**② 메모리 폴더를 junction으로 연결 — AI가 직접 실행**
+```powershell
+$repo   = "$env:USERPROFILE\Documents\zero"
+$projId = ($repo -replace ':','-' -replace '\\','-')
+$projId = $projId.Substring(0,1).ToLower() + $projId.Substring(1)
+$link   = "$env:USERPROFILE\.claude\projects\$projId\memory"
+$target = "$env:USERPROFILE\Documents\zero-memory\memory"
+
+New-Item -ItemType Directory -Force (Split-Path $link) | Out-Null
+if ((Test-Path $link) -and -not (Get-Item $link).LinkType) {
+  Rename-Item $link "memory.bak-$(Get-Date -Format yyyyMMdd)"
+}
+if (-not (Test-Path $link)) {
+  New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+}
+$i = Get-Item $link
+"LinkType : $($i.LinkType)"
+"파일 수  : $((Get-ChildItem $link -Filter *.md).Count) 개"
+```
+
+> **왜 junction인가**: Claude가 메모리를 쓰면 **저장소 안에 바로 기록**된다. 복사 단계가 없다.
+> 훅이 세션 시작 시 pull, 응답 끝날 때 push 하므로 **양쪽 PC가 자동으로 같아진다.**
+>
+> **왜 경로를 계산하나**: Claude는 **작업 디렉터리 경로**로 프로젝트를 식별한다.
+> 노트북은 `c--Users-skyo4-Documents-zero` 였는데, 데스크탑 사용자명이 다르면 식별자도 달라진다.
+> **경로를 억지로 맞출 필요는 없고**, junction 위치만 이 PC 기준으로 잡으면 된다.
+
+**성공 판정**: `LinkType : Junction` 이고 `.md` 파일이 **35개 이상**, `MEMORY.md` 포함.
+
+**실패하면:**
+- **clone이 인증 실패** → `gh auth login` 으로 `celtics-korean` 로그인.
+- **junction 생성 실패** → 이미 폴더가 있는 경우다. 이름을 바꾸고(`memory.bak-...`) 다시 시도.
+- **파일이 0개** → `cd zero-memory; git pull origin main` 로 내려받는다.
+
+---
+
+## 단계 4 — 자격증명 복호화
+
+> 💬 **말할 것**: "자격증명은 암호화해서 개인 저장소에 올려뒀습니다.
+> private 저장소라도 git 히스토리는 영구적이라, 평문으로 두면 나중에 비밀번호를 바꿔도 옛 값이 남습니다.
+> 암호를 입력하시면 복호화됩니다."
+
+**AI가 실행 — 스크립트가 알아서 처리한다:**
+```powershell
+& "$env:USERPROFILE\Documents\zero\scripts\creds-decrypt.ps1"
+```
+
+> 암호(passphrase) 입력은 **사용자가 직접** 해야 한다. AI가 대신 넣을 수 없다.
+
+**실행 정책 때문에 스크립트가 막히면 — gpg를 직접 쓴다 (동일한 동작):**
+```powershell
+gpg --decrypt --yes `
+  --output "$env:USERPROFILE\Documents\zero\harbor.credentials.local.md" `
+  "$env:USERPROFILE\Documents\zero-memory\harbor.credentials.local.md.gpg"
+```
+
+**AI가 검증:**
+```powershell
+cd $env:USERPROFILE\Documents\zero
+if (Test-Path harbor.credentials.local.md) { git check-ignore -v harbor.credentials.local.md }
+else { "복호화 안 됨" }
+```
+
+**성공 판정**: 파일이 있고 `git check-ignore` 가 `*.credentials.local.md` 규칙을 출력.
+
+**실패하면:**
+- **`.gpg` 파일이 없다** → 노트북에서 아직 암호화·푸시를 안 한 것.
+  `zero-memory` 에서 `git pull` 후 재시도.
+- **복호화 실패** → 암호가 틀렸다. 다시 입력.
+- **gitignore가 안 걸린다** 🔴 → **절대 커밋하면 안 된다.** `.gitignore` 확인.
+- **파일이 없어도** 진행은 가능하다. VM 비밀번호가 필요할 때 다시 요청한다.
+
+---
+
+## 단계 5 — Tailscale 로그인
+
+> 💬 **말할 것**: "VM들은 사내망에 있어서 Tailscale로만 닿습니다. 로그인이 필요합니다."
+
+**사용자가 직접 (AI는 못 함):**
+```powershell
+tailscale up
+```
+→ 브라우저가 열리면 **노트북과 같은 계정(`skyo4545@gmail.com`)** 으로 로그인.
+
+**AI가 검증:**
+```powershell
+tailscale status | Select-Object -First 8
+```
+
+**성공 판정**: 목록에 `harbor` (`100.96.79.73`) 와 `monitoring` (`100.110.81.51`) 이 보인다.
+
+**실패하면:**
+- **다른 계정으로 로그인됨** → `tailscale logout` 후 다시.
+- **노드 승인 대기** → Tailscale 관리 콘솔(<https://login.tailscale.com>)에서 이 기기를 승인.
+
+---
+
+## 단계 6 — VM 도달성 확인
+
+**AI가 직접 실행:**
+```powershell
+@(
+  @{n='harbor VM';    ip='100.96.79.73';  p=443},
+  @{n='monitoring VM';ip='100.110.81.51'; p=3000}
+) | ForEach-Object {
+  $r = Test-NetConnection $_.ip -Port $_.p -WarningAction SilentlyContinue -InformationLevel Quiet
+  "{0,-15} {1}" -f $_.n, $(if($r){"도달 OK"}else{"실패"})
+}
+```
+
+**성공 판정**: 둘 다 `도달 OK`.
+
+**실패하면:**
+- 단계 5로 돌아가 `tailscale status` 재확인.
+- VM 자체가 꺼져 있을 수 있다 — 오늘 K8s 이관 작업 중이라 재부팅됐을 가능성.
+  **급하지 않으면 넘어가도 된다.** 매니페스트 작성은 VM 없이도 가능하다.
+
+---
+
+## 단계 7 — SSH 키 (선택)
+
+**AI가 확인:**
+```powershell
+Test-Path "$env:USERPROFILE\.ssh\id_ed25519"
+```
+
+**있으면** → 통과.
+**없으면** → 두 가지 중 선택하게 한다:
+
+> 💬 "SSH 키가 없습니다. 두 가지 방법이 있어요.
+> ① **지금은 넘어간다** — VM 접속 시 비밀번호(`harbor.credentials.local.md` 참조)로 됩니다. 급하면 이쪽.
+> ② **새로 만든다** — 담당자가 바뀔 때 키도 새로 만드는 게 원칙이라 이쪽이 더 깔끔합니다.
+>   `ssh-keygen -t ed25519 -C "desktop"` 후 공개키를 VM의 `~/.ssh/authorized_keys` 에 추가합니다.
+>   제가 등록까지 도와드릴 수 있습니다."
+
+---
+
+## 단계 8 — 시방서 파일 (선택)
+
+> 💬 **말할 것**: "시방서 엑셀은 저장소에 없습니다. 온라인 시트가 원본이라서요.
+> 시방서 작업을 하실 거면 **온라인 시트에서 최신본을 다운로드**해서
+> `Downloads` 폴더에 두시면 제가 읽겠습니다."
+
+**AI가 확인:**
+```powershell
+Get-ChildItem "$env:USERPROFILE\Downloads" -Filter "*시방서*.xlsx" -EA SilentlyContinue |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 3 Name, LastWriteTime
+```
+
+> ⚠️ **읽는 방법 주의**: 이 PC에 Python이 없을 수 있다.
+> xlsx는 zip이므로 **PowerShell로 직접 파싱**하는 방법이 확실하다.
+> `Expand-Archive` → `xl/sharedStrings.xml` + `xl/worksheets/sheetN.xml` 을 정규식으로 파싱.
+> `[xml]` 전체 DOM 파싱은 시트가 크면 매우 느리니 정규식 방식을 쓸 것.
+
+---
+
+# ✅ 세팅 완료 — 최종 점검
+
+**AI가 한 번에 실행:**
+```powershell
+$repo = "$env:USERPROFILE\Documents\zero"
+$projId = ($repo -replace ':','-' -replace '\\','-')
+$projId = $projId.Substring(0,1).ToLower() + $projId.Substring(1)
+$mem = "$env:USERPROFILE\.claude\projects\$projId\memory"
+cd $repo
+"브랜치      : " + (git branch --show-current)
+"최신 커밋   : " + (git log --oneline -1)
+"메모리 파일 : " + (Get-ChildItem $mem -Filter *.md -EA SilentlyContinue).Count + " 개"
+"자격증명    : " + $(if(Test-Path "$repo\harbor.credentials.local.md"){"있음"}else{"없음"})
+"Tailscale   : " + $(if((tailscale status 2>$null) -match 'harbor'){"연결됨"}else{"확인필요"})
+```
+
+**전부 정상이면 이렇게 말한다:**
+
+> 💬 "세팅 끝났습니다. 노트북에서 하던 것과 동일한 상태입니다.
+> 이제 `docs/세션인계_데스크탑_20260727.md` 를 읽고 지금 상황을 파악한 다음,
+> 남은 작업을 안내드리겠습니다."
+
+→ **`docs/세션인계_데스크탑_20260727.md` 를 읽는다.**
+
+---
+
+# 🎯 세팅 후 — 바로 이어갈 작업
+
+세션인계 문서를 읽었으면 아래를 **요약해서** 사용자에게 브리핑한다. 길게 늘어놓지 않는다.
+
+**브리핑 형식 (3줄로):**
+> 💬 "지금 상황은 이렇습니다.
+> ① 성애님이 VM 6대를 만들었고 `kubeadm init`은 아직 안 돌렸습니다. K8s 1.36 / Cilium / 마스터1+워커5 확정입니다.
+> ② 클러스터 초기화용 보안 설정 3종과 네임스페이스 16개는 이미 작성돼 있습니다.
+> ③ 최우선은 시방서 PodSecurity 탭 오류입니다 — 관측 DaemonSet 2종이 baseline이라 배포하면 조용히 안 뜹니다."
+
+**그 다음 선택지를 준다 (VM 없이도 되는 것 위주):**
+
+| # | 작업 | 선행조건 |
+| --- | --- | --- |
+| 1 | 시방서 PodSecurity 탭 수정 (최우선 오류) | 시방서 파일 |
+| 2 | **ServiceAccount + RBAC 매니페스트** | 없음 ✅ |
+| 3 | **NetworkPolicy 매니페스트** | 없음 ✅ |
+| 4 | ★ **etcd 스냅샷 CronJob** — 마스터 1대라 백업이 유일한 복구 수단 | 없음 ✅ |
+| 5 | ResourceQuota / LimitRange | ⚠️ 워커 사양 확정 후 |
+
+> ⚠️ **2번을 시작하면 학습 모드 규칙을 지킨다.** 완성본을 먼저 주지 말고 이 질문부터:
+> *"각 워크로드가 API 서버에 무엇을 요청해야 하나요? `prometheus` / `cicd-deployer` /
+> `cert-manager` / `kyverno` / `vault-injector` 중 **네임스페이스를 넘어야만 하는 것**은 무엇일까요?"*
+
+---
+
+# 📌 AI가 계속 지켜야 할 것 (노트북 세션과 동일)
+
+1. **완성본을 먼저 주지 않는다.** 뼈대(`___`)와 힌트 → 사용자가 채움 → 리뷰.
+2. **맞는 부분은 설명하지 않는다.** 틀린 것과 빠진 것만 짚는다.
+3. **매일 마감에 회상 테스트 3문항을 먼저 낸다.** 요청을 기다리지 않는다.
+4. **모든 기술 주장에 공식 문서 근거를 단다.** 기억으로 단정하지 않는다.
+5. **제안에는 항상 리스크 평가를 붙인다.**
+6. **live 시스템 변경은 리스크 제시 → 승인 → 실행** 순서. 실행하며 설명하지 않는다.
+7. **한국어로, 매 단계 무엇을/왜/어떻게.** 디버깅 과정도 숨기지 않는다.
+8. `git add -A` / `git add .` **금지.** 경로 명시.
+9. **추적 파일에 평문 비밀번호 금지.**
+10. **작업이 끝나면 알림을 보낸다.**
+
+> 긴급해서 완성본을 줘야 할 때는 **"지금은 예외입니다, 워크스루는 X시에 하겠습니다"** 라고 명시한다.
+
+---
+
+# 🆘 자주 막히는 곳
+
+| 증상 | 원인 | 해결 |
+| --- | --- | --- |
+| Claude가 팀 규칙을 모른다 | 메모리 폴더 위치가 틀림 | 단계 3 재실행. 폴더명이 이 PC 경로와 맞는지 확인 |
+| `git pull`이 인증 실패 | GitHub 로그인 안 됨 | `git config --global credential.helper manager` 후 재시도 |
+| VM에 SSH가 안 된다 | Tailscale 미로그인 | `tailscale status` 확인 |
+| `sudo`가 비밀번호를 묻고 멈춘다 | 비대화형 셸 | `sshpass` 사용하거나, 사용자가 직접 터미널에서 실행 |
+| xlsx 읽기가 2분 넘게 걸린다 | `[xml]` DOM 파싱 | 정규식 방식으로 전환 (단계 8 주의사항) |
+| Python이 안 된다 | Microsoft Store 스텁 | Python 대신 PowerShell 사용 |

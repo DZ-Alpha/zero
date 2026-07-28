@@ -1,0 +1,92 @@
+# Generated from k8s_DangDang_시방서.xlsx — 자동 생성 스캐폴드
+# 검토 필요 항목은 REVIEW.md 참고. 원본 설계는 docs/infra-spec.md 참고.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alphacar-main-sa
+  namespace: alphacar-be-ns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alphacar-quote-sa
+  namespace: alphacar-be-ns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alphacar-news-sa
+  namespace: alphacar-be-ns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alphacar-community-sa
+  namespace: alphacar-be-ns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alphacar-mypage-sa
+  namespace: alphacar-be-ns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alphacar-search-sa
+  namespace: alphacar-be-ns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alphacar-aichat-sa
+  namespace: alphacar-be-ns
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alphacar-backend-reader
+  namespace: alphacar-be-ns
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alphacar-backend-reader-binding
+  namespace: alphacar-be-ns
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alphacar-backend-reader
+subjects:
+- kind: ServiceAccount
+  name: alphacar-main-sa
+  namespace: alphacar-be-ns
+- kind: ServiceAccount
+  name: alphacar-quote-sa
+  namespace: alphacar-be-ns
+- kind: ServiceAccount
+  name: alphacar-news-sa
+  namespace: alphacar-be-ns
+- kind: ServiceAccount
+  name: alphacar-community-sa
+  namespace: alphacar-be-ns
+- kind: ServiceAccount
+  name: alphacar-mypage-sa
+  namespace: alphacar-be-ns
+- kind: ServiceAccount
+  name: alphacar-search-sa
+  namespace: alphacar-be-ns
+- kind: ServiceAccount
+  name: alphacar-aichat-sa
+  namespace: alphacar-be-ns

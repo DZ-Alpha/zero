@@ -1,0 +1,18 @@
+# Generated from k8s_DangDang_시방서.xlsx — 자동 생성 스캐폴드
+# 검토 필요 항목은 REVIEW.md 참고. 원본 설계는 docs/infra-spec.md 참고.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alphacar-elasticsearch-config
+  namespace: alphacar-ek-ns
+data:
+  elasticsearch.yml: (elasticsearch 설정)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alphacar-monstache-config
+  namespace: alphacar-ek-ns
+data:
+  config.toml: (monstache 설정 파일)
