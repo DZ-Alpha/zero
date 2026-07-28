@@ -1,0 +1,100 @@
+# gitleaks 커스텀 규칙
+#
+# 왜 필요한가:
+#   기본 규칙은 AWS 키·GitHub 토큰처럼 "고엔트로피 문자열"을 잡도록 설계돼 있다.
+#   사람이 읽을 수 있는 비밀번호(예: 팀 규칙 비밀번호)는 엔트로피가 낮아 통과한다.
+#   실제로 2026-07-13에 이 훅이 켜져 있는 상태에서 VM 계정 비밀번호가 커밋됐고,
+#   공개 저장소 main 에 15일간 노출됐다. 기본 규칙만으로는 못 막는다는 게 실증됐다.
+#
+# 방침:
+#   - 기본 규칙은 그대로 상속하고(extend), 우리 환경에 특화된 규칙만 추가한다
+#   - 오탐이 잦으면 훅을 꺼버리게 되므로, "확실한 것"만 잡는다
+#   - 값 자체를 이 파일에 적지 않는다. 이 파일도 git 추적 대상이다
+
+title = "ZeroCheck gitleaks config"
+
+[extend]
+useDefault = true
+
+# ⚠️ gitleaks 는 Go 의 RE2 엔진을 쓴다. 전방탐색((?!...))·후방탐색·역참조를 지원하지 않는다.
+#    "이건 제외" 는 정규식이 아니라 아래 [allowlist] 로 처리해야 한다.
+#    (2026-07-28 최초 작성 시 (?!...) 를 넣었다가 규칙이 컴파일 안 되는 것을 확인하고 수정함)
+
+# ── 1. 팀 비밀번호 규칙 패턴 ────────────────────────────────────
+# 팀 비밀번호는 "<단어>zero#" / "<단어>zero#<숫자>" 형태를 쓴다.
+# 값을 직접 적지 않고 형태만 매칭한다.
+# 끝에 \b 를 두면 "dangzero#" 처럼 숫자 없이 끝나는 경우를 놓친다
+# (# 뒤가 비단어 문자면 단어 경계가 성립하지 않음). 그래서 끝 \b 를 뺐다.
+[[rules]]
+id = "zerocheck-team-password"
+description = "팀 비밀번호 규칙(<word>zero#...) 형태의 평문 비밀번호"
+regex = '''(?i)\b[a-z]{3,12}zero#[0-9]{0,4}'''
+tags = ["password", "zerocheck"]
+
+# ── 2. 비밀번호 대입 구문 ───────────────────────────────────────
+# password/passwd/pwd 뒤에 값이 오는 경우를 넓게 잡고,
+# 플레이스홀더·환경변수 참조는 [allowlist] 에서 걸러낸다.
+[[rules]]
+id = "generic-password-assignment"
+description = "비밀번호에 실제 값이 대입된 구문"
+regex = '''(?i)\b(password|passwd|pwd)\s*[:=]\s*['"]?[^\s'"`,;{}<>$]{6,}'''
+tags = ["password"]
+
+# ── 3. sshpass 인라인 비밀번호 ──────────────────────────────────
+# sshpass -p '<값>' 형태. CI 스크립트에서 실제로 쓰였던 패턴이다.
+# 문자 클래스에서 $ 를 빼서 sshpass -p "$VAR" 같은 변수 참조는 안 걸리게 했다.
+[[rules]]
+id = "sshpass-inline"
+description = "sshpass -p 에 비밀번호가 인라인으로 들어간 경우"
+regex = '''sshpass\s+-p\s+['"]?[^\s'"$]{4,}'''
+tags = ["password", "ssh"]
+
+# ── 4. Proxmox API 토큰 ────────────────────────────────────────
+# root 권한을 상속하는 토큰이라 유출 시 VM 전체 조작이 가능하다.
+[[rules]]
+id = "proxmox-api-token"
+description = "Proxmox API 토큰"
+regex = '''PVEAPIToken\s*=\s*\S+'''
+tags = ["token", "proxmox"]
+
+# ── 5. Slack Webhook ───────────────────────────────────────────
+[[rules]]
+id = "slack-webhook-url"
+description = "Slack Incoming Webhook URL"
+regex = '''https://hooks\.slack\.com/services/[A-Za-z0-9/+]{20,}'''
+tags = ["webhook", "slack"]
+
+# ── 6. Harbor robot 계정 토큰 ──────────────────────────────────
+# robot$... 계정명 옆에 토큰이 함께 적히는 경우가 있었다.
+[[rules]]
+id = "harbor-robot-token"
+description = "Harbor robot 계정 토큰"
+regex = '''(?i)harbor[_-]?robot[_-]?token\s*[:=]\s*['"]?[A-Za-z0-9]{16,}'''
+tags = ["token", "harbor"]
+
+# ── 예외 ───────────────────────────────────────────────────────
+[allowlist]
+description = "오탐 제외"
+
+paths = [
+  # 로컬 전용 자격증명 파일(gitignore 되어 있지만 이중 안전장치)
+  '''.*\.credentials\.local\.md$''',
+  # 학습 자료 — 개념 설명에 예시 값이 나온다
+  '''docs/k8s-study/.*''',
+  # 병렬 세션용 worktree(중복 사본)
+  '''zero-worktrees/.*''',
+  # 이 설정 파일 자체
+  '''\.gitleaks\.toml$''',
+]
+
+regexes = [
+  # 플레이스홀더는 비밀이 아니다
+  '''REPLACE_ME''',
+  '''CHANGEME''',
+  '''CHANGE_ME''',
+  # 환경변수 참조는 값이 아니다
+  '''\$\{[A-Z_]+\}''',
+  '''\$\([A-Za-z_]+\)''',
+  # GitHub Actions secrets 참조
+  '''secrets\.[A-Z_]+''',
+]
