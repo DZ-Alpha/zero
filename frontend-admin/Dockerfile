@@ -37,7 +37,7 @@ COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
 
-USER node
+USER 1000
 EXPOSE 3000
 # 배포 검증 스크립트가 docker exec ... node -e ... 로 헬스체크를 겸하므로
 # node 바이너리는 지우지 않는다(npm/npx만 제거, 위 참고).
