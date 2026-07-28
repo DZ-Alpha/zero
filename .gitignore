@@ -27,3 +27,5 @@ infra/CIS_Docker_Benchmark_v1.8.0.pdf
 #  자격증명은 없었지만 네임스페이스 구조·포트·자원 배분이 노출됐다.
 #  여기 남은 alphacar-* 스캐폴드는 charts/ 로 대체된 자동 생성물이라 이관하지 않고 폐기.)
 manifests/
+# zero-manifests 클론이 실수로 zero 안에 다시 들어와도 부모 인덱스가 삼키지 않도록 가드
+zero-manifests/
