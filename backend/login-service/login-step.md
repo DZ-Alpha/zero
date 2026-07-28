@@ -13,3 +13,4 @@
 
 나머지는 기능명세서 참조.# ci change-detection test 1785278818
 # ci change-detection re-test (16) 1785279277
+# changedetection verify (post-SCM) 1785280940
