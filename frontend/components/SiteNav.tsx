@@ -4,11 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const links = [
-  ["/", "홈"],
-  ["/diet", "캘린더"],
+  ["/", "오늘"],
+  ["/rooms", "얌로그"],
+  ["/diet", "기록"],
   ["/recipes", "레시피"],
-  ["/search", "식품"],
-  ["/mypage", "마이"],
+  ["/search", "저당픽"],
+  ["/mypage", "MY"],
 ] as const;
 
 export function SiteNav() {

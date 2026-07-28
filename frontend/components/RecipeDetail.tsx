@@ -171,7 +171,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
 
       <section className="detail-products-band">
         <div className="used-products wrap">
-          <header className="section-line-heading"><div><p className="eyebrow">이 요리에 활용할 수 있는 제품</p><h2>재료를 바꿀 때 함께 살펴보세요</h2></div><Link href="/search">식품 전체 보기 →</Link></header>
+          <header className="section-line-heading"><div><p className="eyebrow">이 요리에 활용할 수 있는 제품</p><h2>재료를 바꿀 때 함께 살펴보세요</h2></div><Link href="/search">저당픽 전체 보기 →</Link></header>
           {relatedProducts.length > 0 && <div className="compact-recommendations">{relatedProducts.map((product) => <Link href={`/product/${product.id}`} key={product.id}><div className="compact-product-photo"><SafeImage src={product.image} alt={`${product.title} 제품`} /></div><h3>{product.title}</h3><p>{product.serving} 기준 당류 {product.sugar}g · {product.calories}kcal</p><b>♥</b></Link>)}</div>}
           {substitutesLoaded && relatedProducts.length === 0 && <p className="used-products-empty">아직 매칭된 상품이 없어요.</p>}
         </div>

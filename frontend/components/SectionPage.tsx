@@ -13,7 +13,7 @@ const copy: Record<Exclude<Kind,"chat">,{eyebrow:string;title:string;description
 };
 
 export function SectionPage({kind}:{kind:Kind}) {
-  if(kind === "chat") return <Shell><main className="sub-main"><section className="sub-hero"><div className="wrap"><p className="eyebrow">DANGDANG GUIDE</p><h1>성분이 어려울 때 물어보세요</h1><p>일반 영양 질문부터 제품 사진과 성분표 검색까지 한 곳에서 이어집니다.</p></div></section><div className="sub-content wrap"><ChatPanel /></div></main></Shell>;
+  if(kind === "chat") return <Shell><main className="sub-main"><section className="sub-hero"><div className="wrap"><p className="eyebrow">DANGDANG GUIDE</p><h1>성분이 어려울 때 물어보세요</h1></div></section><div className="sub-content wrap"><ChatPanel /></div></main></Shell>;
   const info=copy[kind];
   return <Shell><main className="sub-main"><section className="sub-hero"><div className="wrap"><p className="eyebrow">{info.eyebrow}</p><h1>{info.title}</h1><p>{info.description}</p></div></section><section className="sub-content wrap">{kind === "search" && <Search />}{kind === "diet" && <Diet />}{kind === "recipes" && <Recipes />}{kind === "product" && <Product />}{kind === "mypage" && <MyPage />}</section></main></Shell>;
 }

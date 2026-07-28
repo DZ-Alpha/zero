@@ -1,6 +1,8 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,21 @@ from app.models.product_ref import ProductRef
 from app.models.recipe_ref import RecipeRef
 from app.models.user_health_profile_ref import UserHealthProfileRef
 from app.services.outbox import enqueue_activity, enqueue_outbox
+from app.services.room_notify import notify_meal_recorded
+
+logger = logging.getLogger("diet_service.diet_store")
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+async def _notify_room_meal_recorded(log: MealLog) -> None:
+    """얌로그(rooms) 실시간 반영용 - 실패해도 식단 기록 자체(이미 커밋된 트랜잭션)에
+    영향을 주면 안 되므로 별도로 감싸서 예외를 삼킨다."""
+    try:
+        record_date = log.eaten_at.astimezone(_KST).date()
+        await notify_meal_recorded(log.user_id, record_date, log.meal_type)
+    except Exception:  # noqa: BLE001 - 얌로그 알림은 부가 기능, 식단 기록 성공에 영향 없어야 한다
+        logger.warning("room notify wrapper failed for meal_log_id=%s", log.meal_log_id, exc_info=True)
 
 
 class MealLogNotFoundError(Exception):
@@ -139,6 +156,7 @@ async def complete_meal_log(db: AsyncSession, meal_log_id: uuid.UUID, items: lis
     log.analysis_status = "COMPLETED"
     await db.commit()
     await db.refresh(log)
+    await _notify_room_meal_recorded(log)
     return log
 
 
@@ -189,6 +207,9 @@ async def apply_vision_result(
     else:
         await _replace_meal_items(db, meal_log_id, items)
         if status == "AWAITING_CONFIRMATION":
+            # 아직 사용자 확정 전이라 얌로그에 알리지 않는다 - confirm_meal_log가
+            # 확정될 때 알린다(그 전에 알리면 사용자가 취소/수정한 기록까지
+            # "기록했다"고 방에 잡히는 오탐이 생긴다).
             log.analysis_status = "AWAITING_CONFIRMATION"
             log.needs_user_confirmation = True
         else:
@@ -206,6 +227,8 @@ async def apply_vision_result(
 
     await db.commit()
     await db.refresh(log)
+    if log.analysis_status == "COMPLETED":
+        await _notify_room_meal_recorded(log)
     return log
 
 
@@ -236,6 +259,7 @@ async def confirm_meal_log(
 
     await db.commit()
     await db.refresh(log)
+    await _notify_room_meal_recorded(log)
     return log
 
 
@@ -283,6 +307,31 @@ async def get_records_for_range(
         .join(MealItem, MealItem.meal_log_id == MealLog.meal_log_id)
         .where(MealLog.user_id == user_id, MealLog.eaten_at >= start, MealLog.eaten_at <= end)
         .order_by(MealLog.eaten_at)
+    )
+    return list(result.all())
+
+
+async def get_records_for_users_on_date(
+    db: AsyncSession, user_ids: list[int], start_utc: datetime, end_utc: datetime
+) -> list[tuple[MealLog, MealItem]]:
+    """얌로그(rooms) 내부 조회용 — 여러 사용자의 한 KST 날짜 구간 기록을 한 번에
+    가져온다. [start_utc, end_utc]는 호출 측(app/routers/diet.py)이 그 KST
+    날짜를 UTC로 환산해서 넘긴다 — get_today_totals처럼 여기서 AT TIME ZONE을
+    쓰지 않는 이유는, 이 쿼리는 여러 사용자를 한 번에 묶어야 해서 IN 절이
+    필요한데 그러면 raw SQL보다 파라미터화된 ORM 쪽이 다루기 쉽기 때문.
+    meal_type='OTHER'(하루 전체 업로드)는 얌로그 슬롯에 넣지 않는다 — 얌로그
+    문서의 BREAKFAST/LUNCH/DINNER/SNACK 4종 슬롯 설계와 일치."""
+    result = await db.execute(
+        select(MealLog, MealItem)
+        .join(MealItem, MealItem.meal_log_id == MealLog.meal_log_id)
+        .where(
+            MealLog.user_id.in_(user_ids),
+            MealLog.eaten_at >= start_utc,
+            MealLog.eaten_at <= end_utc,
+            MealLog.meal_type != "OTHER",
+            MealLog.analysis_status == "COMPLETED",
+        )
+        .order_by(MealLog.user_id, MealLog.meal_type, MealLog.eaten_at)
     )
     return list(result.all())
 
@@ -336,6 +385,7 @@ async def create_manual_record(
 
     await db.commit()
     await db.refresh(log)
+    await _notify_room_meal_recorded(log)
     return log
 
 
@@ -450,6 +500,20 @@ async def get_product_ref(db: AsyncSession, product_id: uuid.UUID) -> ProductRef
     if p is None:
         raise ProductNotFoundError(f"상품을 찾을 수 없습니다: {product_id}")
     return p
+
+
+async def get_product_refs_bulk(db: AsyncSession, product_ids: list[uuid.UUID]) -> dict[uuid.UUID, ProductRef]:
+    if not product_ids:
+        return {}
+    result = await db.execute(select(ProductRef).where(ProductRef.product_id.in_(set(product_ids))))
+    return {p.product_id: p for p in result.scalars().all()}
+
+
+async def get_recipe_refs_bulk(db: AsyncSession, recipe_ids: list[int]) -> dict[int, RecipeRef]:
+    if not recipe_ids:
+        return {}
+    result = await db.execute(select(RecipeRef).where(RecipeRef.id.in_(set(recipe_ids))))
+    return {r.id: r for r in result.scalars().all()}
 
 
 # ── 홈 당/칼로리 게이지 (MN-0106~0108) ────────────────────────────────────────

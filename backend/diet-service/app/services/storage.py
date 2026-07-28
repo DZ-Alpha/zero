@@ -1,4 +1,5 @@
 import uuid
+from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
@@ -22,12 +23,12 @@ _ALLOWED_CONTENT_TYPES = {
 }
 
 
-def _client():
+def _client(endpoint_url: str | None = None):
     if not (settings.minio_endpoint and settings.minio_access_key and settings.minio_secret_key):
         raise StorageNotConfiguredError("MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY가 설정되지 않았습니다.")
     return boto3.client(
         "s3",
-        endpoint_url=settings.minio_endpoint,
+        endpoint_url=endpoint_url or settings.minio_endpoint,
         aws_access_key_id=settings.minio_access_key,
         aws_secret_access_key=settings.minio_secret_key,
         config=Config(signature_version="s3v4"),
@@ -58,6 +59,29 @@ def upload_diet_photo(user_id: int, content_type: str, data: bytes) -> str:
         raise StorageUploadError(f"이미지 업로드에 실패했습니다: {error}") from error
 
     return object_key
+
+
+def presign_diet_photo_url(object_key: str, expires_in: int = 300) -> str:
+    """얌로그(rooms)가 다른 사용자의 식단 사진을 보여줄 때 쓴다 — 버킷이
+    비공개라 object_key를 그대로 내려주면 브라우저가 못 연다. 짧은 만료
+    시간의 서명 URL로 매 요청 새로 발급한다(캐시 안 함 — room_meal_threads.md
+    설계 메모의 "짧은 만료 signed URL" 요구사항과 일치).
+
+    항상 minio_endpoint(내부 주소)로 서명한다 - 이 URL을 브라우저에 그대로
+    내려주지 않고, 경로+쿼리만 떼어 "/b"를 붙인 상대경로로 내려준다
+    (프론트의 app/b/[...path]/route.ts가 이 요청을 서버사이드(Node fetch)로
+    받아 MINIO_URL로 그대로 중계한다). SigV4 서명은 host와 경로 전체를
+    포함하므로(SignedHeaders=host), 중간에 경로를 한 글자라도 바꾸면
+    (예: b-gateway/nginx의 "/b" rewrite) 서명이 깨진다(실사용 중 재현된
+    SignatureDoesNotMatch 버그) - 그래서 경로를 안 건드리는 이 프론트
+    프록시로만 내보낸다."""
+    raw = _client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": settings.minio_bucket, "Key": object_key},
+        ExpiresIn=expires_in,
+    )
+    parsed = urlsplit(raw)
+    return f"/b{parsed.path}?{parsed.query}"
 
 
 def validate_diet_photo_key(object_key: str, user_id: int) -> str:

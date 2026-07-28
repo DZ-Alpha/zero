@@ -90,13 +90,12 @@ export function RecipeFeed() {
         <div>
           <p className="eyebrow">저당 레시피</p>
           <h1>등록된 재료까지 확인한<br />저당 메뉴를 모았어요.</h1>
-          <p className="catalog-source-note">만개의레시피 데이터 중 재료 영양값이 모두 연결된 메뉴를 우선 보여드려요.</p>
         </div>
         <div className="catalog-search"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="메뉴나 재료를 검색해보세요" /><span>⌕</span></div>
       </section>
 
       <section className="catalog-recommendation personal-picks wrap">
-        <header><div><span>기록에 맞춘 추천</span><h2>최근 기록과 잘 맞는 메뉴예요</h2></div><p>한 끼는 든든하게, 간식의 단맛은 가볍게 고를 수 있도록 골랐어요.</p></header>
+        <header><div><span>기록에 맞춘 추천</span><h2>최근 기록과 잘 맞는 메뉴예요</h2></div></header>
         <div>{recommendationItems.map((recipe, index) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><span className="recommendation-rank">0{index + 1}</span><div><h3>{recipe.title}</h3><p>{recipe.nutritionCoverage ? `등록 재료 당류 ${recipe.estimatedSugar}g` : "영양정보를 확인하고 있어요"}</p></div></Link>)}</div>
       </section>
 

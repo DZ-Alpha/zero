@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     postgres_user: str = ""
     postgres_password: str = ""
 
+    # 얌로그(rooms) 연동용 — Diet Service 내부 조회 엔드포인트
+    # (GET /diet/internal/meal-records)를 서버간 호출로 사용한다.
+    diet_service_url: str = "http://diet-service:8020"
+    # diet-service의 동일 이름 설정과 값이 같아야 한다 — 그쪽 config.py 주석 참고.
+    internal_service_secret: str = ""
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)

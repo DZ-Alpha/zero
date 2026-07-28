@@ -283,10 +283,6 @@ export function getProductSweetenerInfo(id: string) {
   return apiRequest<{ "gammi-info"?: string }>(query("/product/gammi-info", { id }));
 }
 
-export function getProductUserFeatureInfo(id: string, token: string) {
-  return apiRequest<{ "user-feature-info"?: string }>(query("/product/user-feature-info", { id, usr: token }));
-}
-
 export function getUserRecommendations(token: string) {
   return apiRequest<{ listProducts: HomeProductItem[] }>(query("/home/user-recommend", { usr: token }));
 }
@@ -410,14 +406,17 @@ function chatSessionParams(token?: string | null) {
 }
 
 // MN-0111: 요청 키는 명세대로 msg/template, 응답은 cs-partner/time/msg/is-img.
-export function sendChatbotMessage(msg: string, token?: string | null, template?: string) {
+// img는 "data:image/...;base64,...." 형태의 data URL 그대로 넘긴다 - 백엔드
+// ChatbotRequest.img가 문자열 하나만 받는 구조라 별도 멀티파트 업로드 없이
+// 이 필드 하나로 보낸다.
+export function sendChatbotMessage(msg: string, token?: string | null, template?: string, img?: string | null) {
   return apiRequest<ChatbotResponse>("/ai/chatbot", {
     method: "POST",
-    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}) }),
+    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}), ...(img ? { img } : {}) }),
   });
 }
 
-export type ChatHistoryMessage = { role: "user" | "assistant"; text: string };
+export type ChatHistoryMessage = { role: "user" | "assistant"; text: string; imageUrl?: string };
 
 // conversation-memory-frontend-spec.md §2 — 채팅창을 열 때 이전 대화를 복원한다.
 export function getChatHistory(token?: string | null) {
@@ -437,12 +436,13 @@ export async function streamChatbotMessage(
   token: string | null | undefined,
   onEvent: (event: ChatbotStreamEvent) => void,
   template?: string,
+  img?: string | null,
 ): Promise<void> {
   const response = await fetch(`${API_PREFIX}/ai/chatbot/stream`, {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}) }),
+    body: JSON.stringify({ msg, ...chatSessionParams(token), ...(template ? { template } : {}), ...(img ? { img } : {}) }),
   });
 
   if (!response.ok || !response.body) {
@@ -530,7 +530,7 @@ export async function uploadDietPhotoFile(token: string, file: File) {
 
 // RC-0101~0102: object_key(uploadDietPhotoFile 결과) 등록 -> meal_log(PENDING)
 // 생성. 202를 받으면 분석은 아직 끝난 게 아니다 - getDietPhotoStatus로 폴링한다.
-export function uploadDietPhoto(token: string, objectKey: string, mealType?: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK", eatenAt?: string) {
+export function uploadDietPhoto(token: string, objectKey: string, mealType?: "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK" | "OTHER", eatenAt?: string) {
   return apiRequest<{ meal_log_id: string; status: string }>("/diet/upload", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -557,10 +557,4 @@ export function confirmDietPhoto(
       body: JSON.stringify({ items }),
     },
   );
-}
-
-// RC-0103: 옛 1회성 스텁 - 새 폴링 플로우에서는 getDietPhotoStatus를 쓴다.
-// 다른 곳에서 여전히 참조할 수 있어 남겨둔다.
-export function analyzeDietPhoto(token: string, id: string) {
-  return apiRequest<DietAnalysisResponse>(query("/diet/ai-analyze", { usr: token, id }));
 }

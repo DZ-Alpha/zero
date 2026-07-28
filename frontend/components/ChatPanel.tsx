@@ -1,12 +1,24 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { ChangeEvent, Fragment, useEffect, useRef, useState } from "react";
 import { getAccessToken } from "@/lib/api/client";
 import { getChatHistory, sendChatbotMessage, streamChatbotMessage } from "@/lib/api/zerocheck";
+import { convertHeicToJpeg, isHeicFile } from "@/lib/heic";
 
-type ChatMessage = { role: "question" | "answer"; text: string };
+type ChatMessage = { role: "question" | "answer"; text: string; imageUrl?: string };
 
 const fallbackAnswer = "질문을 기준으로 성분표를 쉽게 풀어드릴게요. 지금은 상담 기능을 준비하고 있어서, 제품 검색과 레시피에서 성분 정보를 먼저 확인해 주세요.";
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 // chatbot-streaming-design.md §8-3 — 백엔드가 마크다운을 그대로 보내므로
 // **볼드**만 인라인으로 굵게 표시한다. 챗봇 답변엔 헤딩/리스트가 거의 안 나와서
@@ -21,13 +33,13 @@ function renderInlineMarkdown(text: string) {
 }
 
 export function ChatPanel() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "question", text: "탄수화물과 당류는 어떻게 달라?" },
-    { role: "answer", text: "당류는 탄수화물 중 단맛을 내는 단순당을 말해요. 제품을 비교할 땐 총 탄수화물과 당류를 함께 보세요." },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
@@ -35,25 +47,58 @@ export function ChatPanel() {
 
   // conversation-memory-frontend-spec.md §2 — 채팅창을 열 때 서버가 기억하는
   // 이전 대화(로그인=계정 기준, 비로그인=session_id 기준)를 복원한다. 대화가
-  // 없으면(신규/24시간 만료) 위 예시 대화를 그대로 둔다.
+  // 없으면(신규/24시간 만료) 빈 로그를 그대로 두고 "무엇을 도와드릴까요?" 안내만 보여준다.
   useEffect(() => {
     let active = true;
     getChatHistory(getAccessToken()).then(({ messages: history }) => {
       if (!active || history.length === 0) return;
-      setMessages(history.map((item) => ({ role: item.role === "user" ? "question" : "answer", text: item.text })));
+      setMessages(history.map((item) => ({
+        role: item.role === "user" ? "question" : "answer",
+        text: item.text,
+        ...(item.imageUrl ? { imageUrl: item.imageUrl } : {}),
+      })));
     }).catch(() => {
-      // 히스토리 복원 실패 — 위 예시 대화를 그대로 둔다.
+      // 히스토리 복원 실패 — 빈 로그(안내 문구)를 그대로 둔다.
     });
     return () => {
       active = false;
     };
   }, []);
 
+  function handleAttachClick() {
+    fileInputRef.current?.click();
+  }
+
+  async function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
+    const rawFile = event.target.files?.[0];
+    event.target.value = "";
+    if (!rawFile) return;
+    if (!rawFile.type.startsWith("image/") && !isHeicFile(rawFile)) return;
+
+    setAttaching(true);
+    try {
+      // 아이폰 카메라 기본 포맷(HEIC) — 챗봇도 식단 사진 등록과 동일하게
+      // 선택 즉시 JPEG로 변환한다. 용량 체크는 변환 후 실제로 전송될 파일
+      // 기준으로 해야 한다 - HEIC은 JPEG보다 압축률이 좋아서 원본 기준으로만
+      // 재면 변환 후 용량이 늘어 제한을 넘어설 수 있다.
+      const file = isHeicFile(rawFile) ? await convertHeicToJpeg(rawFile) : rawFile;
+      if (file.size > MAX_IMAGE_BYTES) return;
+      const dataUrl = await readFileAsDataUrl(file);
+      setAttachedImage(dataUrl);
+    } catch {
+      // 변환/읽기 실패 — 기존과 동일하게 조용히 무시(별도 에러 UI 없음)
+    } finally {
+      setAttaching(false);
+    }
+  }
+
   async function send() {
     const question = value.trim();
-    if (!question || pending) return;
+    const image = attachedImage;
+    if ((!question && !image) || pending) return;
     setValue("");
-    setMessages((items) => [...items, { role: "question", text: question }]);
+    setAttachedImage(null);
+    setMessages((items) => [...items, { role: "question", text: question, ...(image ? { imageUrl: image } : {}) }]);
     setPending(true);
 
     // chatbot-streaming-design.md — /ai/chatbot/stream으로 토큰 단위로 받아 답변
@@ -89,7 +134,7 @@ export function ChatPanel() {
       await streamChatbotMessage(question, getAccessToken(), (event) => {
         if (event.type === "delta") appendAnswer(event.text);
         else if (event.type === "done" || event.type === "error") setPending(false);
-      });
+      }, undefined, image);
     } catch {
       // 스트리밍 자체가 실패 — 아래에서 messageStarted 여부로 폴백 처리
     }
@@ -97,7 +142,7 @@ export function ChatPanel() {
     if (!messageStarted) {
       let answer = fallbackAnswer;
       try {
-        const reply = await sendChatbotMessage(question, getAccessToken());
+        const reply = await sendChatbotMessage(question, getAccessToken(), undefined, image);
         if (reply.status !== "PREPARING" && reply.msg) answer = reply.msg;
       } catch {
         // 상담 백엔드 미기동 — 폴백 답변 유지
@@ -111,12 +156,52 @@ export function ChatPanel() {
     <section className="chat-panel">
       <div className="chat-head"><span className="brand-mark"><i /></span><div><b>당당 상담</b><small>영양·성분 질문과 사진 검색</small></div></div>
       <div className="chat-log" ref={logRef}>
-        {messages.map((message, index) => <p className={message.role} key={`${message.role}-${index}`}>{renderInlineMarkdown(message.text)}</p>)}
+        {messages.length === 0 && !pending && <p className="answer chat-empty-hint">무엇을 도와드릴까요?</p>}
+        {messages.map((message, index) => (
+          <p className={message.role} key={`${message.role}-${index}`}>
+            {message.imageUrl && (
+              <img
+                className="chat-log-image"
+                src={message.imageUrl}
+                alt="첨부한 사진"
+                // 사진 원본은 24시간만 보관된다 - 만료 후 imageUrl은 404가 나므로
+                // 깨진 이미지 아이콘 대신 조용히 숨긴다.
+                onError={(event) => { event.currentTarget.style.display = "none"; }}
+              />
+            )}
+            {message.text && renderInlineMarkdown(message.text)}
+          </p>
+        ))}
         {pending && <p className="answer is-pending">답변을 준비하고 있어요…</p>}
       </div>
+      {attachedImage && (
+        <div className="chat-attach-preview">
+          <img src={attachedImage} alt="첨부할 사진 미리보기" />
+          <span>사진 1장 첨부됨</span>
+          <button type="button" className="chat-attach-remove" onClick={() => setAttachedImage(null)}>제거</button>
+        </div>
+      )}
       <div className="chat-compose">
+        <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleFileSelected} aria-hidden="true" />
+        <button
+          type="button"
+          className="chat-attach-button"
+          onClick={handleAttachClick}
+          disabled={attaching}
+          aria-label="사진 첨부"
+          title="사진 첨부"
+        >
+          {attaching ? (
+            <span className="chat-attach-spinner" aria-hidden="true" />
+          ) : (
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 8.5a2 2 0 0 1 2-2h1.6l.9-1.5A2 2 0 0 1 10.23 4h3.54a2 2 0 0 1 1.73 1l.9 1.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+              <circle cx="12" cy="12.5" r="3.4" stroke="currentColor" strokeWidth="1.8" />
+            </svg>
+          )}
+        </button>
         <input aria-label="질문" value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder="궁금한 성분이나 제품을 물어보세요" />
-        <button onClick={send} disabled={pending}>{pending ? "전송 중" : "보내기"}</button>
+        <button className="chat-send-button" onClick={send} disabled={pending || (!value.trim() && !attachedImage)}>{pending ? "전송 중" : "보내기"}</button>
       </div>
     </section>
   );

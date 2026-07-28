@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { RecordDateNavigator } from "@/components/RecordDateNavigator";
 import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
@@ -13,6 +13,7 @@ import { useRecipeCatalog } from "@/hooks/useRecipeCatalog";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { getAccessToken } from "@/lib/api/client";
+import { convertHeicToJpeg, isHeicFile } from "@/lib/heic";
 import {
   confirmDietPhoto,
   DietAnalysisItem,
@@ -62,7 +63,7 @@ const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 const sourceTabs: { id: Source; label: string }[] = [
   { id: "photo", label: "사진 입력" },
   { id: "recipe", label: "레시피" },
-  { id: "product", label: "식품 검색" },
+  { id: "product", label: "저당픽" },
   { id: "favorite", label: "즐겨찾기" },
 ];
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -78,6 +79,10 @@ function roundSugar(value: number) {
 
 function sugarText(value: number) {
   return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }).format(roundSugar(value));
+}
+
+function visibleKind(kind: FoodItem["kind"]) {
+  return kind === "식품" ? "저당픽" : kind;
 }
 
 export function RecordMealModal({
@@ -110,6 +115,8 @@ export function RecordMealModal({
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState("");
+  const [convertingHeic, setConvertingHeic] = useState(false);
+  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [serverMealLogId, setServerMealLogId] = useState<string | null>(null);
@@ -407,24 +414,63 @@ export function RecordMealModal({
     }
   }
 
-  function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  async function handleIncomingPhoto(rawFile: File, onReject?: () => void) {
     setFileError("");
     setAnalysisError("");
+
+    let file = rawFile;
+    if (isHeicFile(file)) {
+      setConvertingHeic(true);
+      try {
+        file = await convertHeicToJpeg(file);
+      } catch {
+        setFileError("HEIC 사진을 변환하지 못했어요. 다른 사진을 선택해 주세요.");
+        onReject?.();
+        setConvertingHeic(false);
+        return;
+      }
+      setConvertingHeic(false);
+    }
+
     if (!acceptedImageTypes.has(file.type)) {
       setFileError("JPG, PNG, WEBP 형식의 사진을 선택해 주세요.");
-      event.target.value = "";
+      onReject?.();
       return;
     }
     if (file.size > maxImageBytes) {
       setFileError("사진 크기는 10MB 이하로 선택해 주세요.");
-      event.target.value = "";
+      onReject?.();
       return;
     }
     if (photoPreview) URL.revokeObjectURL(photoPreview);
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
+  }
+
+  async function selectPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const rawFile = event.target.files?.[0];
+    if (!rawFile) return;
+    await handleIncomingPhoto(rawFile, () => { event.target.value = ""; });
+  }
+
+  function handlePhotoDragOver(event: DragEvent<HTMLDivElement>) {
+    if (convertingHeic || isAnalyzing) return;
+    event.preventDefault();
+    setIsDraggingPhoto(true);
+  }
+
+  function handlePhotoDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setIsDraggingPhoto(false);
+  }
+
+  async function handlePhotoDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDraggingPhoto(false);
+    if (convertingHeic || isAnalyzing) return;
+    const rawFile = event.dataTransfer.files?.[0];
+    if (!rawFile) return;
+    await handleIncomingPhoto(rawFile);
   }
 
   function resetPhoto() {
@@ -433,6 +479,7 @@ export function RecordMealModal({
     setPhotoPreview(null);
     setFileError("");
     setAnalysisError("");
+    setConvertingHeic(false);
     setUploadProgress(0);
     setServerMealLogId(null);
     if (photoInput.current) photoInput.current.value = "";
@@ -557,7 +604,13 @@ export function RecordMealModal({
           <>
             <div className="entry-source-tabs">{sourceTabs.map((tab) => <button type="button" className={source === tab.id ? "is-active" : ""} key={tab.id} onClick={() => { setSource(tab.id); setCategory("전체"); }}>{tab.label}</button>)}</div>
             {source === "photo" ? (
-              isAnalyzing ? (
+              convertingHeic ? (
+                <div className="vision-loading" role="status" aria-live="polite">
+                  <div className="vision-spinner" aria-hidden="true"><i /></div>
+                  <h3>사진을 변환하고 있어요</h3>
+                  <p>아이폰 HEIC 사진을 올리기 좋은 형식으로 바꾸고 있어요. 잠시만 기다려 주세요.</p>
+                </div>
+              ) : isAnalyzing ? (
                 <div className="vision-loading" role="status" aria-live="polite">
                   <div className="vision-spinner" aria-hidden="true"><i /></div>
                   <h3>{uploadProgress < 55 ? "사진을 안전하게 올리고 있어요" : "사진에서 음식을 찾고 있어요"}</h3>
@@ -568,14 +621,20 @@ export function RecordMealModal({
               ) : analysisError ? (
                 <div className="vision-error" role="alert"><span aria-hidden="true" /><h3>사진을 분석하지 못했어요.</h3><p>{analysisError}</p><div><button type="button" onClick={resetPhoto}>다른 사진 고르기</button><button type="button" className="solid-button" onClick={analyzePhoto}>다시 분석하기</button></div></div>
               ) : (
-                <div className="vision-upload">
-                  <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={selectPhoto} />
-                  {photoPreview ? <div className="vision-photo-preview"><img src={photoPreview} alt="선택한 음식 사진 미리보기" /><div><button type="button" onClick={() => photoInput.current?.click()}>바꾸기</button><button type="button" onClick={resetPhoto}>지우기</button></div></div> : <div className="camera-mark" aria-hidden="true">⌁</div>}
+                <div
+                  className={`vision-upload${isDraggingPhoto ? " is-dragging" : ""}`}
+                  onDragOver={handlePhotoDragOver}
+                  onDragEnter={handlePhotoDragOver}
+                  onDragLeave={handlePhotoDragLeave}
+                  onDrop={handlePhotoDrop}
+                >
+                  <input ref={photoInput} className="vision-file-input" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={selectPhoto} />
+                  {photoPreview ? <div className="vision-photo-preview"><img src={photoPreview} alt="선택한 음식 사진 미리보기" /><div><button type="button" onClick={() => photoInput.current?.click()}>바꾸기</button><button type="button" onClick={resetPhoto}>지우기</button></div></div> : <div className="camera-mark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M4 8.5a2 2 0 0 1 2-2h1.6l.9-1.5A2 2 0 0 1 10.23 4h3.54a2 2 0 0 1 1.73 1l.9 1.5H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><circle cx="12" cy="12.5" r="3.4" stroke="currentColor" strokeWidth="1.8" /></svg></div>}
                   <h3>음식이나 제품 사진을 올려주세요</h3>
-                  <p>{photoFile ? `${photoFile.name}을 선택했어요.` : "사진을 올리면 음식의 양을 확인하고 당류와 칼로리를 계산해요."}</p>
-                  <small>JPG, PNG, WEBP · 최대 10MB</small>
+                  <p>{photoFile ? `${photoFile.name}을 선택했어요.` : "사진을 올리거나 이 위로 끌어다 놓으면 음식의 양을 확인하고 당류와 칼로리를 계산해요."}</p>
+                  <small>JPG, PNG, WEBP, HEIC · 최대 10MB</small>
                   {fileError && <p className="vision-file-error" role="alert">{fileError}</p>}
-                  <button type="button" className="solid-button" onClick={analyzePhoto}>{photoFile ? "당류·칼로리 확인하기" : "사진 선택하기"}</button>
+                  <button type="button" className="solid-button" onClick={analyzePhoto} disabled={convertingHeic}>{photoFile ? "당류·칼로리 확인하기" : "사진 선택하기"}</button>
                 </div>
               )
             ) : (
@@ -592,8 +651,8 @@ export function RecordMealModal({
             <div className="mini-detail-summary">
               {selected.image
                 ? <div className="mini-food-art has-photo"><SafeImage src={selected.image} alt={`${selected.name} 사진`} fallbackLabel={selected.category} /></div>
-                : <div className="mini-food-art"><span>{selected.category}</span><strong>{selected.kind}</strong></div>}
-              <div><small>{selected.kind}</small><h3>{selected.name}</h3>{selected.nutritionAvailable && <p className="mini-detail-macros">당류 {sugarText(selected.sugar)}g · {selected.calories.toLocaleString()}kcal</p>}<p>{selected.note}</p><Link href={selected.href}>영양 정보 더 보기 →</Link></div>
+                : <div className="mini-food-art"><span>{selected.category}</span><strong>{visibleKind(selected.kind)}</strong></div>}
+              <div><small>{visibleKind(selected.kind)}</small><h3>{selected.name}</h3>{selected.nutritionAvailable && <p className="mini-detail-macros">당류 {sugarText(selected.sugar)}g · {selected.calories.toLocaleString()}kcal</p>}<p>{selected.note}</p><Link href={selected.href}>영양 정보 더 보기 →</Link></div>
             </div>
             {selected.nutritionAvailable ? <div className="projected-change">
               <p className="eyebrow">담으면 이렇게 바뀌어요</p>

@@ -1,5 +1,5 @@
+import asyncio
 import logging
-from datetime import date
 
 import httpx
 
@@ -13,10 +13,20 @@ _CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 300
 
+# _call_claude*가 실패/미설정일 때 돌려주는 안내 문구 — 실제 AI 생성 결과가
+# 아니므로 캐시(product_ai_summaries)에 저장하면 안 된다. is_summary_unavailable()
+# 로 호출 측이 캐싱 여부를 판단한다.
+_NO_API_KEY_MSG = "AI 요약 기능을 사용하려면 ANTHROPIC_API_KEY 설정이 필요합니다."
+_BEDROCK_FAILURE_MSG = "AI 요약을 생성하지 못했습니다. 잠시 후 다시 시도해주세요."
 
-async def _call_claude(prompt: str) -> str:
+
+def is_summary_unavailable(text: str) -> bool:
+    return text in (_NO_API_KEY_MSG, _BEDROCK_FAILURE_MSG)
+
+
+async def _call_claude_anthropic(prompt: str) -> str:
     if not settings.anthropic_api_key:
-        return "AI 요약 기능을 사용하려면 ANTHROPIC_API_KEY 설정이 필요합니다."
+        return _NO_API_KEY_MSG
     headers = {
         "x-api-key": settings.anthropic_api_key,
         "anthropic-version": "2023-06-01",
@@ -32,6 +42,32 @@ async def _call_claude(prompt: str) -> str:
         resp.raise_for_status()
         data = resp.json()
     return data["content"][0]["text"].strip()
+
+
+def _call_claude_bedrock_sync(prompt: str) -> str:
+    import boto3
+
+    client = boto3.client("bedrock-runtime", region_name=settings.bedrock_region)
+    resp = client.converse(
+        modelId=settings.bedrock_model_id,
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig={"maxTokens": _MAX_TOKENS},
+    )
+    return resp["output"]["message"]["content"][0]["text"].strip()
+
+
+async def _call_claude(prompt: str) -> str:
+    # ai_provider="bedrock"이어도 이 함수만 영향받는다 - 챗봇(backend/ai)과
+    # diet-service의 Vision 분석은 각자 자기 설정을 따로 쓰므로 이 스위치와
+    # 무관하다. boto3는 동기 SDK라 스레드로 돌린다(tools/model-eval의
+    # call_bedrock, backend/ai의 BedrockClient와 동일한 패턴).
+    if settings.ai_provider == "bedrock":
+        try:
+            return await asyncio.to_thread(_call_claude_bedrock_sync, prompt)
+        except Exception:
+            logger.exception("Bedrock 호출 실패")
+            return _BEDROCK_FAILURE_MSG
+    return await _call_claude_anthropic(prompt)
 
 
 async def generate_product_summary(product: Product, tags: list[Tag]) -> str:
@@ -68,41 +104,5 @@ async def generate_sweetener_description(product: Product, sweetener_tags: list[
         f"다음은 '{product.product_name}'에 들어간 대체 당 성분들입니다.\n"
         + "\n".join(descriptions)
         + "\n소비자가 이해하기 쉽도록 각 성분을 2~3문장으로 설명해주세요."
-    )
-    return await _call_claude(prompt)
-
-
-async def generate_user_feature_info(
-    product: Product,
-    tags: list[Tag],
-    birth_year: int | None,
-    gender: str | None,
-    daily_calorie_target: float | None,
-    daily_sugar_target_g: float | None,
-) -> str:
-    """PR-0303: 사용자 맞춤형 영양 설명 (일일 권장량 대비 %)."""
-    current_year = date.today().year
-    age = (current_year - birth_year) if birth_year else None
-    age_str = f"{age}세" if age else "나이 정보 없음"
-    gender_str = gender or "성별 정보 없음"
-
-    allergen_names = [t.tag_name for t in tags if t.tag_type == "ALLERGEN"]
-    calorie_pct = (
-        f"{float(product.calories) / daily_calorie_target * 100:.1f}%"
-        if product.calories and daily_calorie_target
-        else "정보 없음"
-    )
-    sugar_pct = (
-        f"{float(product.sugars) / daily_sugar_target_g * 100:.1f}%"
-        if product.sugars and daily_sugar_target_g
-        else "정보 없음"
-    )
-
-    prompt = (
-        f"사용자 정보: {age_str}, {gender_str}\n"
-        f"제품명: {product.product_name}\n"
-        f"이 제품 1회 섭취 시 일일 권장 칼로리의 {calorie_pct}, 당류의 {sugar_pct}를 섭취하게 됩니다.\n"
-        f"주의 알레르기 성분: {', '.join(allergen_names) if allergen_names else '없음'}\n"
-        f"사용자 눈높이에 맞춰 2~3문장으로 쉽게 설명해주세요."
     )
     return await _call_claude(prompt)

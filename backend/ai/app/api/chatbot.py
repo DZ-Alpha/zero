@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -16,6 +17,7 @@ from app.memory.session_key import resolve_session_key
 from app.router.dispatcher import Dispatcher
 from app.router.intent import IntentClassifier
 from app.schemas import ChatbotRequest, ChatbotResponse, Intent, UserContext
+from app.services.chat_photo_storage import presign_chat_photo_url
 
 _ANONYMOUS_CONTEXT = UserContext(
     user_id=0, logged_in=False, interests=[], has_allergy=False,
@@ -84,8 +86,9 @@ async def chatbot(
     else:
         result = await deps.dispatcher.dispatch(intent, data)
 
-    if deps.store is not None and payload.msg:
-        await deps.store.append(session_key, payload.msg, result.msg)
+    image_key = getattr(result, "image_key", None)
+    if deps.store is not None and (payload.msg or image_key):
+        await deps.store.append(session_key, payload.msg or "", result.msg, image_key=image_key)
 
     return ChatbotResponse(
         cs_partner=CS_PARTNER,
@@ -123,22 +126,29 @@ async def chatbot_stream(
 
     async def events() -> AsyncIterator[str]:
         answer_parts: list[str] = []
+        image_key: str | None = None
         try:
             if intent is Intent.GENERAL_QA and deps.qa_handler is not None:
                 async for delta in deps.qa_handler.handle_stream(data, history=history):
                     answer_parts.append(delta)
                     yield _sse({"delta": delta})
             else:
+                # 사진분석·stub 등 비스트리밍 의도는 답변이 한 번에 완성된다.
+                # 글자 단위로 흘려 GENERAL_QA와 같은 타이핑 체감을 준다(가짜 스트리밍).
                 result = await deps.dispatcher.dispatch(intent, data)
+                image_key = result.image_key
                 answer_parts.append(result.msg)
-                yield _sse({"delta": result.msg})
+                for ch in result.msg:
+                    yield _sse({"delta": ch})
+                    await asyncio.sleep(0.015)
         except Exception:
             logger.exception("stream error")
             yield _sse({"error": "일시적인 오류가 발생했습니다.", "state": "error"})
             return
         # 답변이 끝난 뒤에만 저장(반쪽 대화 방지). Redis 장애는 store가 삼킨다.
-        if deps.store is not None and payload.msg:
-            await deps.store.append(session_key, payload.msg, "".join(answer_parts))
+        # 사진 턴(PRODUCT_ANALYSIS)은 result.image_key 사용.
+        if deps.store is not None and (payload.msg or image_key):
+            await deps.store.append(session_key, payload.msg or "", "".join(answer_parts), image_key=image_key)
         yield _sse({
             "done": True, "cs-partner": CS_PARTNER,
             "time": datetime.now(timezone.utc).isoformat(), "is-img": False,
@@ -165,5 +175,13 @@ async def chatbot_history(
     session_key = resolve_session_key(user_id, session_id)
     messages = []
     if deps.store is not None:
-        messages = await deps.store.load_all(session_key)
+        raw = await deps.store.load_all(session_key)
+        for m in raw:
+            item = {"role": m["role"], "text": m["text"]}
+            key = m.get("image_key")
+            if key:
+                url = presign_chat_photo_url(key)
+                if url:
+                    item["imageUrl"] = url
+            messages.append(item)
     return {"messages": messages}

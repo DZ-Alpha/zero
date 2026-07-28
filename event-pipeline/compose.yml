@@ -1,0 +1,147 @@
+name: dangdang-pipeline
+
+services:
+  pipeline-db:
+    image: postgres:17-alpine
+    container_name: dangdang-pipeline-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD: ${PIPELINE_DB_PASSWORD:?PIPELINE_DB_PASSWORD is required}
+      POSTGRES_DB: pipeline
+    volumes:
+      - pipeline-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline -d pipeline"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - pipeline
+
+  api:
+    build: .
+    image: dangdang-event-pipeline:vision-gemini-activity-v7
+    container_name: dangdang-pipeline-api
+    restart: unless-stopped
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8080"]
+    environment: &app-environment
+      DATABASE_URL: postgresql://pipeline:${PIPELINE_DB_PASSWORD}@pipeline-db:5432/pipeline
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_SECURE: "false"
+      MINIO_BUCKET: diet-photos
+      MINIO_PUBLIC_ENDPOINT: http://10.10.20.10:9000
+      REQUEST_TOPIC: diet.photo.requested
+      COMPLETED_TOPIC: diet.photo.completed
+      FAILED_TOPIC: diet.photo.failed
+      OUTBOX_POLL_SECONDS: "0.5"
+      OUTBOX_RETENTION_DAYS: ${OUTBOX_RETENTION_DAYS:-30}
+      OUTBOX_CLEANUP_INTERVAL_SECONDS: ${OUTBOX_CLEANUP_INTERVAL_SECONDS:-3600}
+      DB_POOL_MIN_SIZE: ${DB_POOL_MIN_SIZE:-1}
+      DB_POOL_MAX_SIZE: ${API_DB_POOL_MAX_SIZE:-20}
+    depends_on:
+      pipeline-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks:
+      - pipeline
+      - zero-infra-backend
+
+  worker:
+    image: dangdang-event-pipeline:vision-gemini-activity-v7
+    # No container_name: replicas need generated names. Monitoring tracks this
+    # service through the dangdang-vision-worker-v1 consumer group, not by
+    # container, so scaling does not disturb the alert rules.
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    deploy:
+      replicas: ${WORKER_REPLICAS:-3}
+    environment:
+      <<: *app-environment
+      KAFKA_CONSUMER_GROUP: dangdang-vision-worker-v1
+      DB_POOL_MAX_SIZE: ${WORKER_DB_POOL_MAX_SIZE:-4}
+      PROCESSOR_VERSION: ${PROCESSOR_VERSION:-gemini-v1}
+      VISION_PROVIDER: ${VISION_PROVIDER:-gemini}
+      VISION_TIMEOUT_SECONDS: ${VISION_TIMEOUT_SECONDS:-30}
+      VISION_MAX_IMAGE_BYTES: ${VISION_MAX_IMAGE_BYTES:-10485760}
+      VISION_CONFIDENCE_THRESHOLD: ${VISION_CONFIDENCE_THRESHOLD:-0.75}
+      VISION_MAX_ATTEMPTS: ${VISION_MAX_ATTEMPTS:-3}
+      VISION_RETRY_BACKOFF_SECONDS: ${VISION_RETRY_BACKOFF_SECONDS:-2}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY is required for Gemini Vision}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
+      GEMINI_THINKING_BUDGET: ${GEMINI_THINKING_BUDGET:-512}
+      GEMINI_MAX_OUTPUT_TOKENS: ${GEMINI_MAX_OUTPUT_TOKENS:-4096}
+      FOODLENS_API_URL: ${FOODLENS_API_URL:-}
+      FOODLENS_TOKEN: ${FOODLENS_TOKEN:-}
+      FOODLENS_TOKEN_HEADER: ${FOODLENS_TOKEN_HEADER:-Authorization}
+      FOODLENS_TOKEN_PREFIX: ${FOODLENS_TOKEN_PREFIX:-Bearer }
+      FOODLENS_IMAGE_FIELD: ${FOODLENS_IMAGE_FIELD:-image}
+    depends_on:
+      pipeline-db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - pipeline
+      - zero-infra-backend
+
+  activity-consumer:
+    image: dangdang-event-pipeline:vision-gemini-activity-v7
+    container_name: dangdang-activity-mongodb-consumer
+    restart: unless-stopped
+    profiles: ["analytics"]
+    command: ["python", "-m", "app.activity_consumer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      DATABASE_URL: postgresql://pipeline:${PIPELINE_DB_PASSWORD}@pipeline-db:5432/pipeline
+      MONGODB_URI: ${MONGODB_URI:-}
+      ACTIVITY_TOPIC: user.activity.raw
+      ACTIVITY_CONSUMER_GROUP: dangdang-activity-mongodb-v1
+      ACTIVITY_MONGODB_DATABASE: ${ACTIVITY_MONGODB_DATABASE:-dangdang_analytics}
+      ACTIVITY_MONGODB_COLLECTION: ${ACTIVITY_MONGODB_COLLECTION:-user_activity_events}
+    depends_on:
+      pipeline-db:
+        condition: service_healthy
+    networks:
+      - pipeline
+      - zero-infra-backend
+
+  # service.event_outbox(zero DB, 데이터/인프라팀 소유)를 Kafka로 발행하는
+  # 유일한 컴포넌트. 백엔드 서비스들은 INSERT만 하고 Kafka를 직접 쓰지 않는다.
+  # 특정 업무 서비스(diet-service 등)에 넣지 않는 이유: 공용 테이블 발행을
+  # 한 서비스에 묶으면 그 서비스가 전체 이벤트 발행의 단일 장애점이 된다.
+  zero-outbox-publisher:
+    image: dangdang-event-pipeline:vision-gemini-activity-v7
+    container_name: zero-outbox-publisher
+    restart: unless-stopped
+    command: ["python", "-m", "app.zero_outbox_publisher"]
+    environment:
+      <<: *app-environment
+      ZERO_DATABASE_URL: ${ZERO_DATABASE_URL:?ZERO_DATABASE_URL is required for the zero outbox publisher}
+      ZERO_OUTBOX_POLL_SECONDS: ${ZERO_OUTBOX_POLL_SECONDS:-0.5}
+      ZERO_OUTBOX_MAX_PUBLISH_ATTEMPTS: ${ZERO_OUTBOX_MAX_PUBLISH_ATTEMPTS:-50}
+    networks:
+      - pipeline
+      - zero-infra-backend
+
+volumes:
+  pipeline-db-data:
+    name: dangdang-pipeline-db-data
+
+networks:
+  pipeline:
+    name: dangdang-pipeline-internal
+  zero-infra-backend:
+    external: true

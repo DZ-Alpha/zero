@@ -13,15 +13,17 @@ from app.models.user_health_profile_ref import UserHealthProfileRef
 from app.services.ai_service import (
     generate_product_summary,
     generate_sweetener_description,
-    generate_user_feature_info,
+    is_summary_unavailable,
 )
 from app.services.product_store import (
     ProductNotFoundError,
+    get_ai_summary_cache,
     get_product,
     get_product_tags,
     get_sweetener_tags_for_product,
     list_favorites,
     toggle_favorite,
+    upsert_ai_summary_cache,
 )
 
 logger = logging.getLogger("product_service.product")
@@ -80,14 +82,22 @@ async def get_ai_summary(
     id: str = Query(..., description="상품 UUID"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    """PR-0301: AI 한줄 요약 (런타임 생성, 저장 안 함)."""
+    """PR-0301: AI 한줄 요약 — 영양성분/원재료 기반으로 한 번만 생성해 DB에
+    캐싱하고 재사용한다(회의 결정 2026-07-27). 없는 상품만 새로 생성한다."""
     pid = _to_uuid(id)
     try:
         product = await get_product(db, pid)
     except ProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+    cached = await get_ai_summary_cache(db, pid)
+    if cached and cached.ai_oneline:
+        return {"ai-oneline": cached.ai_oneline}
+
     tags = await get_product_tags(db, pid)
     summary = await generate_product_summary(product, tags)
+    if not is_summary_unavailable(summary):
+        await upsert_ai_summary_cache(db, pid, ai_oneline=summary)
     return {"ai-oneline": summary}
 
 
@@ -96,48 +106,27 @@ async def get_sweetener_info(
     id: str = Query(..., description="상품 UUID"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    """PR-0302: 감미료(대체 당) 설명."""
+    """PR-0302: 감미료(대체 당) 설명 — 한 번만 생성해 DB에 캐싱하고 재사용한다
+    (회의 결정 2026-07-27). 대체 당이 없는 상품은 애초에 AI를 호출하지 않는
+    고정 문구라 캐싱 대상이 아니다."""
     pid = _to_uuid(id)
     try:
         product = await get_product(db, pid)
     except ProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
     sweetener_tags = await get_sweetener_tags_for_product(db, pid)
+    if not sweetener_tags:
+        return {"gammi-info": "이 제품에는 대체 당이 포함되어 있지 않습니다."}
+
+    cached = await get_ai_summary_cache(db, pid)
+    if cached and cached.gammi_info:
+        return {"gammi-info": cached.gammi_info}
+
     description = await generate_sweetener_description(product, sweetener_tags)
+    if not is_summary_unavailable(description):
+        await upsert_ai_summary_cache(db, pid, gammi_info=description)
     return {"gammi-info": description}
-
-
-@router.get("/user-feature-info")
-async def get_user_feature_info(
-    id: str = Query(..., description="상품 UUID"),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(get_current_user),
-) -> dict[str, object]:
-    """PR-0303: 사용자 맞춤 영양 설명 (연령/성별/일일 목표 기반)."""
-    pid = _to_uuid(id)
-    user_id: int = payload["user_id"]
-
-    try:
-        product = await get_product(db, pid)
-    except ProductNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    tags = await get_product_tags(db, pid)
-
-    # Main Service 소유 건강프로필 읽기 전용 조회
-    profile_stmt = select(UserHealthProfileRef).where(UserHealthProfileRef.user_id == user_id)
-    profile_result = await db.execute(profile_stmt)
-    profile = profile_result.scalar_one_or_none()
-
-    info = await generate_user_feature_info(
-        product=product,
-        tags=tags,
-        birth_year=profile.birth_year if profile else None,
-        gender=profile.gender if profile else None,
-        daily_calorie_target=float(profile.daily_calorie_target) if profile and profile.daily_calorie_target else None,
-        daily_sugar_target_g=float(profile.daily_sugar_target_g) if profile and profile.daily_sugar_target_g else None,
-    )
-    return {"user-feature-info": info}
 
 
 @router.get("/user-group-info")

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "diet.photo.requested.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "analysis_id", "upload_id", "user_id", "image_key", "requested_at", "schema_version"],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "analysis_id": {"type": "string", "format": "uuid"},
+    "upload_id": {"type": "string", "format": "uuid"},
+    "user_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "image_key": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "requested_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": 1}
+  }
+}
