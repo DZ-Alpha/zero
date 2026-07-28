@@ -29,3 +29,9 @@ infra/CIS_Docker_Benchmark_v1.8.0.pdf
 manifests/
 # zero-manifests 클론이 실수로 zero 안에 다시 들어와도 부모 인덱스가 삼키지 않도록 가드
 zero-manifests/
+
+# 개인 자동동기화 장치·자격증명 도구 — 팀 repo에 올리지 않는다 (정본은 zero-memory/machine-setup)
+.claude/settings.json
+.claude/hooks/
+scripts/creds-encrypt.ps1
+scripts/creds-decrypt.ps1
