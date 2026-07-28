@@ -10,3 +10,28 @@ __pycache__/
 
 # macOS Finder
 .DS_Store
+
+# 병렬 세션용 worktree — 재생성 가능하므로 동기화 대상 아님 (41MB)
+zero-worktrees/
+
+# 대용량 참고자료 — 저장소에 넣지 않음
+CIS_Docker_Benchmark_v1.8.0.pdf
+infra/CIS_Docker_Benchmark_v1.8.0.pdf
+
+# Claude 기기별 로컬 설정 (공유 설정은 .claude/settings.json)
+.claude/settings.local.json
+
+# K8s 매니페스트 — 이 공개 저장소에 두지 않는다.
+# 배포 정의는 DZ-Alpha/zero-manifests(private)가 정본이다.
+# (2026-07-28: 자동동기화 첫 실행 때 이 폴더 44개가 공개 저장소에 올라간 사고가 있었다.
+#  자격증명은 없었지만 네임스페이스 구조·포트·자원 배분이 노출됐다.
+#  여기 남은 alphacar-* 스캐폴드는 charts/ 로 대체된 자동 생성물이라 이관하지 않고 폐기.)
+manifests/
+# zero-manifests 클론이 실수로 zero 안에 다시 들어와도 부모 인덱스가 삼키지 않도록 가드
+zero-manifests/
+
+# 개인 자동동기화 장치·자격증명 도구 — 팀 repo에 올리지 않는다 (정본은 zero-memory/machine-setup)
+.claude/settings.json
+.claude/hooks/
+scripts/creds-encrypt.ps1
+scripts/creds-decrypt.ps1
