@@ -1,5 +1,19 @@
+# 커밋 전 시크릿 검사
+#
+# 2026-07-28 강화: 기본 규칙만으로는 사람이 읽는 비밀번호를 못 잡는다는 게
+# 실증돼서(07-13 VM 계정 비밀번호가 이 훅이 켜진 상태로 커밋됨) 커스텀 규칙을 추가했다.
+# 규칙은 .gitleaks.toml 참조.
+#
+# 설치:  pip install pre-commit && pre-commit install
+# 전체 검사: pre-commit run --all-files
+#
+# ⚠️ 훅은 "설치한 사람"에게만 걸린다. 팀원 각자 위 명령을 한 번 실행해야 한다.
+#    설치 안 한 사람의 커밋은 그대로 통과하므로, 이것만 믿으면 안 된다.
+
 repos:
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.0
     hooks:
       - id: gitleaks
+        # 커스텀 규칙을 쓰도록 명시 (없으면 기본 규칙만 적용된다)
+        args: ["--config", ".gitleaks.toml"]
