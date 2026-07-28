@@ -15,7 +15,7 @@ RUN opentelemetry-bootstrap -a install
 FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
 
 # non-root 사용자로 실행 (Docker 공식 권장: USER로 전환)
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN groupadd -r -g 10001 appuser && useradd -r -u 10001 -g appuser appuser
 
 WORKDIR /app
 
@@ -28,7 +28,7 @@ COPY app ./app
 RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
 
 RUN chown -R appuser:appuser /app
-USER appuser
+USER 10001
 
 EXPOSE 8016
 
