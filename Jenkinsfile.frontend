@@ -1,0 +1,120 @@
+pipeline {
+    agent any
+    environment {
+        REGISTRY = 'harbor.hizero.local'
+        PROJECT  = 'dangdang'
+    }
+    stages {
+        // Checkout stage 없음 — Pipeline from SCM이 zero repo 자동 체크아웃.
+
+        stage('Detect Changes') {
+            steps {
+                script {
+                    def all = ['frontend', 'frontend-admin']
+                    def prev = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
+                    def changed
+                    if (!prev) {
+                        echo "이전 성공 빌드 없음 — 전체 빌드"
+                        changed = all
+                    } else {
+                        def prevExists = sh(script: "git cat-file -e ${prev}^{commit} 2>/dev/null && echo yes || echo no",
+                                            returnStdout: true).trim()
+                        if (prevExists != 'yes') {
+                            echo "이전 커밋(${prev})이 히스토리에 없음 — 안전하게 전체 빌드"
+                            changed = all
+                        } else {
+                            def status = sh(script: "git diff --name-only ${prev} HEAD > /tmp/fdiff.txt; echo \$?",
+                                            returnStdout: true).trim()
+                            if (status != '0') {
+                                echo "git diff 실패(exit ${status}) — 안전하게 전체 빌드"
+                                changed = all
+                            } else {
+                                def files = readFile('/tmp/fdiff.txt').trim()
+                                def lines = files ? files.split('\n') : []
+                                // 경계매칭: frontend/ 가 frontend-admin/ 오인 방지
+                                changed = all.findAll { name -> lines.any { it == name || it.startsWith("${name}/") } }
+                            }
+                        }
+                    }
+                    env.CHANGED = changed.join(' ')
+                    echo "빌드 대상: ${env.CHANGED ?: '(없음 — 프론트 변경 없음)'}"
+                }
+            }
+        }
+
+        stage('Build Changed Frontends') {
+            when { expression { env.CHANGED?.trim() } }
+            steps {
+                script {
+                    def scannerHome = tool 'sonar-scanner'
+                    for (fe in env.CHANGED.split(' ')) {
+                        env.FE = fe
+                        echo "========== [${fe}] 빌드 시작 =========="
+
+                        // 1) SonarQube (서비스별 projectKey)
+                        withSonarQubeEnv('sonarqube') {
+                            sh '''
+                                "''' + scannerHome + '''/bin/sonar-scanner" \
+                                    -Dsonar.projectKey=zero-${FE} \
+                                    -Dsonar.projectName=zero-${FE} \
+                                    -Dsonar.sources=${FE}
+                            '''
+                        }
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: true
+                        }
+
+                        // 2) docker build + Trivy (Node 빌드는 Dockerfile 멀티스테이지가 내부 수행)
+                        sh '''
+                            SHA=$(git rev-parse --short HEAD)
+                            # [나중에 admin 캡차 켤 때] frontend-admin만:
+                            #   turnstile-site-key를 Jenkins Credentials(Secret text)로 등록 후
+                            #   docker build --build-arg NEXT_PUBLIC_TURNSTILE_SITE_KEY=$KEY -t fe-${FE}:${SHA} ${FE}
+                            docker build -t fe-${FE}:${SHA} ${FE}
+                            trivy image --severity CRITICAL,HIGH --exit-code 1 \
+                                --ignorefile .trivyignore --scanners vuln --quiet fe-${FE}:${SHA}
+                        '''
+
+                        // 3) Harbor push → dangdang/<fe>:<SHA>
+                        withCredentials([usernamePassword(credentialsId: 'harbor-cred',
+                                usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_TOKEN')]) {
+                            sh '''
+                                SHA=$(git rev-parse --short HEAD)
+                                IMAGE=${REGISTRY}/${PROJECT}/${FE}
+                                echo "${HARBOR_TOKEN}" | docker login ${REGISTRY} -u "${HARBOR_USER}" --password-stdin
+                                docker tag fe-${FE}:${SHA} ${IMAGE}:${SHA}
+                                docker push ${IMAGE}:${SHA}
+                                docker logout ${REGISTRY}
+                                echo "push 완료: ${IMAGE}:${SHA}"
+                            '''
+                        }
+
+                        // 4) Update Manifest (charts/<fe>/values-staging.yaml)
+                        withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
+                                usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
+                            sh '''
+                                set -e
+                                SHA=$(git rev-parse --short HEAD)
+                                WORK=$(mktemp -d)
+                                git clone --depth 1 "https://${GIT_USER}:${GIT_PAT}@github.com/DZ-Alpha/zero-manifests.git" "$WORK"
+                                cd "$WORK"
+                                git config user.name  "jenkins-ci"
+                                git config user.email "ci@hizero.local"
+                                yq -i ".image.tag = \\"${SHA}\\"" charts/${FE}/values-staging.yaml
+                                if git diff --quiet; then
+                                    echo "태그 변경 없음 (${FE} ${SHA}) — skip"
+                                else
+                                    git commit -am "chore(${FE}): update staging image tag to ${SHA} [skip ci]"
+                                    git push origin main
+                                    echo "manifest 갱신: ${FE} tag=${SHA}"
+                                fi
+                                cd / && rm -rf "$WORK"
+                            '''
+                        }
+                        echo "========== [${fe}] 완료 =========="
+                    }
+                }
+            }
+        }
+    }
+}
