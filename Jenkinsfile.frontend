@@ -183,7 +183,14 @@ pipeline {
     post {
         always {
             // ZAP DAST 리포트 보관(htmlpublisher 없어 archive. 빌드 페이지에서 다운로드해서 봄)
-            archiveArtifacts artifacts: 'zap-out/*.html,zap-out/*.log', allowEmptyArchive: true
+            // zap-out은 DAST 스텝이 돌 때만 생성됨 → 있을 때만 archive(스킵 빌드에서 경고 방지)
+            script {
+                if (fileExists('zap-out')) {
+                    archiveArtifacts artifacts: 'zap-out/*.html,zap-out/*.log', allowEmptyArchive: true
+                } else {
+                    echo 'DAST 미실행(프론트 변경 없음) — 보관할 ZAP 리포트 없음'
+                }
+            }
         }
     }
 }

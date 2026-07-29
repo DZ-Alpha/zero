@@ -48,3 +48,5 @@ PUBLIC_APP_URL=https://서비스도메인
 상세 API 연동 현황과 남은 백엔드 계약은 `docs/PRODUCTION_HANDOFF.md`를 참고합니다.
 
 <!-- prod promotion verify 1785300090 -->
+<!-- dast gate verify 2026-07-30 -->
+
