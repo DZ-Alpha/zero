@@ -1,0 +1,23 @@
+# 비밀 유출 CI 백스톱 (2026-07-29 재유출 방지 체계)
+#
+# 로컬 pre-commit 훅(.githooks/pre-commit)이 1차 방어지만,
+# 훅은 클론별 설정(core.hooksPath)이 필요하고 --no-verify 로 우회도 가능하다.
+# CI 는 그 두 구멍을 막는 2차 방어다 — push/PR 마다 커밋 diff 를 서버에서 검사한다.
+# 규칙은 로컬과 같은 .gitleaks.toml 을 쓴다 (기준 이원화 방지).
+#
+# ⚠️ 이 파일 push 는 gh 토큰에 workflow scope 필요 (gh auth refresh -s workflow)
+name: gitleaks
+on:
+  push:
+  pull_request:
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 전체 히스토리 — 푸시된 모든 커밋의 diff 를 검사
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml

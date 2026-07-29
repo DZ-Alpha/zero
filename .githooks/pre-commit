@@ -1,0 +1,32 @@
+#!/bin/sh
+# 커밋 전 비밀 유출 검사 (gitleaks, .gitleaks.toml 규칙 사용)
+#
+# 왜 .git/hooks 가 아니라 .githooks 인가:
+#   .git/hooks 는 git 이 추적하지 않아 새 클론마다 증발한다 (07/29 실측 — 훅이 사라져 있었음).
+#   추적되는 .githooks/ 를 git 공식 설정 core.hooksPath 로 지정하면 클론에도 따라간다.
+#   단 core.hooksPath 설정 자체는 클론별 1회 필요:  git config core.hooksPath .githooks
+#
+# 우회(--no-verify)는 가능하지만, 우회로 유출되면 전 서비스 비밀번호 로테이션 비용이
+# 훨씬 크다 (2026-07-12·07-29 두 차례 실증). 오탐이면 우회 말고 allowlist 에 사유와 함께 추가.
+
+GITLEAKS="$(command -v gitleaks 2>/dev/null)"
+if [ -z "$GITLEAKS" ] && [ -n "$LOCALAPPDATA" ]; then
+  CAND="$(cygpath -u "$LOCALAPPDATA" 2>/dev/null)/Microsoft/WinGet/Packages/Gitleaks.Gitleaks_Microsoft.Winget.Source_8wekyb3d8bbwe/gitleaks.exe"
+  [ -x "$CAND" ] && GITLEAKS="$CAND"
+fi
+
+if [ -z "$GITLEAKS" ]; then
+  echo "[pre-commit] gitleaks 가 없어 비밀 검사를 못 합니다 — 커밋 차단(fail-closed)."
+  echo "  설치: winget install Gitleaks.Gitleaks  (설치 후 새 터미널에서 재시도)"
+  exit 1
+fi
+
+TOPLEVEL="$(git rev-parse --show-toplevel)"
+if ! "$GITLEAKS" git --pre-commit --staged --redact -c "$TOPLEVEL/.gitleaks.toml"; then
+  echo ""
+  echo "[pre-commit] 비밀로 의심되는 값이 스테이징에 있어 커밋을 차단했습니다."
+  echo "  · 실제 비밀이면: 값을 파일에서 빼고 harbor.credentials.local.md(비추적)로 옮기세요."
+  echo "  · 오탐이면: .gitleaks.toml [allowlist] 에 사유 주석과 함께 추가하세요."
+  exit 1
+fi
+exit 0
