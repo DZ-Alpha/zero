@@ -33,7 +33,17 @@ pipeline {
                                 changed = all
                             } else {
                                 def files = readFile('/tmp/fdiff.txt').trim()
-                                def lines = files ? files.split('\n') : []
+                                def rawLines = files ? files.split('\n') : []
+                                // 문서·비코드 파일 제외: 이런 파일만 바뀐 서비스는 빌드/스캔/승격 안 함.
+                                // (파일 단위로 거름 — 코드+문서 동시 변경이면 코드가 남아 빌드는 됨)
+                                def isDoc = { String f ->
+                                    def lower = f.toLowerCase()
+                                    lower.endsWith('.md') || lower.endsWith('.txt') ||
+                                    lower.endsWith('license') || lower.endsWith('.gitignore')
+                                }
+                                def lines = rawLines.findAll { !isDoc(it) }
+                                def skipped = rawLines.findAll { isDoc(it) }
+                                if (skipped) { echo "문서·비코드 변경 무시: ${skipped.join(', ')}" }
                                 // 경계매칭: frontend/ 가 frontend-admin/ 오인 방지
                                 changed = all.findAll { name -> lines.any { it == name || it.startsWith("${name}/") } }
                             }
