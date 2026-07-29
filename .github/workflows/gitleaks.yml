@@ -2,10 +2,15 @@
 #
 # 로컬 pre-commit 훅(.githooks/pre-commit)이 1차 방어지만,
 # 훅은 클론별 설정(core.hooksPath)이 필요하고 --no-verify 로 우회도 가능하다.
-# CI 는 그 두 구멍을 막는 2차 방어다 — push/PR 마다 커밋 diff 를 서버에서 검사한다.
+# CI 는 그 두 구멍 + GitHub 웹 직접 편집 경로까지 막는 2차 방어다.
 # 규칙은 로컬과 같은 .gitleaks.toml 을 쓴다 (기준 이원화 방지).
 #
-# ⚠️ 이 파일 push 는 gh 토큰에 workflow scope 필요 (gh auth refresh -s workflow)
+# gitleaks-action(포장판)을 안 쓰는 이유: 조직(org) 저장소는 유료 라이선스 요구
+# (2026-07-29 실측 — "License key is required" 실패). gitleaks CLI 자체는 MIT 무료라
+# 바이너리를 직접 받아 실행한다. 버전은 로컬 훅과 맞춰 고정.
+#
+# 검사 범위: push 는 "이번에 올라온 커밋 범위만" (과거 히스토리의 이미 로테이션된
+# 유출로 매번 실패하는 것 방지). 범위를 알 수 없는 경우(새 브랜치·PR)는 현재 파일 전체.
 name: gitleaks
 on:
   push:
@@ -16,8 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # 전체 히스토리 — 푸시된 모든 커밋의 diff 를 검사
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+          fetch-depth: 0   # 커밋 범위 검사에 이전 커밋들이 필요
+      - name: Run gitleaks
+        run: |
+          V=8.30.1
+          curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz" | tar -xz gitleaks
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+          if [ "${{ github.event_name }}" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            echo "push 범위 검사: $BEFORE..$AFTER"
+            ./gitleaks git . -c .gitleaks.toml --redact --no-banner --log-opts="$BEFORE..$AFTER"
+          else
+            echo "전체 파일 검사 (범위 특정 불가)"
+            ./gitleaks dir . -c .gitleaks.toml --redact --no-banner
+          fi
