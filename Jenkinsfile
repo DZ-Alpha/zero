@@ -3,6 +3,7 @@ pipeline {
     environment {
         REGISTRY = 'harbor.hizero.local'
         PROJECT  = 'dangdang-backend'
+        NODE_IP  = '192.168.0.75'   // DAST 스캔 대상 워커 노드 IP (프론트 Jenkinsfile.frontend와 동일)
     }
     stages {
         // Checkout stage 없음 — "Pipeline script from SCM"이 zero repo를 자동 체크아웃.
