@@ -3,7 +3,9 @@ pipeline {
     environment {
         REGISTRY = 'harbor.hizero.local'
         PROJECT  = 'dangdang-backend'
-        NODE_IP  = '192.168.0.75'   // DAST 스캔 대상 워커 노드 IP (프론트 Jenkinsfile.frontend와 동일)
+        // DAST 스캔 대상 워커 노드 IP 목록. NodePort는 모든 노드에 열리므로 살아있는 아무 노드나 OK.
+        // 스페이스 구분: 게이트에서 순회하며 먼저 도달되는 노드로 스캔(노드 1개 장애 견딤).
+        NODE_IPS = '192.168.0.71 192.168.0.72 192.168.0.73 192.168.0.75'
     }
     stages {
         // Checkout stage 없음 — "Pipeline script from SCM"이 zero repo를 자동 체크아웃.
@@ -134,6 +136,46 @@ pipeline {
                                     --server ${SERVER} --auth-token \$ARGOCD_TOKEN --plaintext \
                                     --sync --health --timeout 300
                             """
+                            // ★ DAST 게이트: staging 뜬 것에 비인증 ZAP baseline. High(exit1)면 prod 승격 차단.
+                            def PORT_MAP = [
+                                'login-service':31000, 'main-service':31001, 'community-service':31002,
+                                'recipe-service':31003, 'product-service':31004, 'ingredients-service':31005,
+                                'diet-service':31006, 'admin-service':31007, 'ai':31008,
+                            ]
+                            def PORT = PORT_MAP[svc]
+                            if (PORT == null) {
+                                echo "DAST 포트 매핑 없음(${svc}) — 스캔 스킵"
+                            } else {
+                                sh """
+                                    mkdir -p \$WORKSPACE/zap-out && chmod 777 \$WORKSPACE/zap-out
+                                    # NodePort는 모든 노드에 열리므로, 살아있는(도달되는) 첫 노드를 골라 스캔.
+                                    # 노드 1개 장애 시 다음 노드로 폴백. 전부 불통이면 서비스 자체 장애로 보고 실패.
+                                    TARGET_IP=""
+                                    for ip in ${NODE_IPS}; do
+                                        code=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://\$ip:${PORT}/health" || echo 000)
+                                        echo "노드 후보 \$ip:${PORT}/health → \$code"
+                                        if [ "\$code" != "000" ]; then TARGET_IP=\$ip; break; fi
+                                    done
+                                    if [ -z "\$TARGET_IP" ]; then
+                                        echo "DAST 대상 도달 불가 — ${svc}가 어느 노드(${NODE_IPS})로도 안 뜸. 승격 차단"
+                                        exit 1
+                                    fi
+                                    echo "DAST 스캔 대상 노드: \$TARGET_IP:${PORT} (${svc})"
+                                    # 비인증 baseline. -I 없음: 0=PASS, 1=FAIL(High,차단), 2=WARN(통과)
+                                    docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                        ghcr.io/zaproxy/zaproxy:stable \
+                                        zap-baseline.py -t http://\$TARGET_IP:${PORT} \
+                                        -r zap-${svc}-report.html > \$WORKSPACE/zap-out/zap-${svc}.log 2>&1 || ZAP_RC=\$?
+                                    ZAP_RC=\${ZAP_RC:-0}
+                                    echo "ZAP ${svc} exit=\$ZAP_RC (0=PASS 1=FAIL/High 2=WARN)"
+                                    tail -25 \$WORKSPACE/zap-out/zap-${svc}.log
+                                    if [ "\$ZAP_RC" = "1" ]; then
+                                        echo "DAST FAIL(High) — ${svc} prod 승격 차단"
+                                        exit 1
+                                    fi
+                                    echo "DAST 통과 — ${svc} 승격 진행"
+                                """
+                            }
                             // 2) 통과 → values-production.yaml tag 승격
                             withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
                                     usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
