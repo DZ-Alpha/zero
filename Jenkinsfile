@@ -36,8 +36,18 @@ pipeline {
                                 echo "git diff 실패(exit ${status}) — 안전하게 전체 빌드"
                                 changed = all
                             } else {
-                                def lines = readFile('/tmp/diff.txt').trim()
-                                def files = lines ? lines.split('\n') : []
+                                def raw = readFile('/tmp/diff.txt').trim()
+                                def rawFiles = raw ? raw.split('\n') : []
+                                // 문서·비코드 파일 제외: 이런 파일만 바뀐 서비스는 빌드/스캔/승격 안 함.
+                                // (파일 단위로 거름 — 코드+문서 동시 변경이면 코드가 남아 빌드는 됨)
+                                def isDoc = { String f ->
+                                    def lower = f.toLowerCase()
+                                    lower.endsWith('.md') || lower.endsWith('.txt') ||
+                                    lower.endsWith('license') || lower.endsWith('.gitignore')
+                                }
+                                def files = rawFiles.findAll { !isDoc(it) }
+                                def skipped = rawFiles.findAll { isDoc(it) }
+                                if (skipped) { echo "문서·비코드 변경 무시: ${skipped.join(', ')}" }
                                 changed = all.findAll { svc -> files.any { it.startsWith("backend/${svc}/") } }
                             }
                         }
