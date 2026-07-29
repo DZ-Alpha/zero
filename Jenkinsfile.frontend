@@ -116,5 +116,49 @@ pipeline {
                 }
             }
         }
+
+        stage('Wait Staging & Promote to Prod') {
+            when { expression { env.CHANGED?.trim() } }
+            steps {
+                script {
+                    def SERVER = '192.168.0.68:30080'   // ArgoCD NodePort (HTTP, insecure)
+                    withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
+                        for (fe in env.CHANGED.split(' ')) {
+                            env.FE = fe
+                            echo "========== [${fe}] staging 대기 후 prod 승격 =========="
+                            // 1) staging App(frontend/frontend-admin) Synced+Healthy 대기 (게이트)
+                            sh """
+                                argocd app wait ${fe} \
+                                    --server ${SERVER} --auth-token \$ARGOCD_TOKEN --plaintext \
+                                    --sync --health --timeout 300
+                            """
+                            // 2) 통과 → values-production.yaml tag 승격
+                            withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
+                                    usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
+                                sh '''
+                                    set -e
+                                    SHA=$(git rev-parse --short HEAD)
+                                    WORK=$(mktemp -d)
+                                    git clone --depth 1 "https://${GIT_USER}:${GIT_PAT}@github.com/DZ-Alpha/zero-manifests.git" "$WORK"
+                                    cd "$WORK"
+                                    git config user.name  "jenkins-ci"
+                                    git config user.email "ci@hizero.local"
+                                    yq -i ".image.tag = \\"${SHA}\\"" charts/${FE}/values-production.yaml
+                                    if git diff --quiet; then
+                                        echo "prod tag 변경 없음 (${FE} ${SHA}) — skip"
+                                    else
+                                        git commit -am "chore(${FE}): promote to prod tag ${SHA} [skip ci]"
+                                        git push origin main
+                                        echo "prod 승격: ${FE} tag=${SHA}"
+                                    fi
+                                    cd / && rm -rf "$WORK"
+                                '''
+                            }
+                            echo "========== [${fe}] prod 승격 완료 =========="
+                        }
+                    }
+                }
+            }
+        }
     }
 }
