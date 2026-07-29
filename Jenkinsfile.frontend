@@ -3,6 +3,7 @@ pipeline {
     environment {
         REGISTRY = 'harbor.hizero.local'
         PROJECT  = 'dangdang'
+        NODE_IP  = '192.168.0.75'
     }
     stages {
         // Checkout stage 없음 — Pipeline from SCM이 zero repo 자동 체크아웃.
@@ -132,6 +133,24 @@ pipeline {
                                     --server ${SERVER} --auth-token \$ARGOCD_TOKEN --plaintext \
                                     --sync --health --timeout 300
                             """
+                            // ★ DAST 게이트: staging 뜬 것에 ZAP baseline. FAIL(High)이면 prod 승격 차단.
+                            def PORT = (fe == 'frontend') ? '30000' : '30001'
+                            sh """
+                                mkdir -p \$WORKSPACE/zap-out && chmod 777 \$WORKSPACE/zap-out
+                                # -I 없음: 0=PASS, 1=FAIL(High, 차단), 2=WARN(통과)
+                                docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                    ghcr.io/zaproxy/zaproxy:stable \
+                                    zap-baseline.py -t http://${NODE_IP}:${PORT} \
+                                    -r zap-${fe}-report.html > \$WORKSPACE/zap-out/zap-${fe}.log 2>&1 || ZAP_RC=\$?
+                                ZAP_RC=\${ZAP_RC:-0}
+                                echo "ZAP ${fe} exit=\$ZAP_RC (0=PASS 1=FAIL/High 2=WARN)"
+                                tail -25 \$WORKSPACE/zap-out/zap-${fe}.log
+                                if [ "\$ZAP_RC" = "1" ]; then
+                                    echo "DAST FAIL(High) — ${fe} prod 승격 차단"
+                                    exit 1
+                                fi
+                                echo "DAST 통과 — ${fe} 승격 진행"
+                            """
                             // 2) 통과 → values-production.yaml tag 승격
                             withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
                                     usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
@@ -159,6 +178,12 @@ pipeline {
                     }
                 }
             }
+        }
+    }
+    post {
+        always {
+            // ZAP DAST 리포트 보관(htmlpublisher 없어 archive. 빌드 페이지에서 다운로드해서 봄)
+            archiveArtifacts artifacts: 'zap-out/*.html,zap-out/*.log', allowEmptyArchive: true
         }
     }
 }
