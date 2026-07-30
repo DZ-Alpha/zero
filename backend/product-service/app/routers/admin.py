@@ -82,14 +82,64 @@ def _parse_uuid(value: str, label: str) -> uuid.UUID:
         raise HTTPException(status_code=422, detail=f"유효하지 않은 {label} UUID 형식입니다.")
 
 
+# ── RESTful 분리 엔드포인트 (Istio 전환 요청서 §1, 2026-07-30) ────────────────
+# 프록시가 JSON body의 menu 값을 읽어 서비스를 고르던 구조(아래 레거시 POST
+# /admin)를 없애기 위해 기능별 URL을 분리했다. 경로만으로 소유 서비스가
+# 정해진다: /admin/products/* → product-service(여기).
+
+
+@router.post("/products")
+async def create_product_endpoint(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+) -> dict[str, object]:
+    """AD-0101: 상품 등록."""
+    return await _handle_create_product(body, db)
+
+
+@router.patch("/products/{product_id}")
+async def update_product_endpoint(
+    product_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+) -> dict[str, object]:
+    """AD-0102: 상품 수정."""
+    return await _handle_update_product({**body, "id": product_id}, db)
+
+
+@router.post("/products/{product_id}/nutrients")
+async def update_nutrition_endpoint(
+    product_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+) -> dict[str, object]:
+    """AD-0103: 영양성분 등록/수정."""
+    return await _handle_update_nutrition({**body, "id": product_id}, db)
+
+
+@router.post("/products/{product_id}/ingredients")
+async def update_ingredients_endpoint(
+    product_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+) -> dict[str, object]:
+    """AD-0104: 원재료/알레르기 등록."""
+    return await _handle_update_ingredients({**body, "id": product_id}, db)
+
+
 @router.post("")
 async def admin_endpoint(
     body: dict,
     db: AsyncSession = Depends(get_db),
     _admin: dict = Depends(get_current_admin),
 ) -> dict[str, object]:
-    """AD-0101~0104 통합 엔드포인트 (menu 파라미터로 분기).
-    기능명세서 API-Spec 기준: /admin?menu=manage-item|manage-nutrients|manage-ingredients"""
+    """[레거시] AD-0101~0104 통합 엔드포인트 (menu 파라미터로 분기).
+    Istio 전환 요청서 §1로 위 RESTful 경로들이 정식이 됐다 - frontend-admin이
+    전부 새 경로로 전환된 뒤 제거 예정. 그때까지 하위호환으로만 유지."""
     menu = body.get("menu", "")
 
     if menu == "manage-item":
