@@ -125,3 +125,56 @@
 AI: POST /b/ai/chatbot, POST /b/ai/chatbot/stream(8초 이상 유지), 사진 첨부, GET /b/ai/chatbot/history(imageUrl)
 보안: GET /b/diet/internal/* → 404, POST /b/rooms/internal/* → 404
 ```
+
+## 10. QoS (타임아웃 · 재시도 · 서킷 브레이킹) — 운영팀 요청 반영
+
+**배경**: 현재 nginx/프론트 프록시는 경로별 타임아웃만 개별 지정돼 있고(§6, §7),
+재시도·서킷 브레이킹·레이트리밋은 어디에도 없다. 백엔드 하나가 느려지면 프록시가
+타임아웃 끝까지 그대로 기다렸다가 502를 반환하는 구조다. 아래는 백/프론트가 아는
+현재 동작과 Istio 전환 시 반영을 요청하는 항목이며, **실제 VirtualService /
+DestinationRule 수치·정책 결정은 운영팀 영역**이라 여기서는 근거와 우선순위만
+제공한다.
+
+### 10-1. 타임아웃 (현재 값 — 최소한 유지 필요)
+
+| 대상 | 현재 타임아웃 | 비고 |
+|---|---|---|
+| 일반 API (login/admin/product/community/recipe/ingredients/tags 등) | 8s | 프론트 프록시 기준 |
+| `/b/uploads/*` | 60s | 사진 업로드, 스트리밍 전달 |
+| `/b/ai/*` (SSE 포함) | 130s | §7 참고. **Istio route timeout은 전체 응답 완료 기준이라 스트리밍에 그대로 적용하면 조기 종료될 수 있음** — idleTimeout 등 스트리밍 대응 옵션으로 갈지 운영팀 확인 요청 |
+| `/b/diet-photos/*` (MinIO 직결) | 별도 지정 없음(브라우저 fetch 기본) | §8 |
+
+### 10-2. 재시도 정책
+
+- **원칙: GET(멱등)만 재시도 대상.** POST/PATCH/DELETE는 재시도 금지 —
+  특히 `/b/admin/*`, `/b/uploads/*`, `/b/diet/upload`는 재시도 시 중복 생성
+  위험이 있다.
+- `/b/ai/chatbot/stream`(SSE)과 `/b/uploads/*`는 **재시도 비활성(attempts=0)**
+  권장 — Envoy가 연결을 새로 열면 클라이언트 스트림/업로드가 끊긴 채로 남는다.
+- 그 외 GET: attempts 2, perTryTimeout은 원 타임아웃의 절반 정도, retryOn은
+  `5xx, connect-failure, refused-stream` 제안. 4xx는 재시도 대상에서 제외
+  (현재 프론트 프록시의 502 fallback 응답도 재시도가 아니라 단순 에러 표시).
+
+### 10-3. 서킷 브레이킹 / Outlier Detection
+
+- **rooms(community-service) ↔ diet-service**: 얌로그 조회가 매 요청 diet-service를
+  fan-out 호출한다(§2 `/b/rooms/*`, `room_aggregation.py`가 캐시 없이 매번 계산).
+  diet-service가 느려지면 community-service까지 같이 느려질 수 있어 outlier
+  detection(consecutive5xxErrors 낮게 + baseEjectionTime) 권장 대상 1순위.
+- **ai(챗봇)**: 외부 LLM(Bedrock/Gemini) 대기시간이 정상적으로 길다. 5xx 카운트
+  기준 outlier detection을 그대로 걸면 정상 지연을 장애로 오판할 수 있음 —
+  타임아웃(10-1)과 분리해서 기준을 잡아야 하며, 구체 임계값은 운영팀과 협의 필요.
+
+### 10-4. 레이트 리밋
+
+- 현재 게이트웨이/프록시 어디에도 레이트리밋이 없다. 어뷰징·비용 우려 우선순위:
+  ① `/b/social-access/*/login` (로그인 시도), ② `/b/ai/chatbot*` (LLM 호출 비용),
+  ③ `/b/uploads/*` (스토리지). Istio 레벨 글로벌 레이트리밋(EnvoyFilter 등)은
+  인프라 영역이라 구체 수치는 못 드리고, 위 세 그룹을 우선 검토 대상으로 제안한다.
+
+### 10-5. 커넥션 풀
+
+- 백/프론트는 별도 커넥션 풀 튜닝을 하지 않고 있다(각 서비스 uvicorn/Next.js
+  기본값). 동접 시 가장 먼저 병목이 예상되는 곳은 diet-service(업로드+폴링
+  동시 부하)와 community-service(얌로그 fan-out) — DestinationRule
+  connectionPool 설정 시 이 두 서비스를 우선 검토해 달라고 요청.
