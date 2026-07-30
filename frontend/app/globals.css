@@ -2113,6 +2113,7 @@ body{font-size:17px}
   transition:background 160ms ease,border-color 160ms ease,transform 160ms var(--ease);
 }
 .today-room-nudge:hover{border-color:#b5c8ae;background:#edf6e5;transform:translateY(-2px)}
+.today-room-nudge-static{cursor:default}.today-room-nudge-static:hover{border-color:#d7e2d2;background:#f3f8ed;transform:none}
 .today-room-nudge-avatars{width:66px;display:flex}.today-room-nudge-avatars i{width:30px;height:30px;margin-left:-8px;display:grid;place-items:center;border:2px solid #f3f8ed;border-radius:50%;background:var(--lime);font-size:10px;font-style:normal;font-weight:900}.today-room-nudge-avatars i:first-child{margin-left:0}.today-room-nudge-avatars i:nth-child(2){background:#f2ce67}.today-room-nudge-avatars i:nth-child(3){background:#c9b9e8}
 .today-room-nudge>span:nth-child(2){min-width:0}.today-room-nudge strong,.today-room-nudge small{display:block}.today-room-nudge strong{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.today-room-nudge small{margin-top:3px;color:var(--muted);font-size:12px}.today-room-nudge>b{width:29px;height:29px;display:grid;place-items:center;border-radius:50%;background:var(--green);color:#fff;font-size:13px}
 
