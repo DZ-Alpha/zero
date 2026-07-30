@@ -228,6 +228,7 @@ class UpdateRoomBody(BaseModel):
     name: str | None = None
     emoji: str | None = None
     rankingOptIn: bool | None = None
+    memberInviteEnabled: bool | None = None
 
 
 @router.patch("/{room_id}")
@@ -240,7 +241,9 @@ async def patch_room(
     rid = _to_uuid(room_id)
     try:
         await room_store.update_room(
-            db, rid, user.user_id, name=body.name, emoji=body.emoji, ranking_opt_in=body.rankingOptIn
+            db, rid, user.user_id,
+            name=body.name, emoji=body.emoji, ranking_opt_in=body.rankingOptIn,
+            member_invite_enabled=body.memberInviteEnabled,
         )
         return await _get_settings_payload(db, rid, user.user_id)
     except RoomError as error:
@@ -269,8 +272,11 @@ async def _get_settings_payload(db: AsyncSession, room_id: uuid.UUID, viewer_id:
     members = await room_store.list_active_members(db, room_id)
     member_list = await room_aggregation.build_room_members(db, room, members, viewer_id)
 
+    # 2026-07-30 요청 - 초대 코드 열람도 canInvite와 같은 기준(방장, 또는
+    # 방장이 member_invite_enabled를 켠 경우의 멤버)을 따른다 - 하드코딩된
+    # "방장만" 조건을 없애 권한이 하나로 일원화되게 한다.
     active_invite = None
-    if membership.role == "owner":
+    if summary["permissions"]["canInvite"]:
         invite = await room_store.get_active_invite(db, room_id, viewer_id)
         if invite is not None:
             active_invite = {"code": None, "joinUrl": None, "expiresAt": invite.expires_at.isoformat()}
@@ -281,6 +287,7 @@ async def _get_settings_payload(db: AsyncSession, room_id: uuid.UUID, viewer_id:
             "nudges": membership.nudge_notifications,
             "commentsAndReactions": membership.activity_notifications,
         },
+        "memberInviteEnabled": room.member_invite_enabled,
         "activeInvite": active_invite,
         "members": member_list,
     }

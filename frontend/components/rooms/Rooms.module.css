@@ -780,6 +780,7 @@
   place-items: center;
   background: rgba(17, 29, 20, .42);
   backdrop-filter: blur(6px);
+  animation: modal-backdrop-in 180ms linear both;
 }
 
 .modal {
@@ -790,6 +791,17 @@
   border-radius: 22px;
   background: #fff;
   box-shadow: 0 28px 90px rgba(17, 29, 20, .24);
+  animation: modal-panel-in 240ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+@keyframes modal-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: translateY(10px) scale(.985); }
+  to { opacity: 1; transform: none; }
 }
 
 .modalHeader {
@@ -1054,8 +1066,12 @@
   padding-top: 26px;
 }
 
-/* 날짜 이동(2026-07-30) - 방 상세 "오늘" 탭 상단의 이전/다음 날 + 캘린더 */
+/* 날짜 이동(2026-07-30) - 방 상세 "오늘" 탭 상단의 이전/다음 날 + 캘린더.
+   캘린더는 record-date-navigator/record-date-popover(globals.css, 오늘/기록
+   페이지)와 같은 패턴 - 문서 흐름을 밀어내는 블록이 아니라 날짜 라벨 아래에
+   뜨는 팝업(position:absolute)이라 position:relative 앵커가 필요하다. */
 .dateNav {
+  position: relative;
   margin: 0 0 18px;
   display: flex;
   align-items: center;
@@ -1112,12 +1128,22 @@
 }
 
 .roomCalendar {
-  margin: 0 0 22px;
+  position: absolute;
+  z-index: 12;
+  top: 48px;
+  left: 0;
+  width: min(340px, calc(100vw - 48px));
   padding: 16px 18px 14px;
-  max-width: 420px;
   border: 1px solid var(--room-line);
   border-radius: 18px;
   background: #fff;
+  box-shadow: 0 20px 48px rgba(20, 35, 23, .16);
+  animation: room-calendar-in 220ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+@keyframes room-calendar-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .roomCalendar > header {
@@ -1836,6 +1862,14 @@
   color: #fff;
   font-size: 18px;
   backdrop-filter: blur(7px);
+}
+
+/* 2026-07-30 요청 - "맛있겠다"를 누른 사진은 그 버튼에 연한 빨간 배경을
+   표시한다. 댓글/신고(···) 버튼엔 aria-pressed가 없어 이 속성 선택자가
+   맛있겠다 버튼에만 걸린다. */
+.setlogActions button[aria-pressed="true"] {
+  background: rgba(224, 74, 61, .55);
+  border-color: rgba(255, 255, 255, .85);
 }
 
 .setlogBubbles {
@@ -3603,6 +3637,12 @@
   .photoFrame img {
     transition: none;
   }
+
+  .modalBackdrop,
+  .modal,
+  .roomCalendar {
+    animation: none;
+  }
 }
 
 .previewNotice {
@@ -3919,6 +3959,16 @@
   gap: 24px;
   border-radius: 20px;
   background: #f1f6ed;
+}
+
+/* 2026-07-30 - 초대 권한이 없는 멤버에게 보여주는 안내(코드/링크 자체는 안 보임). */
+.settingsEmptyNote {
+  margin: 0;
+  padding: 19px 20px;
+  border-radius: 20px;
+  background: #f5f6f3;
+  color: var(--room-muted);
+  font-size: 12px;
 }
 
 .invitePanel > div:first-child {

@@ -128,7 +128,8 @@ def compute_permissions(room: Room, membership: RoomMember, active_member_count:
     is_owner = membership.role == "owner"
     return {
         "canEditRoom": is_owner,
-        "canInvite": True,
+        # 2026-07-30 요청 - 기본은 방장만, 방장이 켜면 멤버도 가능.
+        "canInvite": is_owner or room.member_invite_enabled,
         "canManageMembers": is_owner,
         "canTransferOwnership": is_owner and active_member_count > 1,
         "canDeleteRoom": is_owner,
@@ -177,7 +178,7 @@ def _generate_invite_code() -> str:
 
 
 async def create_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int) -> tuple[RoomInvite, str]:
-    await require_owner(db, room_id, actor_id)
+    await require_invite_access(db, room_id, actor_id)
 
     # "새 코드 발급 시 기존 활성 코드는 즉시 무효화"
     result = await db.execute(
@@ -210,7 +211,7 @@ async def create_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int) -> 
 
 
 async def get_active_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int) -> RoomInvite | None:
-    await require_owner(db, room_id, actor_id)
+    await require_invite_access(db, room_id, actor_id)
     now = datetime.now(timezone.utc)
     result = await db.execute(
         select(RoomInvite)
@@ -324,8 +325,28 @@ async def require_owner(db: AsyncSession, room_id: uuid.UUID, user_id: int) -> R
     return membership
 
 
+async def require_invite_access(db: AsyncSession, room_id: uuid.UUID, user_id: int) -> RoomMember:
+    """초대 코드 생성/조회 권한(2026-07-30 요청). 방장은 항상 가능하고,
+    멤버는 방장이 member_invite_enabled를 켜둔 경우에만 가능하다(기본 꺼짐).
+    코드를 없애는 건(revoke_invite) 계속 방장 전용 - require_owner 그대로 쓴다."""
+    membership = await require_membership(db, room_id, user_id)
+    if membership.role == "owner":
+        return membership
+    room = await get_room(db, room_id)
+    if not room.member_invite_enabled:
+        raise _access_denied()
+    return membership
+
+
 async def update_room(
-    db: AsyncSession, room_id: uuid.UUID, actor_id: int, *, name: str | None, emoji: str | None, ranking_opt_in: bool | None
+    db: AsyncSession,
+    room_id: uuid.UUID,
+    actor_id: int,
+    *,
+    name: str | None,
+    emoji: str | None,
+    ranking_opt_in: bool | None,
+    member_invite_enabled: bool | None = None,
 ) -> Room:
     await require_owner(db, room_id, actor_id)
     room = await get_room(db, room_id)
@@ -335,6 +356,8 @@ async def update_room(
         room.emoji = emoji
     if ranking_opt_in is not None:
         room.ranking_opt_in = ranking_opt_in
+    if member_invite_enabled is not None:
+        room.member_invite_enabled = member_invite_enabled
     room.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(room)

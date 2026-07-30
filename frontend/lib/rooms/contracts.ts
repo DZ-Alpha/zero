@@ -216,6 +216,10 @@ export type RoomSettingsResponse = {
     nudges: boolean;
     commentsAndReactions: boolean;
   };
+  // 2026-07-30 - 방장이 멤버에게도 초대 코드 생성/조회를 열어줄지 토글하는 값.
+  // 기본 false(멤버는 못 만듦) - room.permissions.canInvite가 이 값과 방장
+  // 여부를 합쳐서 최종 권한을 알려준다.
+  memberInviteEnabled: boolean;
   activeInvite: RoomInvite | null;
   members: RoomMember[];
 };
@@ -224,6 +228,7 @@ export type UpdateRoomInput = {
   name?: string;
   emoji?: string;
   rankingOptIn?: boolean;
+  memberInviteEnabled?: boolean;
 };
 
 export type UpdateRoomNotificationsInput = {
