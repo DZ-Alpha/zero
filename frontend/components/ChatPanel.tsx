@@ -1,9 +1,10 @@
 "use client";
 
-import { ChangeEvent, Fragment, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { getAccessToken } from "@/lib/api/client";
 import { getChatHistory, sendChatbotMessage, streamChatbotMessage } from "@/lib/api/zerocheck";
 import { convertHeicToJpeg, isHeicFile } from "@/lib/heic";
+import { renderInlineMarkdown } from "@/lib/inlineMarkdown";
 
 type ChatMessage = { role: "question" | "answer"; text: string; imageUrl?: string };
 
@@ -17,18 +18,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
-  });
-}
-
-// chatbot-streaming-design.md §8-3 — 백엔드가 마크다운을 그대로 보내므로
-// **볼드**만 인라인으로 굵게 표시한다. 챗봇 답변엔 헤딩/리스트가 거의 안 나와서
-// react-markdown 같은 별도 의존성 없이 이 정도로 충분하다고 판단했다.
-function renderInlineMarkdown(text: string) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
-    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>;
-    }
-    return <Fragment key={index}>{part}</Fragment>;
   });
 }
 

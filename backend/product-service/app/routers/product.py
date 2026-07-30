@@ -14,6 +14,7 @@ from app.services.ai_service import (
     generate_product_summary,
     generate_sweetener_description,
     is_summary_unavailable,
+    sanitize_summary,
 )
 from app.services.product_store import (
     ProductNotFoundError,
@@ -92,11 +93,14 @@ async def get_ai_summary(
 
     cached = await get_ai_summary_cache(db, pid)
     if cached and cached.ai_oneline:
-        return {"ai-oneline": cached.ai_oneline}
+        # 서식 규칙(2026-07-30) 이전에 캐싱된 응답에도 소급 적용 - 저장값은
+        # 안 고치고 읽을 때만 정리한다.
+        return {"ai-oneline": sanitize_summary(cached.ai_oneline)}
 
     tags = await get_product_tags(db, pid)
     summary = await generate_product_summary(product, tags)
     if not is_summary_unavailable(summary):
+        summary = sanitize_summary(summary)
         await upsert_ai_summary_cache(db, pid, ai_oneline=summary)
     return {"ai-oneline": summary}
 
@@ -121,10 +125,12 @@ async def get_sweetener_info(
 
     cached = await get_ai_summary_cache(db, pid)
     if cached and cached.gammi_info:
-        return {"gammi-info": cached.gammi_info}
+        # 서식 규칙(2026-07-30) 이전에 캐싱된 응답에도 소급 적용.
+        return {"gammi-info": sanitize_summary(cached.gammi_info)}
 
     description = await generate_sweetener_description(product, sweetener_tags)
     if not is_summary_unavailable(description):
+        description = sanitize_summary(description)
         await upsert_ai_summary_cache(db, pid, gammi_info=description)
     return {"gammi-info": description}
 
