@@ -4,7 +4,7 @@ from typing import Annotated
 
 import jwt as pyjwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,6 +63,23 @@ class FirstSetRequest(BaseModel):
     tall: int | None = None
     weight: float | None = None
     birthday: date | None = None
+
+    # 2026-07-30 QA 리포트: 비정상 키/몸무게(tall=18900, weight=70000)가 그대로
+    # 저장돼서 이후 health-profile 갱신이 DB Numeric(5,2) 오버플로로 500이
+    # 나던 문제 - 여기서부터 400급(422)으로 막는다.
+    @field_validator("tall")
+    @classmethod
+    def _validate_tall(cls, value: int | None) -> int | None:
+        if value is not None and not (50 <= value <= 250):
+            raise ValueError("키는 50~250cm 사이여야 해요.")
+        return value
+
+    @field_validator("weight")
+    @classmethod
+    def _validate_weight(cls, value: float | None) -> float | None:
+        if value is not None and not (20 <= value <= 300):
+            raise ValueError("몸무게는 20~300kg 사이여야 해요.")
+        return value
 
 
 @router.post("/firstset")

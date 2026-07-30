@@ -3,12 +3,14 @@
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { HEALTH_LABELS } from "@/data/taxonomy";
+import { ALLERGEN_OPTIONS, HEALTH_LABELS } from "@/data/taxonomy";
 import { saveUserProfile } from "@/hooks/useUserSettings";
 
 const providerNames: Record<string, string> = { google: "Google", kakao: "카카오", naver: "NAVER", apple: "Apple" };
 const interests = [...HEALTH_LABELS];
-const allergens = ["우유", "대두", "땅콩", "호두", "밀", "난류", "새우", "게", "복숭아", "토마토", "해당 없음"];
+// "해당 없음"은 실제 성분 태그가 아니라 이 화면에서만 쓰는 빠른 선택 버튼이라
+// 공용 목록(ALLERGEN_OPTIONS)엔 안 넣고 여기서만 덧붙인다.
+const allergens = [...ALLERGEN_OPTIONS, "해당 없음"];
 
 export type OAuthSignupProfile = {
   name?: string;

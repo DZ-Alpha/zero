@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { OAUTH_PROVIDERS } from "@/components/OAuthButtons";
 import { ConfirmDialog } from "@/components/SystemFeedback";
+import { ALLERGEN_OPTIONS } from "@/data/taxonomy";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { AUTH_CHANGE_EVENT, AUTH_KEY, LEGACY_AUTH_KEY } from "@/hooks/useAuthSession";
 import { saveUserSettingsToServer, UserGoals, UserProfile, useUserSettings } from "@/hooks/useUserSettings";
@@ -15,7 +16,8 @@ const LINK_RESULT_KEY = "dangdang-link-result";
 type Editor = "profile" | "goals" | "interests" | "allergens" | "notifications";
 
 const interestOptions = ["제로슈거", "저당", "저칼로리", "고단백", "간편식", "저당 레시피"];
-const allergenOptions = ["우유", "대두", "땅콩", "견과류", "밀", "달걀", "갑각류"];
+// 2026-07-30: 가입 화면(SignupProfileForm)과 같은 목록을 쓴다 - data/taxonomy.ts 참고.
+const allergenOptions = [...ALLERGEN_OPTIONS];
 const providerNames: Record<string, string> = { google: "Google", kakao: "카카오", naver: "NAVER", apple: "Apple" };
 // 백엔드 SOCIAL_CODES(NA/KA/GL/AP/ADM) ↔ provider 경로 매핑
 const snsByCode: Record<string, { provider: string; label: string }> = {

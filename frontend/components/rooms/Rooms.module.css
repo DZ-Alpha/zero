@@ -1669,16 +1669,31 @@
   transition: transform 260ms cubic-bezier(.23, 1, .32, 1);
 }
 
-.setlogGalleryOpen {
+/* 2026-07-30 QA 리포트 - 사진이 2장 이상이어도 넘김이 "다음"(오른쪽) 한
+   방향뿐이라 뒤로 못 돌아가는 것처럼 보였다. 사진 전체를 덮던 버튼 하나를
+   좌/우 절반으로 나눠 이전/다음을 각각 맡긴다. */
+.setlogGalleryPrev,
+.setlogGalleryNext {
   position: absolute;
   z-index: 1;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  width: 50%;
   border: 0;
   background: transparent;
   cursor: pointer;
 }
 
-.setlogGalleryOpen span {
+.setlogGalleryPrev {
+  left: 0;
+}
+
+.setlogGalleryNext {
+  right: 0;
+}
+
+.setlogGalleryPrev span,
+.setlogGalleryNext span {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1692,11 +1707,11 @@
   transform: scale(1.025);
 }
 
-.setlogNextHint {
+.setlogNextHint,
+.setlogPrevHint {
   position: absolute;
   z-index: 2;
   top: 50%;
-  right: 14px;
   width: 36px;
   height: 36px;
   display: grid;
@@ -1710,6 +1725,14 @@
   pointer-events: none;
   transform: translateY(-50%);
   backdrop-filter: blur(7px);
+}
+
+.setlogNextHint {
+  right: 14px;
+}
+
+.setlogPrevHint {
+  left: 14px;
 }
 
 .setlogDots {

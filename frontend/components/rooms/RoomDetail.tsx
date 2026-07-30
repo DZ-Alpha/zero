@@ -601,17 +601,30 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                           <div className={styles.setlogPhoto}>
                             <SafeImage src={activeImage} alt={`${activeName} ${photoIndex + 1}번째 사진`} fallbackLabel="식단 사진" />
                             {photos.length > 1 && (
-                              <button
-                                type="button"
-                                className={styles.setlogGalleryOpen}
-                                onClick={() => setPhotoIndexes((current) => ({
-                                  ...current,
-                                  [meal.id]: ((current[meal.id] ?? 0) + 1) % photos.length,
-                                }))}
-                                aria-label={`${meal.memberName}님의 다음 ${MEAL_LABELS[todayView]} 사진 보기`}
-                              >
-                                <span>다음 사진 보기</span>
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  className={styles.setlogGalleryPrev}
+                                  onClick={() => setPhotoIndexes((current) => ({
+                                    ...current,
+                                    [meal.id]: ((current[meal.id] ?? 0) - 1 + photos.length) % photos.length,
+                                  }))}
+                                  aria-label={`${meal.memberName}님의 이전 ${MEAL_LABELS[todayView]} 사진 보기`}
+                                >
+                                  <span>이전 사진 보기</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.setlogGalleryNext}
+                                  onClick={() => setPhotoIndexes((current) => ({
+                                    ...current,
+                                    [meal.id]: ((current[meal.id] ?? 0) + 1) % photos.length,
+                                  }))}
+                                  aria-label={`${meal.memberName}님의 다음 ${MEAL_LABELS[todayView]} 사진 보기`}
+                                >
+                                  <span>다음 사진 보기</span>
+                                </button>
+                              </>
                             )}
                             <div className={styles.setlogAuthor}>
                               <span className={styles.avatar} aria-hidden="true">{meal.memberAvatar}</span>
@@ -622,6 +635,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                             </div>
                             {photos.length > 1 && (
                               <>
+                                <span className={styles.setlogPrevHint} aria-hidden="true">‹</span>
                                 <span className={styles.setlogNextHint} aria-hidden="true">›</span>
                                 <span className={styles.setlogDots} aria-hidden="true">
                                   {photos.map((url, index) => <i key={`${url}-${index}`} data-active={photoIndex === index} />)}
@@ -636,7 +650,11 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                                   void loadComments(meal.id);
                                 }}
                               >
-                                댓글 {meal.commentCount}
+                                {/* 2026-07-30 QA 리포트 - meal.commentCount는 페이지를 처음 연
+                                    시점의 서버 스냅샷이라, 같은 화면에서 댓글을 남기거나
+                                    지워도 안 바뀌었다("3개 남겼는데 1에서 안 올라감").
+                                    댓글을 한 번이라도 불러온 뒤로는 그 실제 개수를 쓴다. */}
+                                댓글 {mealComments?.length ?? meal.commentCount}
                               </button>
                               <button type="button" onClick={() => toggleReaction(meal.id, reaction.reacted, reaction.count)} aria-pressed={reaction.reacted}>
                                 맛있겠다 {reaction.count}
