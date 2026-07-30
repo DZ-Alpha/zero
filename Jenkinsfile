@@ -256,7 +256,10 @@ pipeline {
             steps {
                 script {
                     def SERVER = '192.168.0.68:30080'   // ArgoCD NodePort (HTTP, insecure)
-                    withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
+                    // active scan은 staging JWT_SECRET으로 유저 토큰을 직접 서명(pyjwt).
+                    // Jenkins는 클러스터 밖이라 kubectl exec 불가 → credential로 secret 주입.
+                    withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN'),
+                                     string(credentialsId: 'staging-jwt-secret', variable: 'STG_JWT_SECRET')]) {
                         for (svc in env.CHANGED.split(' ')) {
                             env.SVC = svc
                             echo "========== [${svc}] staging 대기 후 prod 승격 =========="
@@ -309,8 +312,49 @@ pipeline {
                                         echo "DAST FAIL(High) — ${svc} prod 승격 차단"
                                         exit 1
                                     fi
-                                    echo "DAST 통과 — ${svc} 승격 진행"
+                                    echo "DAST baseline 통과 — ${svc}"
                                 """
+
+                                // ★ 인증 active scan (zap-api-scan.py): openapi import + Bearer 주입.
+                                //   baseline이 못 잡는 SQLi/XSS/주입을 인증 상태로 전 엔드포인트에 검사.
+                                //   recipe-service는 staging에서 service.recipes(데이터팀 테이블) 의존으로
+                                //   CrashLoop → active 대상 제외(baseline만). High(exit1)면 승격 차단.
+                                //   토큰은 STG_JWT_SECRET으로 pyjwt 직접 서명(kubectl 불필요, 실증 검증됨).
+                                if (svc == 'recipe-service') {
+                                    echo "active scan 스킵(${svc}): 데이터팀 테이블 의존 — baseline만 적용"
+                                } else {
+                                    sh """
+                                        set -e
+                                        # 도달 노드 재선택(TARGET_IP는 baseline 블록의 shell 변수라 여기선 없음).
+                                        TARGET_IP=""
+                                        for ip in ${NODE_IPS}; do
+                                            code=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://\$ip:${PORT}/openapi.json" || echo 000)
+                                            if [ "\$code" != "000" ]; then TARGET_IP=\$ip; break; fi
+                                        done
+                                        if [ -z "\$TARGET_IP" ]; then
+                                            echo "active scan 대상 도달 불가 — ${svc} openapi 안 뜸. 승격 차단"
+                                            exit 1
+                                        fi
+                                        # staging 유저(user_id=1) 토큰을 pyjwt로 직접 서명. exp 짧게(1h), 매 스캔 새로 발급.
+                                        TOKEN=\$(python3 -c "import jwt,time,os;s=os.environ['STG_JWT_SECRET'];n=int(time.time());print(jwt.encode({'sub':'1','user_id':1,'provider':'dast-ci','nickname':'ci','role':'user','iat':n,'exp':n+3600},s,algorithm='HS256'))")
+                                        # openapi import + active scan + Bearer replacer.
+                                        # -I: 경고(WARN,exit2)는 통과 처리 — 보안헤더 등 Medium 이하는 승격 막지 않음.
+                                        #    High(exit1)만 차단. (baseline과 동일 기준: High면 실패)
+                                        timeout 600 docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                            ghcr.io/zaproxy/zaproxy:stable \
+                                            zap-api-scan.py -t "http://\$TARGET_IP:${PORT}/openapi.json" -f openapi -I \
+                                            -z "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Authorization -config replacer.full_list(0).replacement=Bearer\\ \$TOKEN" \
+                                            -r zap-api-${svc}-report.html > \$WORKSPACE/zap-out/zap-api-${svc}.log 2>&1 || API_RC=\$?
+                                        API_RC=\${API_RC:-0}
+                                        echo "ZAP active ${svc} exit=\$API_RC (0=PASS 1=FAIL/High, -I라 WARN은 0)"
+                                        tail -20 \$WORKSPACE/zap-out/zap-api-${svc}.log
+                                        if [ "\$API_RC" = "1" ]; then
+                                            echo "active scan FAIL(High) — ${svc} prod 승격 차단"
+                                            exit 1
+                                        fi
+                                        echo "active scan 통과 — ${svc} 승격 진행"
+                                    """
+                                }
                             }
                             // 2) 통과 → values-production.yaml tag 승격
                             withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
