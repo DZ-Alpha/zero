@@ -1067,9 +1067,10 @@
 }
 
 /* 날짜 이동(2026-07-30) - 방 상세 "오늘" 탭 상단의 이전/다음 날 + 캘린더.
-   캘린더는 record-date-navigator/record-date-popover(globals.css, 오늘/기록
-   페이지)와 같은 패턴 - 문서 흐름을 밀어내는 블록이 아니라 날짜 라벨 아래에
-   뜨는 팝업(position:absolute)이라 position:relative 앵커가 필요하다. */
+   캘린더는 2026-07-31부터 다른 얌로그 모달들과 같은 .modalBackdrop 패턴
+   (화면 중앙 + 뒷배경 블러 + 우상단 닫기)으로 뜬다 - 날짜 라벨에 앵커될
+   필요가 없어져서 .dateNav의 position:relative는 이제 장식용이 아니라
+   그냥 남겨둔 값이다(제거해도 무방). */
 .dateNav {
   position: relative;
   margin: 0 0 18px;
@@ -1127,18 +1128,36 @@
   color: var(--room-green);
 }
 
+/* 2026-07-31 요청 - 날짜 라벨 아래 앵커 팝오버 대신, 다른 모달들과 같은
+   화면 중앙 + 뒷배경 블러 모달로 변경. .modalBackdrop이 배경 블러/애니메이션과
+   가운데 정렬(display:grid;place-items:center)을 이미 해주므로, 이 안에서는
+   위치 지정 없이 카드 자체의 스타일만 갖는다. */
 .roomCalendar {
-  position: absolute;
+  position: relative;
   z-index: 12;
-  top: 48px;
-  left: 0;
   width: min(340px, calc(100vw - 48px));
-  padding: 16px 18px 14px;
+  /* 상단 여백을 넉넉히 둬서 우상단 닫기 버튼과 header의 "다음 달" 버튼이
+     안 겹치게 한다. */
+  padding: 44px 18px 14px;
   border: 1px solid var(--room-line);
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 20px 48px rgba(20, 35, 23, .16);
   animation: room-calendar-in 220ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+.roomCalendarClose {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--room-line);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 17px;
+  color: #4b544c;
 }
 
 @keyframes room-calendar-in {
@@ -3992,6 +4011,18 @@
      같은 폴백 문구는 nowrap이면 줄바꿈 없이 넓어져서 모바일에서 페이지 자체가
      옆으로 밀리는 문제가 있었다 - 문구가 길어질 수 있는 상태를 감안해 제거. */
   overflow-wrap: anywhere;
+}
+
+/* 2026-07-31 요청 - "발급된 코드가 없어요" 안내문은 실제 코드가 아니니
+   코드체(넓은 자간·큰 글씨) 대신 본문과 같은 일반 글씨체로 보여준다.
+   .invitePanel strong(0,1,1)보다 특이도가 높아야 이겨서, 클래스 단독이
+   아니라 이 형태로 써야 한다 - 안 그러면 챗봇 버튼 때와 같은 특이도
+   버그가 재현된다. */
+.invitePanel strong.invitePanelEmpty {
+  font-size: 15px;
+  letter-spacing: normal;
+  font-weight: 800;
+  color: var(--room-muted);
 }
 
 .invitePanel small {

@@ -211,6 +211,20 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     };
   }, [reportMeal]);
 
+  useEffect(() => {
+    if (!calendarOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCalendarOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [calendarOpen]);
+
   // 첫 로드만 전체 게이트 - 날짜 이동으로 다시 불러올 땐 기존 화면을 유지한
   // 채로 갈아끼운다(화면 전체가 깜빡이지 않게).
   if (!authReady || (signedIn && token && loading && !detail)) {
@@ -436,44 +450,53 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                 const leadingBlanks = new Date(calMonth.year, calMonth.month - 1, 1).getDay();
                 const isCurrentMonth = calMonthKey >= serverToday.slice(0, 7);
                 return (
-                  <div className={styles.roomCalendar}>
-                    <header>
-                      <button type="button" aria-label="이전 달" onClick={() => shiftCalMonth(-1)}>◀</button>
-                      <strong>{calMonth.year}년 {calMonth.month}월</strong>
-                      <button type="button" aria-label="다음 달" disabled={isCurrentMonth} onClick={() => shiftCalMonth(1)}>▶</button>
-                    </header>
-                    <div className={styles.roomCalendarWeekdays} aria-hidden="true">
-                      {WEEKDAY_LABELS.map((label) => <span key={label}>{label}</span>)}
-                    </div>
-                    <div className={styles.roomCalendarGrid}>
-                      {Array.from({ length: leadingBlanks }, (_, index) => <i key={`blank-${index}`} />)}
-                      {Array.from({ length: daysInMonth }, (_, index) => {
-                        const dayKey = `${calMonthKey}-${String(index + 1).padStart(2, "0")}`;
-                        const info = calByDate.get(dayKey);
-                        // 나도 올린 날(mine) / 남만 올린 날(others) 색 구분.
-                        const state = info ? (info.myRecordCount > 0 ? "mine" : "others") : "none";
-                        return (
-                          <button
-                            type="button"
-                            key={dayKey}
-                            data-state={state}
-                            data-selected={dayKey === selectedDate || undefined}
-                            disabled={dayKey > serverToday}
-                            onClick={() => {
-                              setSelectedDate(dayKey);
-                              setCalendarOpen(false);
-                            }}
-                          >
-                            {index + 1}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className={styles.roomCalendarLegend}>
-                      <span><i data-state="mine" />나도 올린 날</span>
-                      <span><i data-state="others" />나만 안 올린 날</span>
-                    </div>
-                    {calDays === undefined && <p className={styles.roomCalendarLoading}>기록을 불러오는 중…</p>}
+                  <div
+                    className={styles.modalBackdrop}
+                    role="presentation"
+                    onMouseDown={(event) => {
+                      if (event.target === event.currentTarget) setCalendarOpen(false);
+                    }}
+                  >
+                    <section className={styles.roomCalendar} role="dialog" aria-modal="true" aria-label="날짜 선택">
+                      <button type="button" className={styles.roomCalendarClose} onClick={() => setCalendarOpen(false)} aria-label="닫기">×</button>
+                      <header>
+                        <button type="button" aria-label="이전 달" onClick={() => shiftCalMonth(-1)}>◀</button>
+                        <strong>{calMonth.year}년 {calMonth.month}월</strong>
+                        <button type="button" aria-label="다음 달" disabled={isCurrentMonth} onClick={() => shiftCalMonth(1)}>▶</button>
+                      </header>
+                      <div className={styles.roomCalendarWeekdays} aria-hidden="true">
+                        {WEEKDAY_LABELS.map((label) => <span key={label}>{label}</span>)}
+                      </div>
+                      <div className={styles.roomCalendarGrid}>
+                        {Array.from({ length: leadingBlanks }, (_, index) => <i key={`blank-${index}`} />)}
+                        {Array.from({ length: daysInMonth }, (_, index) => {
+                          const dayKey = `${calMonthKey}-${String(index + 1).padStart(2, "0")}`;
+                          const info = calByDate.get(dayKey);
+                          // 나도 올린 날(mine) / 남만 올린 날(others) 색 구분.
+                          const state = info ? (info.myRecordCount > 0 ? "mine" : "others") : "none";
+                          return (
+                            <button
+                              type="button"
+                              key={dayKey}
+                              data-state={state}
+                              data-selected={dayKey === selectedDate || undefined}
+                              disabled={dayKey > serverToday}
+                              onClick={() => {
+                                setSelectedDate(dayKey);
+                                setCalendarOpen(false);
+                              }}
+                            >
+                              {index + 1}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className={styles.roomCalendarLegend}>
+                        <span><i data-state="mine" />나도 올린 날</span>
+                        <span><i data-state="others" />나만 안 올린 날</span>
+                      </div>
+                      {calDays === undefined && <p className={styles.roomCalendarLoading}>기록을 불러오는 중…</p>}
+                    </section>
                   </div>
                 );
               })()}
