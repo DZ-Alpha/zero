@@ -68,9 +68,12 @@ generates its result through a provider, then writes the existing completion
 outbox record. No image bytes are placed in Kafka.
 
 - `VISION_PROVIDER=gemini` is the ready-to-use provider. It requires
-  `GEMINI_API_KEY`, uses `GEMINI_MODEL=gemini-flash-latest` by default, limits
-  input to `VISION_MAX_IMAGE_BYTES` (10 MiB default), and returns a stable
-  `list-diet` result.
+  `GEMINI_API_KEY`, uses the pinned low-latency
+  `GEMINI_MODEL=gemini-3.5-flash-lite` with
+  `GEMINI_THINKING_LEVEL=minimal` by default, limits
+  each provider attempt to `VISION_TIMEOUT_SECONDS` (15 seconds by default),
+  limits input to `VISION_MAX_IMAGE_BYTES` (10 MiB default), and uses a JSON
+  Schema to return a stable `list-diet` result.
 - `VISION_PROVIDER=foodlens` requires the vendor-supplied REST recognition
   endpoint, authentication header, and multipart field name. FoodLens's public
   SDK says REST API access is obtained from support; the worker will not guess

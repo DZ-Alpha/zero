@@ -39,6 +39,7 @@ class Settings:
     vision_retry_backoff_seconds: float
     gemini_api_key: str | None
     gemini_model: str
+    gemini_thinking_level: str
     gemini_thinking_budget: int
     gemini_max_output_tokens: int
     foodlens_api_url: str | None
@@ -79,12 +80,13 @@ def load_settings() -> Settings:
         db_pool_max_size=int(os.getenv("DB_POOL_MAX_SIZE", "8")),
         db_pool_timeout_seconds=float(os.getenv("DB_POOL_TIMEOUT_SECONDS", "20")),
         vision_provider=os.getenv("VISION_PROVIDER", "stub"),
-        vision_timeout_seconds=float(os.getenv("VISION_TIMEOUT_SECONDS", "30")),
+        vision_timeout_seconds=float(os.getenv("VISION_TIMEOUT_SECONDS", "15")),
         vision_max_image_bytes=int(os.getenv("VISION_MAX_IMAGE_BYTES", str(10 * 1024 * 1024))),
         vision_max_attempts=max(1, int(os.getenv("VISION_MAX_ATTEMPTS", "3"))),
         vision_retry_backoff_seconds=float(os.getenv("VISION_RETRY_BACKOFF_SECONDS", "2")),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest"),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
+        gemini_thinking_level=os.getenv("GEMINI_THINKING_LEVEL", "minimal"),
         gemini_thinking_budget=int(os.getenv("GEMINI_THINKING_BUDGET", "512")),
         gemini_max_output_tokens=int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "4096")),
         foodlens_api_url=os.getenv("FOODLENS_API_URL"),

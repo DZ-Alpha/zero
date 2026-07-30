@@ -1,8 +1,49 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
-from app.vision import StubVisionProvider, is_retryable, needs_confirmation, normalize_result
+from app.vision import GeminiVisionProvider, StubVisionProvider, is_retryable, needs_confirmation, normalize_result
+
+
+class GeminiRequestTests(unittest.TestCase):
+    @staticmethod
+    def _response() -> dict:
+        return {"candidates": [{"content": {"parts": [{"text": '{"confidence":0.9,"list-diet":[]}'}]}}]}
+
+    @patch("app.vision._post_json")
+    def test_gemini_3_uses_minimal_thinking_level_without_deprecated_temperature(self, post_json) -> None:
+        post_json.return_value = self._response()
+        provider = GeminiVisionProvider("key", "gemini-3.5-flash-lite", 15, "minimal", 512, 2048)
+
+        provider.analyze(image=b"image", content_type="image/jpeg", image_key="meal.jpg")
+
+        generation = post_json.call_args.args[1]["generationConfig"]
+        self.assertEqual(generation["thinkingConfig"], {"thinkingLevel": "minimal"})
+        self.assertEqual(generation["responseJsonSchema"]["required"], ["confidence", "list-diet"])
+        self.assertNotIn("temperature", generation)
+
+    @patch("app.vision._post_json")
+    def test_gemini_2_keeps_numeric_thinking_budget(self, post_json) -> None:
+        post_json.return_value = self._response()
+        provider = GeminiVisionProvider("key", "gemini-2.5-flash", 15, "minimal", 256, 2048)
+
+        provider.analyze(image=b"image", content_type="image/jpeg", image_key="meal.jpg")
+
+        generation = post_json.call_args.args[1]["generationConfig"]
+        self.assertEqual(generation["thinkingConfig"], {"thinkingBudget": 256})
+        self.assertEqual(generation["temperature"], 0)
+
+    @patch("app.vision._post_json")
+    def test_flash_latest_alias_uses_gemini_3_thinking_level(self, post_json) -> None:
+        post_json.return_value = self._response()
+        provider = GeminiVisionProvider("key", "gemini-flash-latest", 15, "minimal", 512, 2048)
+
+        provider.analyze(image=b"image", content_type="image/jpeg", image_key="meal.jpg")
+
+        generation = post_json.call_args.args[1]["generationConfig"]
+        self.assertEqual(generation["thinkingConfig"], {"thinkingLevel": "minimal"})
+        self.assertNotIn("temperature", generation)
 
 
 class VisionResultTests(unittest.TestCase):
