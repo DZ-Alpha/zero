@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-import json, shutil, time
+import json, os, shutil, time
 from pathlib import Path
 
 import boto3
+from confluent_kafka import TopicPartition
 
 from kafka.config import TOPIC_PARSED, GROUP_THUMBNAIL
 from kafka.common import kafka_client, db
@@ -12,7 +13,9 @@ from kafka.thumbnail import extract_lib as ex   # 자립 복사 모듈
 THUMB_DIR = Path("/data/thumbnails")
 # DB thumbnail_url에 저장하는 경로 형태(기존 98건과 통일: /data/thumbnails/{recipe_id}.jpg)
 URL_PREFIX = "/data/thumbnails"
-FIND_RETRIES = 3
+DB_WAIT_SECONDS = int(os.environ.get("THUMBNAIL_DB_WAIT_SECONDS", "300"))
+DB_POLL_SECONDS = int(os.environ.get("THUMBNAIL_DB_POLL_SECONDS", "5"))
+RETRY_BACKOFF_SECONDS = int(os.environ.get("THUMBNAIL_RETRY_BACKOFF_SECONDS", "10"))
 _client = None
 
 
@@ -54,6 +57,19 @@ def find_recipe_ids(conn, video_id: str) -> list:
         return [r[0] for r in cur.fetchall()]
 
 
+def wait_for_recipe_ids(conn, video_id: str) -> list:
+    """recipe-main이 같은 이벤트를 먼저 적재할 때까지 제한시간 동안 기다린다."""
+    deadline = time.monotonic() + DB_WAIT_SECONDS
+    while True:
+        recipe_ids = find_recipe_ids(conn, video_id)
+        if recipe_ids:
+            return recipe_ids
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return []
+        time.sleep(min(DB_POLL_SECONDS, remaining))
+
+
 def apply_thumbnail_for_ids(conn, tmp_path: Path, recipe_ids: list) -> int:
     """완성샷 임시파일을 각 recipe_id 파일명(/data/thumbnails/{id}.jpg)으로 복사하고
     각 레시피의 thumbnail_url을 그 경로로 UPDATE한다(기존 98건과 동일한 recipe_id 방식).
@@ -77,22 +93,15 @@ def apply_thumbnail_for_ids(conn, tmp_path: Path, recipe_ids: list) -> int:
 def handle_message(msg: dict) -> None:
     video_id = msg["video_id"]
     recipe_name = msg.get("recipe_name") or video_id
-    tmp_path = extract_frame_once(_bedrock(), video_id, recipe_name)
-    if not tmp_path:
-        print(f"완성샷 없음, 원본 유지: {video_id}")
-        return
     conn = db.connect()
     try:
-        recipe_ids = []
-        for _ in range(FIND_RETRIES):
-            recipe_ids = find_recipe_ids(conn, video_id)
-            if recipe_ids:
-                break
-            time.sleep(2)   # 아직 미적재면 짧게 대기 후 재조회
+        recipe_ids = wait_for_recipe_ids(conn, video_id)
         if not recipe_ids:
-            # 미적재면 tmp 정리 후 재처리(커밋 안 됨). 재처리 때 다시 추출한다.
-            tmp_path.unlink(missing_ok=True)
             raise RuntimeError(f"미적재 상태 — 재처리 필요: {video_id}")
+        tmp_path = extract_frame_once(_bedrock(), video_id, recipe_name)
+        if not tmp_path:
+            print(f"완성샷 없음, 원본 유지: {video_id}")
+            return
         updated = apply_thumbnail_for_ids(conn, tmp_path, recipe_ids)  # 내부에서 tmp 제거
         print(f"썸네일 갱신: {video_id} -> {updated}개 레시피 (recipe_id 파일명)")
     finally:
@@ -111,8 +120,17 @@ def run() -> None:
                 handle_message(json.loads(rec.value().decode("utf-8")))
                 consumer.commit(rec)
             except Exception as e:
-                # 썸네일 실패는 정상(완성샷 없음 등) — DLQ 안 감. 미적재만 재처리(커밋 안 함).
+                # 실패 레코드에서 consumer 위치를 되돌려 다음 메시지가 앞 레코드를
+                # 건너뛴 채 commit하는 것을 막는다.
                 print(f"썸네일 처리 보류/실패: {e}")
+                try:
+                    consumer.seek(
+                        TopicPartition(rec.topic(), rec.partition(), rec.offset())
+                    )
+                except Exception as seek_error:
+                    # 리밸런싱 중이면 committed offset이 유지되므로 재할당 후 다시 받는다.
+                    print(f"썸네일 offset 복구 대기: {seek_error}")
+                time.sleep(RETRY_BACKOFF_SECONDS)
     finally:
         consumer.close()
 
