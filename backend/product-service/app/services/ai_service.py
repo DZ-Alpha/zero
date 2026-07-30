@@ -14,6 +14,13 @@ _CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 300
 
+# 감미료 설명은 성분 수만큼 문장이 늘어나서 고정 _MAX_TOKENS(300)로는 성분이
+# 2~3개만 돼도 답변이 문장 중간에서 잘린다(2026-07-30 실사용 리포트: "칼로리는
+# 거의 없습"에서 끊김). 성분 수에 비례해 예산을 늘리되 상한은 둔다.
+_SWEETENER_BASE_TOKENS = 220
+_SWEETENER_PER_TAG_TOKENS = 160
+_SWEETENER_MAX_TOKENS = 900
+
 # _call_claude*가 실패/미설정일 때 돌려주는 안내 문구 — 실제 AI 생성 결과가
 # 아니므로 캐시(product_ai_summaries)에 저장하면 안 된다. is_summary_unavailable()
 # 로 호출 측이 캐싱 여부를 판단한다.
@@ -52,17 +59,35 @@ _EMOJI_RE = re.compile(
 )
 
 
+_SENTENCE_END_RE = re.compile(r"[.!?]")
+
+
+def _trim_incomplete_tail(text: str) -> str:
+    """max_tokens 한도에 걸려 문장 중간에서 잘린 경우, 마지막으로 완성된
+    문장까지만 남긴다. 이미 문장부호로 끝났으면 손대지 않는다."""
+    if not text or text[-1] in ".!?":
+        return text
+    matches = list(_SENTENCE_END_RE.finditer(text))
+    if not matches:
+        return text  # 문장부호가 하나도 없으면 자를 기준이 없다 - 원문 유지
+    return text[: matches[-1].end()].strip()
+
+
 def sanitize_summary(text: str) -> str:
     """헤딩 줄(제목/부제목)은 통째로 제거, 목록 마커·이모지는 걷어내고 한
-    문단으로 정리한다. **강조** 마커는 프론트가 굵게 렌더하므로 남긴다."""
+    문단으로 정리한다. **강조** 마커는 프론트가 굵게 렌더하므로 남긴다.
+    max_tokens에 걸려 끊긴 미완성 문장도 여기서 잘라낸다 - 캐시 조회 시에도
+    타므로(product.py) 이미 잘린 채 저장된 과거 응답도 다음 조회부터 자동으로
+    정리된다."""
     text = _HEADING_LINE_RE.sub("", text)
     text = _LIST_MARKER_RE.sub("", text)
     text = _EMOJI_RE.sub("", text)
     text = re.sub(r"\s*\n+\s*", " ", text)
-    return re.sub(r"[ \t]{2,}", " ", text).strip()
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
+    return _trim_incomplete_tail(text)
 
 
-async def _call_claude_anthropic(prompt: str) -> str:
+async def _call_claude_anthropic(prompt: str, max_tokens: int = _MAX_TOKENS) -> str:
     if not settings.anthropic_api_key:
         return _NO_API_KEY_MSG
     headers = {
@@ -72,7 +97,7 @@ async def _call_claude_anthropic(prompt: str) -> str:
     }
     body = {
         "model": _MODEL,
-        "max_tokens": _MAX_TOKENS,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -82,30 +107,30 @@ async def _call_claude_anthropic(prompt: str) -> str:
     return data["content"][0]["text"].strip()
 
 
-def _call_claude_bedrock_sync(prompt: str) -> str:
+def _call_claude_bedrock_sync(prompt: str, max_tokens: int = _MAX_TOKENS) -> str:
     import boto3
 
     client = boto3.client("bedrock-runtime", region_name=settings.bedrock_region)
     resp = client.converse(
         modelId=settings.bedrock_model_id,
         messages=[{"role": "user", "content": [{"text": prompt}]}],
-        inferenceConfig={"maxTokens": _MAX_TOKENS},
+        inferenceConfig={"maxTokens": max_tokens},
     )
     return resp["output"]["message"]["content"][0]["text"].strip()
 
 
-async def _call_claude(prompt: str) -> str:
+async def _call_claude(prompt: str, max_tokens: int = _MAX_TOKENS) -> str:
     # ai_provider="bedrock"이어도 이 함수만 영향받는다 - 챗봇(backend/ai)과
     # diet-service의 Vision 분석은 각자 자기 설정을 따로 쓰므로 이 스위치와
     # 무관하다. boto3는 동기 SDK라 스레드로 돌린다(tools/model-eval의
     # call_bedrock, backend/ai의 BedrockClient와 동일한 패턴).
     if settings.ai_provider == "bedrock":
         try:
-            return await asyncio.to_thread(_call_claude_bedrock_sync, prompt)
+            return await asyncio.to_thread(_call_claude_bedrock_sync, prompt, max_tokens)
         except Exception:
             logger.exception("Bedrock 호출 실패")
             return _BEDROCK_FAILURE_MSG
-    return await _call_claude_anthropic(prompt)
+    return await _call_claude_anthropic(prompt, max_tokens)
 
 
 async def generate_product_summary(product: Product, tags: list[Tag]) -> str:
@@ -141,7 +166,12 @@ async def generate_sweetener_description(product: Product, sweetener_tags: list[
     prompt = (
         f"다음은 '{product.product_name}'에 들어간 대체 당 성분들입니다.\n"
         + "\n".join(descriptions)
-        + "\n소비자가 이해하기 쉽도록 각 성분을 2~3문장으로 설명해주세요. "
+        + "\n소비자가 이해하기 쉽도록 각 성분을 1~2문장으로만 간결하게 설명해주세요. "
+        + "정보가 많아도 핵심(무엇으로 만들었는지, 안전한지/주의할 점)만 담고 늘어놓지 마세요. "
         + _FORMAT_RULE
     )
-    return await _call_claude(prompt)
+    max_tokens = min(
+        _SWEETENER_BASE_TOKENS + _SWEETENER_PER_TAG_TOKENS * len(sweetener_tags),
+        _SWEETENER_MAX_TOKENS,
+    )
+    return await _call_claude(prompt, max_tokens)
