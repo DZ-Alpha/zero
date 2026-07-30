@@ -197,14 +197,21 @@ async def build_room_members(db: AsyncSession, room: Room, members: list[RoomMem
 
 
 async def list_recent_activities(
-    db: AsyncSession, viewer_id: int, cursor: str | None, limit: int = 20
+    db: AsyncSession, viewer_id: int, cursor: str | None, limit: int = 20, today_only: bool = False
 ) -> tuple[list[dict[str, object]], str | None]:
+    """today_only=True면 오늘(KST) 기록만 반환한다 - 홈 화면(/rooms)의 "방금
+    올라왔어요"/방 카드 사진 미리보기가 여러 방을 합쳐 최근 20건만 보다 보니,
+    당장은 조용한 방의 카드에 며칠 지난 사진이 "오늘 기록 보러가기" 버튼과 함께
+    뜨는 문제가 있었다(2026-07-30 리포트). "더보기"(GET /rooms/activities) 같은
+    과거 이력 탐색은 이 필터 없이 그대로 전체 히스토리를 페이지네이션한다."""
     my_rooms = await room_store.list_rooms_for_user(db, viewer_id)
     room_by_id = {room.id: room for room, _membership in my_rooms}
     if not room_by_id:
         return [], None
 
     stmt = select(RoomMealThread).where(RoomMealThread.room_id.in_(room_by_id.keys()))
+    if today_only:
+        stmt = stmt.where(RoomMealThread.record_date == today_kst())
     if cursor:
         try:
             cursor_created_at = datetime.fromisoformat(cursor)

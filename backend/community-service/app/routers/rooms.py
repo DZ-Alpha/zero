@@ -68,7 +68,7 @@ async def get_rooms_home(
         summary = await room_aggregation.compute_room_summary(db, room, membership, user.user_id)
         summaries.append(summary)
 
-    activities, activities_cursor = await room_aggregation.list_recent_activities(db, user.user_id, None)
+    activities, activities_cursor = await room_aggregation.list_recent_activities(db, user.user_id, None, today_only=True)
     ranking, ranking_cursor = await room_aggregation.list_weekly_ranking(db, user.user_id, None)
     for index, entry in enumerate(ranking):
         entry["rank"] = index + 1
