@@ -145,6 +145,22 @@ async def chatbot_stream(
             logger.exception("stream error")
             yield _sse({"error": "일시적인 오류가 발생했습니다.", "state": "error"})
             return
+        except BaseException:
+            # 클라이언트가 스트림 도중 연결을 끊으면(채팅창을 닫는 등) 이 지점이
+            # asyncio.CancelledError로 취소된다 - Python 3.8+에서 CancelledError는
+            # Exception이 아니라 BaseException 계열이라 위 except Exception에 안
+            # 걸린다. 그대로 두면 답변을 이미 다 만들었어도 아래 저장 줄까지 못
+            # 가서 대화가 통째로 사라진다("채팅 닫으면 바로 지워지는 문제"의 원인).
+            # 취소 자체는 삼키지 않고 다시 던지되, 그 전에 지금까지 만든 답변만은
+            # best-effort로 저장한다.
+            if deps.store is not None and (payload.msg or image_key) and answer_parts:
+                try:
+                    await asyncio.shield(
+                        deps.store.append(session_key, payload.msg or "", "".join(answer_parts), image_key=image_key)
+                    )
+                except Exception:
+                    logger.warning("cancel-time conversation save failed (key=%s)", session_key, exc_info=True)
+            raise
         # 답변이 끝난 뒤에만 저장(반쪽 대화 방지). Redis 장애는 store가 삼킨다.
         # 사진 턴(PRODUCT_ANALYSIS)은 result.image_key 사용.
         if deps.store is not None and (payload.msg or image_key):
