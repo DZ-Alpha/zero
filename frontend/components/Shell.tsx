@@ -12,9 +12,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <ScrollToTop />
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <header className="site-header">
-        <Link href="/" className="brand" aria-label="설탕 홈">
+        <Link href="/" className="brand" aria-label="당당 홈">
           <span className="brand-mark"><i /></span>
-          <span className="brand-copy"><b>설탕</b></span>
+          <span className="brand-copy"><b>당당</b></span>
         </Link>
         <SiteNav />
         <HeaderAuth />
