@@ -108,6 +108,7 @@ async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMem
     average_sugar = round(sum(sugars_today) / len(sugars_today), 1) if sugars_today else 0.0
 
     eligible = member_count >= 3 and days_since_start >= 7 and room.ranking_opt_in
+    member_invite_enabled = await room_store.get_member_invite_enabled(db, room.id)
 
     return {
         "id": str(room.id),
@@ -128,7 +129,7 @@ async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMem
             "missingMemberCount": max(0, 3 - member_count),
             "remainingDays": max(0, 7 - days_since_start),
         },
-        "permissions": room_store.compute_permissions(room, membership, member_count),
+        "permissions": room_store.compute_permissions(room, membership, member_count, member_invite_enabled),
     }
 
 

@@ -287,7 +287,7 @@ async def _get_settings_payload(db: AsyncSession, room_id: uuid.UUID, viewer_id:
             "nudges": membership.nudge_notifications,
             "commentsAndReactions": membership.activity_notifications,
         },
-        "memberInviteEnabled": room.member_invite_enabled,
+        "memberInviteEnabled": await room_store.get_member_invite_enabled(db, room_id),
         "activeInvite": active_invite,
         "members": member_list,
     }
