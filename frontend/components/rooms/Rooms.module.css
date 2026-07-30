@@ -3980,14 +3980,27 @@
   background: #f1f6ed;
 }
 
-/* 2026-07-30 - 초대 권한이 없는 멤버에게 보여주는 안내(코드/링크 자체는 안 보임). */
+/* 2026-07-31 요청 - 초대 권한이 없는 멤버에게 보여주는 안내(코드/링크 자체는
+   안 보임). 연한 빨간 배경 + 큰 제목 + 작은 설명, .dangerCard 계열과 같은
+   빨강 톤(#9d3e39 등)을 재사용. */
 .settingsEmptyNote {
   margin: 0;
   padding: 19px 20px;
   border-radius: 20px;
-  background: #f5f6f3;
-  color: var(--room-muted);
-  font-size: 12px;
+  background: #fdf1ef;
+}
+
+.settingsEmptyNote strong {
+  display: block;
+  color: #9d3e39;
+  font-size: 15px;
+}
+
+.settingsEmptyNote small {
+  display: block;
+  margin-top: 5px;
+  color: #b07571;
+  font-size: 11px;
 }
 
 .invitePanel > div:first-child {
