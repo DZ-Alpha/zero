@@ -9,7 +9,7 @@ pipeline {
     }
     stages {
         // Checkout stage 없음 — "Pipeline script from SCM"이 zero repo를 자동 체크아웃.
-        // 그 덕에 GIT_PREVIOUS_SUCCESSFUL_COMMIT이 채워진다.
+        // 그 덕에 GIT_PREVIOUS_COMMIT(직전 빌드가 처리한 커밋)이 채워진다.
 
         stage('Detect Changes') {
             steps {
@@ -17,12 +17,17 @@ pipeline {
                     def all = ['admin-service','ai','community-service','diet-service',
                                'ingredients-service','login-service','main-service',
                                'product-service','recipe-service']
-                    def prev = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
+                    // 직전 빌드(성공/실패 무관)가 처리한 커밋 기준으로 diff.
+                    // GIT_PREVIOUS_SUCCESSFUL_COMMIT(마지막 성공)을 쓰면 UNSTABLE이 누적될 때
+                    // 기준점이 갱신 안 돼, 실패한 남의 서비스가 매 빌드에 계속 딸려온다.
+                    // GIT_PREVIOUS_COMMIT은 매 빌드마다 갱신되므로 각 빌드가 "직전 빌드 이후
+                    // 실제 바뀐 서비스"만 처리한다(여러 push가 한 빌드에 묶여도 그 범위는 다 봄).
+                    def prev = env.GIT_PREVIOUS_COMMIT
                     def changed
                     def eventPipelineChanged = false
 
                     if (!prev) {
-                        echo "이전 성공 빌드 없음 — 전체 빌드"
+                        echo "직전 빌드 커밋 없음(첫 빌드) — 전체 빌드"
                         changed = all
                         eventPipelineChanged = true
                     } else {
