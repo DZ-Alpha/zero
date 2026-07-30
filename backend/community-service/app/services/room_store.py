@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.room import Room
@@ -124,12 +125,48 @@ def avatar_text(display_name: str) -> str:
     return stripped[:2] if stripped else "?"
 
 
-def compute_permissions(room: Room, membership: RoomMember, active_member_count: int) -> dict[str, bool]:
+async def get_member_invite_enabled(db: AsyncSession, room_id: uuid.UUID) -> bool:
+    """member_invite_enabled는 Room에 매핑 안 된 컬럼이라(app/models/room.py
+    주석 참고) 여기서 raw SQL로만 읽는다. 배포 전 ALTER TABLE을 아직 안
+    돌렸으면(컬럼 없음) DBAPIError를 잡아 "꺼짐"으로 폴백한다 - 실패한 문장
+    뒤엔 세션이 아무 쓰기도 안 했어도 트랜잭션이 aborted 상태가 되므로,
+    이후 같은 세션의 쿼리가 계속 실패하지 않도록 rollback이 필수다."""
+    try:
+        result = await db.execute(
+            text("SELECT member_invite_enabled FROM community.rooms WHERE id = :room_id"),
+            {"room_id": room_id},
+        )
+        value = result.scalar_one_or_none()
+        return bool(value) if value is not None else False
+    except DBAPIError:
+        await db.rollback()
+        return False
+
+
+async def set_member_invite_enabled(db: AsyncSession, room_id: uuid.UUID, value: bool) -> bool:
+    """반환값은 실제로 반영됐는지 여부. 컬럼이 아직 없으면(배포 전 ALTER TABLE
+    미실행) False를 반환하고 아무것도 바꾸지 않는다 - 호출부가 조용히
+    무시하거나 안내만 하면 된다(요청: "일단은 옵션을 비활성화 처리")."""
+    try:
+        await db.execute(
+            text("UPDATE community.rooms SET member_invite_enabled = :value WHERE id = :room_id"),
+            {"value": value, "room_id": room_id},
+        )
+        await db.commit()
+        return True
+    except DBAPIError:
+        await db.rollback()
+        return False
+
+
+def compute_permissions(room: Room, membership: RoomMember, active_member_count: int, member_invite_enabled: bool) -> dict[str, bool]:
     is_owner = membership.role == "owner"
     return {
         "canEditRoom": is_owner,
-        # 2026-07-30 요청 - 기본은 방장만, 방장이 켜면 멤버도 가능.
-        "canInvite": is_owner or room.member_invite_enabled,
+        # 2026-07-30 요청 - 기본은 방장만, 방장이 켜면 멤버도 가능. 값은
+        # 호출부가 get_member_invite_enabled()로 미리 조회해서 넘긴다(이
+        # 함수는 DB에 안 닿는 순수 계산 함수로 유지).
+        "canInvite": is_owner or member_invite_enabled,
         "canManageMembers": is_owner,
         "canTransferOwnership": is_owner and active_member_count > 1,
         "canDeleteRoom": is_owner,
@@ -332,8 +369,7 @@ async def require_invite_access(db: AsyncSession, room_id: uuid.UUID, user_id: i
     membership = await require_membership(db, room_id, user_id)
     if membership.role == "owner":
         return membership
-    room = await get_room(db, room_id)
-    if not room.member_invite_enabled:
+    if not await get_member_invite_enabled(db, room_id):
         raise _access_denied()
     return membership
 
@@ -356,11 +392,14 @@ async def update_room(
         room.emoji = emoji
     if ranking_opt_in is not None:
         room.ranking_opt_in = ranking_opt_in
-    if member_invite_enabled is not None:
-        room.member_invite_enabled = member_invite_enabled
     room.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(room)
+    # member_invite_enabled는 매핑 컬럼이 아니라 room에 안 실려있다 - 커밋과
+    # 별개의 raw SQL로 처리(컬럼 없으면 set_member_invite_enabled가 조용히
+    # False를 반환하고 넘어간다 - "일단 비활성화" 요청대로).
+    if member_invite_enabled is not None:
+        await set_member_invite_enabled(db, room_id, member_invite_enabled)
     return room
 
 
