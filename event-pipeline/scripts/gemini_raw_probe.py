@@ -23,7 +23,7 @@ def main(keys: list[str]) -> int:
         secret_key=os.environ["MINIO_SECRET_KEY"],
         secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
     )
-    model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
     for key in keys:

@@ -6,6 +6,7 @@ import logging
 import signal
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from confluent_kafka import Consumer, KafkaException
@@ -93,6 +94,8 @@ def finish_completed(request: dict[str, Any], result: dict[str, Any]) -> None:
 
 def process(request: dict[str, Any], minio_client: Minio, vision_provider: Any) -> None:
     request = validate_requested_event(request)
+    process_started = time.monotonic()
+    queue_ms = _queue_time_ms(request.get("requested_at"))
     with connect(settings) as conn:
         if conn.execute("SELECT 1 FROM processed_events WHERE event_id=%s", (request["event_id"],)).fetchone():
             return
@@ -105,6 +108,7 @@ def process(request: dict[str, Any], minio_client: Minio, vision_provider: Any) 
             (request["analysis_id"],),
         )
 
+    storage_started = time.monotonic()
     object_stat = None
     for attempt in range(1, 4):
         try:
@@ -130,31 +134,52 @@ def process(request: dict[str, Any], minio_client: Minio, vision_provider: Any) 
         logger.warning("claim-check payload rejected event_id=%s code=%s", request["event_id"], exc)
         finish_failed(request, str(exc), 1)
         return
+    storage_ms = round((time.monotonic() - storage_started) * 1000)
 
+    provider_started = time.monotonic()
     for attempt in range(1, settings.vision_max_attempts + 1):
+        attempt_started = time.monotonic()
         try:
             result = vision_provider.analyze(image=image, content_type=content_type, image_key=request["image_key"])
             break
         except VisionProviderError as exc:
             code = str(exc)
+            attempt_ms = round((time.monotonic() - attempt_started) * 1000)
             if attempt < settings.vision_max_attempts and is_retryable(code):
                 delay = settings.vision_retry_backoff_seconds * (2 ** (attempt - 1))
                 logger.warning(
-                    "vision provider retrying event_id=%s code=%s attempt=%s delay=%s",
-                    request["event_id"], code, attempt, delay,
+                    "vision provider retrying event_id=%s code=%s attempt=%s attempt_ms=%s delay=%s",
+                    request["event_id"], code, attempt, attempt_ms, delay,
                 )
                 time.sleep(delay)
                 continue
             logger.warning(
-                "vision provider failed event_id=%s code=%s attempts=%s",
-                request["event_id"], code, attempt,
+                "vision provider failed event_id=%s code=%s attempts=%s attempt_ms=%s total_ms=%s",
+                request["event_id"], code, attempt, attempt_ms,
+                round((time.monotonic() - process_started) * 1000),
             )
             finish_failed(request, code, attempt)
             return
 
+    provider_ms = round((time.monotonic() - provider_started) * 1000)
     result["object_size"] = object_stat.size
     result["needs_user_confirmation"] = needs_confirmation(result, settings.vision_confidence_threshold)
     finish_completed(request, result)
+    logger.info(
+        "vision completed event_id=%s model=%s attempts=%s object_bytes=%s "
+        "queue_ms=%s storage_ms=%s provider_ms=%s total_ms=%s",
+        request["event_id"], settings.gemini_model, attempt, object_stat.size,
+        queue_ms, storage_ms, provider_ms,
+        round((time.monotonic() - process_started) * 1000),
+    )
+
+
+def _queue_time_ms(requested_at: Any) -> int | None:
+    try:
+        requested = datetime.fromisoformat(str(requested_at).replace("Z", "+00:00"))
+        return max(0, round((datetime.now(timezone.utc) - requested).total_seconds() * 1000))
+    except (TypeError, ValueError):
+        return None
 
 
 def emit_invalid(raw: bytes, reason: str) -> None:

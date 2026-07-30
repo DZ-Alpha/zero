@@ -13,7 +13,7 @@ import { useRecipeCatalog } from "@/hooks/useRecipeCatalog";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { getAccessToken } from "@/lib/api/client";
-import { convertHeicToJpeg, isHeicFile } from "@/lib/heic";
+import { convertHeicToJpeg, isHeicFile, optimizePhotoForVision } from "@/lib/heic";
 import {
   confirmDietPhoto,
   DietAnalysisItem,
@@ -27,10 +27,10 @@ import {
   uploadDietPhotoFile,
 } from "@/lib/api/zerocheck";
 
-// worker 분석은 비동기라 202로 등록만 되고, 결과는 폴링으로 받는다. 60초
-// 넘으면 "아직 분석 중" 상태로 그냥 보여주고 폴링을 멈춘다.
+// worker 분석은 비동기라 202로 등록만 되고, 결과는 폴링으로 받는다.
+// 모델 재시도가 발생해도 결과를 놓치지 않되 영구 대기는 피한다.
 const POLL_DELAYS_MS = [1000, 2000, 3000, 5000];
-const POLL_MAX_MS = 60_000;
+const POLL_MAX_MS = 180_000;
 
 async function pollDietPhotoStatus(token: string, mealLogId: string): Promise<DietPhotoStatusResponse> {
   const start = Date.now();
@@ -112,6 +112,7 @@ export function RecordMealModal({
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("전체");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisDelayed, setAnalysisDelayed] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState("");
@@ -285,6 +286,7 @@ export function RecordMealModal({
     }
     setAnalysisError("");
     setIsAnalyzing(true);
+    setAnalysisDelayed(false);
     setUploadProgress(18);
 
     // 실제 백엔드에 사진을 등록한다: gateway -> MinIO(object_key) -> RC-0101
@@ -314,14 +316,18 @@ export function RecordMealModal({
     setServerMealLogId(registeredId);
 
     let status: DietPhotoStatusResponse;
+    const delayedTimer = window.setTimeout(() => setAnalysisDelayed(true), 30_000);
     try {
       status = await pollDietPhotoStatus(token, registeredId);
     } catch {
+      window.clearTimeout(delayedTimer);
       setIsAnalyzing(false);
       setUploadProgress(0);
       setAnalysisError("분석 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
       return;
     }
+    window.clearTimeout(delayedTimer);
+    setAnalysisDelayed(false);
 
     setUploadProgress(100);
     await new Promise((resolve) => window.setTimeout(resolve, 380));
@@ -359,7 +365,7 @@ export function RecordMealModal({
       return;
     }
 
-    // 60초 넘게 폴링해도 여전히 PENDING/PROCESSING인 경우 - worker가 느릴 뿐 오류는 아니다.
+    // 3분 뒤에도 PENDING/PROCESSING이면 요청을 보존하고 백그라운드 완료를 기다린다.
     setSelected({
       id: `vision-${registeredId}`,
       name: "사진 분석을 기다리고 있어요",
@@ -442,6 +448,16 @@ export function RecordMealModal({
       onReject?.();
       return;
     }
+    setConvertingHeic(true);
+    try {
+      file = await optimizePhotoForVision(file);
+    } catch {
+      setFileError("사진을 최적화하지 못했어요. 다른 사진을 선택해 주세요.");
+      onReject?.();
+      setConvertingHeic(false);
+      return;
+    }
+    setConvertingHeic(false);
     if (photoPreview) URL.revokeObjectURL(photoPreview);
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
@@ -607,14 +623,14 @@ export function RecordMealModal({
               convertingHeic ? (
                 <div className="vision-loading" role="status" aria-live="polite">
                   <div className="vision-spinner" aria-hidden="true"><i /></div>
-                  <h3>사진을 변환하고 있어요</h3>
-                  <p>아이폰 HEIC 사진을 올리기 좋은 형식으로 바꾸고 있어요. 잠시만 기다려 주세요.</p>
+                  <h3>사진을 준비하고 있어요</h3>
+                  <p>빠르게 분석할 수 있도록 사진 크기와 형식을 정리하고 있어요.</p>
                 </div>
               ) : isAnalyzing ? (
                 <div className="vision-loading" role="status" aria-live="polite">
                   <div className="vision-spinner" aria-hidden="true"><i /></div>
-                  <h3>{uploadProgress < 55 ? "사진을 안전하게 올리고 있어요" : "사진에서 음식을 찾고 있어요"}</h3>
-                  <p>{uploadProgress < 55 ? "창을 닫지 않고 잠시만 기다려 주세요." : "음식의 종류와 양을 확인한 뒤 당류와 칼로리를 계산할게요."}</p>
+                  <h3>{uploadProgress < 55 ? "사진을 안전하게 올리고 있어요" : analysisDelayed ? "분석이 조금 오래 걸리고 있어요" : "사진에서 음식을 찾고 있어요"}</h3>
+                  <p>{uploadProgress < 55 ? "창을 닫지 않고 잠시만 기다려 주세요." : analysisDelayed ? "자동으로 다시 확인하고 있어요. 결과가 도착하면 바로 보여드릴게요." : "음식의 종류와 양을 확인한 뒤 당류와 칼로리를 계산할게요."}</p>
                   <div className="upload-progress" aria-label={`업로드 ${uploadProgress}%`}><i style={{ transform: `scaleX(${uploadProgress / 100})` }} /></div>
                   <ol><li className="is-done">사진을 확인했어요</li><li className="is-active">음식과 양을 찾고 있어요</li><li>영양 수치를 계산할게요</li></ol>
                 </div>
