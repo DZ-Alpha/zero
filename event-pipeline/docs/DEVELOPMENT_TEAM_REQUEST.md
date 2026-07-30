@@ -100,7 +100,7 @@ batch로 전송한다. server는 JWT에서 사용자 ID를 넣고 outbox transac
 - `DietAnalysisResponse`에 `confidence`, `confidence_source`,
   `needs_user_confirmation`, `PENDING|PROCESSING|AWAITING_CONFIRMATION|DONE|FAILED`
   상태 추가.
-- `RecordMealModal`은 분석 중 1/2/3/5초 bounded polling(최대 60초)을 한다.
+- `RecordMealModal`은 분석 중 1/2/3/5초 bounded polling(최대 3분)을 한다.
   pending은 오류가 아니다.
 - low confidence는 “사진 인식 확신이 낮아요” editable draft 화면을 보이고,
   사용자 confirm 전에는 식단을 완료 처리하지 않는다.
