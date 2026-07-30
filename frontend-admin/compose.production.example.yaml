@@ -4,7 +4,13 @@ services:
     container_name: dangdang-frontend-admin
     restart: unless-stopped
     environment:
+      # 게이트웨이가 있으면 이 값이 우선. 없으면(k8s처럼 b-gateway를 제거한
+      # 환경) 아래 서비스별 직접 라우팅 URL을 쓴다 - app/b/[...path]/route.ts.
       BACKEND_GATEWAY_URL: ${BACKEND_GATEWAY_URL:-http://b-gateway:8080}
+      LOGIN_SERVICE_URL: ${LOGIN_SERVICE_URL:-http://login-service:8000}
+      ADMIN_SERVICE_URL: ${ADMIN_SERVICE_URL:-http://admin-service:8008}
+      PRODUCT_SERVICE_URL: ${PRODUCT_SERVICE_URL:-http://product-service:8016}
+      INGREDIENTS_SERVICE_URL: ${INGREDIENTS_SERVICE_URL:-http://ingredients-service:8018}
       # 관리자 페이지는 아직 실제 공개 도메인이 없다 — frontend의 PUBLIC_APP_URL과
       # 달리 :?로 필수 요구하지 않고 loopback 기본값을 둔다(CI/CD 팀 권고). 도메인이
       # 생기면 그때 이 기본값을 실제 값으로 덮어쓴다.

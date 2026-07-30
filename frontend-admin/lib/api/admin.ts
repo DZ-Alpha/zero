@@ -36,10 +36,11 @@ export type ProductUpsertInput = {
   sugars?: string;
 };
 
+// Istio 전환 요청서 §1(2026-07-30) - menu 값으로 프록시가 서비스를 고르던
+// POST /admin 대신 기능별 URL을 쓴다. 경로만으로 소유 서비스가 정해진다:
+// /admin/products/* → product-service, /admin/tags/* → ingredients-service.
 export async function upsertProduct(input: ProductUpsertInput) {
   const body: Record<string, unknown> = {
-    menu: "manage-item",
-    id: input.id,
     name: input.name,
     brand: input.brand,
     category_tag_id: input.categoryTagId,
@@ -54,13 +55,19 @@ export async function upsertProduct(input: ProductUpsertInput) {
     calories: input.calories,
     sugars: input.sugars,
   };
-  return adminApiRequest<{ status: string; id?: string }>("/admin", {
+  if (input.id) {
+    return adminApiRequest<{ status: string; id?: string }>(`/admin/products/${encodeURIComponent(input.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+  return adminApiRequest<{ status: string; id?: string }>("/admin/products", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-// AD-0103 — POST /admin (menu=manage-nutrients)
+// AD-0103 — POST /admin/products/{id}/nutrients
 export type NutritionInput = {
   id: string;
   cal?: string;
@@ -72,13 +79,14 @@ export type NutritionInput = {
 };
 
 export async function upsertNutrition(input: NutritionInput) {
-  return adminApiRequest<{ status: string; id: string }>("/admin", {
+  const { id, ...nutrients } = input;
+  return adminApiRequest<{ status: string; id: string }>(`/admin/products/${encodeURIComponent(id)}/nutrients`, {
     method: "POST",
-    body: JSON.stringify({ menu: "manage-nutrients", ...input }),
+    body: JSON.stringify(nutrients),
   });
 }
 
-// AD-0104 — POST /admin (menu=manage-ingredients)
+// AD-0104 — POST /admin/products/{id}/ingredients
 export type IngredientsInput = {
   id: string;
   ingredientText?: string;
@@ -86,11 +94,9 @@ export type IngredientsInput = {
 };
 
 export async function upsertIngredients(input: IngredientsInput) {
-  return adminApiRequest<{ status: string; id: string }>("/admin", {
+  return adminApiRequest<{ status: string; id: string }>(`/admin/products/${encodeURIComponent(input.id)}/ingredients`, {
     method: "POST",
     body: JSON.stringify({
-      menu: "manage-ingredients",
-      id: input.id,
       ingredient_text: input.ingredientText,
       allergen_tag_ids: input.allergenTagIds,
     }),
@@ -98,10 +104,9 @@ export async function upsertIngredients(input: IngredientsInput) {
 }
 
 // 원재료 등록에서 실제로 태그(알레르기 등)를 고르려면 태그 마스터 관리가
-// 먼저 필요하다 — backend/ingredients-service/app/routers/admin.py, 같은
-// /b/admin 경로를 menu(create-tag/update-tag/deactivate-tag)로 공유한다
-// (nginx.conf의 Lua 라우팅이 menu 값으로 product-service/ingredients-service를
-// 나눠 보낸다 — 프론트는 항상 /admin 하나만 호출하면 된다).
+// 먼저 필요하다 — backend/ingredients-service/app/routers/admin.py의
+// POST /admin/tags. (예전엔 POST /admin 하나를 menu 값으로 나눠 썼는데,
+// Istio 전환 요청서 §1로 경로 기반 분리 - 프록시가 body를 읽을 필요가 없어졌다.)
 export type TagInput = {
   tagType: "CATEGORY" | "ALLERGEN" | "SWEETENER" | "HEALTH_LABEL";
   tagCode: string;
@@ -112,10 +117,9 @@ export type TagInput = {
 };
 
 export async function createTag(input: TagInput) {
-  return adminApiRequest<{ status: string; id: string }>("/admin", {
+  return adminApiRequest<{ status: string; id: string }>("/admin/tags", {
     method: "POST",
     body: JSON.stringify({
-      menu: "create-tag",
       tag_type: input.tagType,
       tag_code: input.tagCode,
       tag_name: input.tagName,
