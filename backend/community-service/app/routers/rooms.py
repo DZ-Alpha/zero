@@ -439,6 +439,26 @@ async def get_member_calendar(
     return {"days": days}
 
 
+@router.get("/{room_id}/calendar")
+async def get_room_calendar(
+    room_id: str,
+    year: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+    db: AsyncSession = Depends(get_db),
+    user: UserIdentity = Depends(require_room_user),
+) -> dict[str, object]:
+    """방 전체 월간 캘린더 - 날짜별 기록 수와 그중 내 기록 수. 방 상세의
+    과거 날짜 이동(캘린더) UI가 "나도 올린 날/남만 올린 날"을 색으로
+    구분하는 데 쓴다."""
+    rid = _to_uuid(room_id)
+    try:
+        await room_store.require_membership(db, rid, user.user_id)
+    except RoomError as error:
+        raise _err(error)
+    days = await room_aggregation.build_room_calendar(db, rid, user.user_id, year, month)
+    return {"days": days}
+
+
 # ── 콕 찌르기 ────────────────────────────────────────────────────────────────
 
 class NudgeBody(BaseModel):

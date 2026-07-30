@@ -250,6 +250,15 @@ export type MemberCalendarDay = {
   recordCount: number;
 };
 
+// GET /rooms/{id}/calendar - 방 상세의 날짜 이동 캘린더. recordCount는 방
+// 전체(멤버 합산) 기록 수, myRecordCount는 그중 내 기록 수 - "나도 올린 날"과
+// "남만 올린 날"을 색으로 구분하는 데 쓴다.
+export type RoomCalendarDay = {
+  date: string;
+  recordCount: number;
+  myRecordCount: number;
+};
+
 export type ReportRoomContentInput = {
   targetType: "meal" | "comment";
   targetId: string;

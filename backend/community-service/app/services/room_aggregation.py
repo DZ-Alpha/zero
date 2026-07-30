@@ -380,6 +380,36 @@ async def build_member_calendar(
     return [{"date": d.isoformat(), "recordCount": c} for d, c in sorted(counts.items())]
 
 
+async def build_room_calendar(
+    db: AsyncSession, room_id: uuid.UUID, viewer_id: int, year: int, month: int
+) -> list[dict[str, object]]:
+    """방 상세 캘린더(2026-07-30 연장업무 - 과거 날짜 조회 진입점)용 월간
+    집계. 날짜별로 방 전체 기록 수와 그중 내 기록 수를 나눠 주면, 프론트가
+    "남만 올린 날"과 "나도 올린 날"을 색으로 구분한다. build_member_calendar와
+    같은 room_meal_threads 근사치 기준이다."""
+    start = date(year, month, 1)
+    end = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
+
+    result = await db.execute(
+        select(RoomMealThread.record_date, RoomMealThread.user_id).where(
+            RoomMealThread.room_id == room_id,
+            RoomMealThread.record_date >= start,
+            RoomMealThread.record_date <= end,
+        )
+    )
+    total: dict[date, int] = {}
+    mine: dict[date, int] = {}
+    for row in result.all():
+        total[row.record_date] = total.get(row.record_date, 0) + 1
+        if row.user_id == viewer_id:
+            mine[row.record_date] = mine.get(row.record_date, 0) + 1
+
+    return [
+        {"date": d.isoformat(), "recordCount": c, "myRecordCount": mine.get(d, 0)}
+        for d, c in sorted(total.items())
+    ]
+
+
 _BADGE_MIN_RECIPE_COUNT = 5
 
 

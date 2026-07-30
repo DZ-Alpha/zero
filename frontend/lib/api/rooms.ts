@@ -7,6 +7,7 @@ import type {
   JoinRoomPreviewResponse,
   MemberCalendarDay,
   ReportRoomContentInput,
+  RoomCalendarDay,
   RoomComment,
   RoomDetailResponse,
   RoomInvite,
@@ -162,6 +163,14 @@ export function toggleRoomMealReaction(token: string, roomId: string, mealId: st
       method: "PUT",
       headers: authHeaders(token),
     },
+  );
+}
+
+export function getRoomCalendar(token: string, roomId: string, year: number, month: number) {
+  const query = new URLSearchParams({ year: String(year), month: String(month) });
+  return apiRequest<{ days: RoomCalendarDay[] }>(
+    `/rooms/${encodeURIComponent(roomId)}/calendar?${query}`,
+    { headers: authHeaders(token) },
   );
 }
 
