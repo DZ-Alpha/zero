@@ -350,7 +350,10 @@ export function RoomSettings({ roomId }: { roomId: string }) {
                   </div>
                 </div>
               ) : (
-                <p className={styles.settingsEmptyNote}>방장이 허용하면 초대 코드를 만들고 볼 수 있어요.</p>
+                <div className={styles.settingsEmptyNote}>
+                  <strong>초대 권한이 없어요</strong>
+                  <small>초대가 필요할 경우 모임 관리자에게 요청해주세요.</small>
+                </div>
               )}
             </section>
 
