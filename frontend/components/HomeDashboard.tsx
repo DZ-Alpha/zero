@@ -22,6 +22,35 @@ const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 
 const MEAL_LABELS: Record<string, string> = { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" };
 
+// "새 사진이 올라왔어요" 안내는 한 번 보면(방으로 들어가면) 지워지고, 그 뒤에
+// 진짜 새로운 활동이 생겨야 다시 뜬다 - 방별 마지막으로 확인한 활동 id를
+// localStorage에 남겨서 기기별로 기억한다(서버에 읽음 상태를 둘 정도의 기능은
+// 아니라고 판단).
+const ROOM_NUDGE_SEEN_KEY = "room_nudge_seen_activity";
+
+function getSeenActivityId(roomId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ROOM_NUDGE_SEEN_KEY);
+    if (!raw) return null;
+    return (JSON.parse(raw) as Record<string, string>)[roomId] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function markActivitySeen(roomId: string, activityId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(ROOM_NUDGE_SEEN_KEY);
+    const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    map[roomId] = activityId;
+    window.localStorage.setItem(ROOM_NUDGE_SEEN_KEY, JSON.stringify(map));
+  } catch {
+    // localStorage를 못 쓰는 환경 - 그냥 매번 안내가 뜨는 정도로만 열화된다.
+  }
+}
+
 const recipeRanking: RankingItem[] = recipes.map((recipe) => ({ name: recipe.title, meta: `${recipe.time} · 등록 재료 당류 ${recipe.estimatedSugar}g`, saved: recipe.savedDemo, href: `/recipes/${recipe.slug}` }));
 const fallbackProductRanking: RankingItem[] = products.slice(0, 10).map((product) => ({ name: product.title, meta: `${product.serving} 기준 · 당류 ${product.sugar}g · ${product.calories}kcal`, saved: product.savedDemo, href: `/product/${product.slug}` }));
 const emptyRoomsHome: RoomsHomeResponse = {
@@ -125,6 +154,7 @@ export function HomeDashboard() {
   const [productPanelTitle, setProductPanelTitle] = useState("저당픽 TOP");
   const [roomsHome, setRoomsHome] = useState<RoomsHomeResponse>(emptyRoomsHome);
   const [nudgeToast, setNudgeToast] = useState("");
+  const [seenActivityId, setSeenActivityId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!nudgeToast) return;
@@ -243,6 +273,16 @@ export function HomeDashboard() {
     : [];
   const roomRanking = toRoomRanking(roomsHome.weeklyRanking);
 
+  useEffect(() => {
+    setSeenActivityId(myRoom ? getSeenActivityId(myRoom.id) : null);
+  }, [myRoom?.id]);
+
+  // recentActivities는 서버가 이미 created_at desc로 정렬해서 준다 - 배열의
+  // 첫 항목이 가장 최근 활동.
+  const latestRoomActivityId = myRoomActivities[0]?.id ?? null;
+  const showRoomPhotoNudge = Boolean(myRoom && latestRoomActivityId && latestRoomActivityId !== seenActivityId);
+  const showNoRoomActivityNotice = Boolean(myRoom && myRoomActivities.length === 0);
+
   return (
     <main className="home-dashboard">
       {authReady && !signedIn && (
@@ -257,14 +297,28 @@ export function HomeDashboard() {
         <div className="today-character-copy">
           <p className="day-label">{todayLabel} · {signedIn ? "나의 오늘" : "오늘의 미리보기"}</p>
           <h1>{stateCopy}</h1>
-          {myRoom && (
-            <Link className="today-room-nudge" href={`/rooms/${myRoom.id}`}>
+          {showRoomPhotoNudge && myRoom && (
+            <Link
+              className="today-room-nudge"
+              href={`/rooms/${myRoom.id}`}
+              onClick={() => {
+                if (!latestRoomActivityId) return;
+                markActivitySeen(myRoom.id, latestRoomActivityId);
+                setSeenActivityId(latestRoomActivityId);
+              }}
+            >
               <span className="today-room-nudge-avatars" aria-hidden="true">
                 {myRoomActivities.slice(0, 3).map((activity) => <i key={activity.id}>{activity.memberAvatar}</i>)}
               </span>
               <span><strong>{myRoom.name}에 새 사진이 올라왔어요</strong><small>멤버들의 오늘 식탁 보러가기</small></span>
               <b aria-hidden="true">→</b>
             </Link>
+          )}
+          {showNoRoomActivityNotice && myRoom && (
+            <div className="today-room-nudge today-room-nudge-static">
+              <span className="today-room-nudge-avatars" aria-hidden="true" />
+              <span><strong>오늘은 아무도 등록하지 않았어요</strong><small>{myRoom.name}에서 가장 먼저 기록해보세요</small></span>
+            </div>
           )}
         </div>
       </section>
