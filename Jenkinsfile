@@ -162,6 +162,9 @@ pipeline {
                     }
                     // 승격 단계가 성공 서비스만 대상으로 하도록 CHANGED를 재설정.
                     env.CHANGED = okSvcs.join(' ')
+                    // Slack 알림(post{})에서 쓰도록 성공/실패 서비스 목록을 env로 노출.
+                    env.OK_SVCS = okSvcs.join(', ')
+                    env.FAILED_SVCS = failedSvcs.join(', ')
                     echo "빌드 성공(승격 대상): ${okSvcs.join(', ') ?: '(없음)'}"
                     if (failedSvcs) { echo "빌드 실패(승격 제외): ${failedSvcs.join(', ')}" }
                 }
@@ -434,6 +437,29 @@ pipeline {
                     archiveArtifacts artifacts: 'zap-out/*.html,zap-out/*.log', allowEmptyArchive: true
                 } else {
                     echo 'DAST 미실행(백엔드 변경 없음) — 보관할 ZAP 리포트 없음'
+                }
+            }
+            // Slack 배포 알림. Incoming Webhook URL을 credential 'slack-webhook'(Secret text)로 주입.
+            // 결과별 색: SUCCESS=초록, UNSTABLE(일부 실패)=노랑, FAILURE=빨강. curl POST(플러그인 불필요).
+            script {
+                def result = currentBuild.result ?: 'SUCCESS'
+                def color = (result == 'SUCCESS') ? 'good' : (result == 'UNSTABLE') ? 'warning' : 'danger'
+                def emoji = (result == 'SUCCESS') ? '✅' : (result == 'UNSTABLE') ? '⚠️' : '❌'
+                // 메시지 조립(성공/실패 서비스 목록 포함). null/빈값 안전 처리.
+                def okLine  = env.OK_SVCS?.trim()     ? "배포 완료: ${env.OK_SVCS}"     : "배포된 서비스 없음"
+                def failLine = env.FAILED_SVCS?.trim() ? "\\n실패(제외): ${env.FAILED_SVCS}" : ""
+                def text = "${emoji} 백엔드 파이프라인 ${result} (#${env.BUILD_NUMBER})\\n${okLine}${failLine}\\n${env.BUILD_URL}"
+                // Webhook 미설정 시 알림만 스킵(빌드 결과에 영향 없음).
+                try {
+                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_HOOK')]) {
+                        sh """
+                            curl -s -X POST -H 'Content-type: application/json' \
+                              --data '{"attachments":[{"color":"${color}","text":"${text}"}]}' \
+                              "\$SLACK_HOOK" || echo 'Slack 알림 전송 실패(무시)'
+                        """
+                    }
+                } catch (err) {
+                    echo "Slack 알림 스킵: credential 'slack-webhook' 없음 또는 오류(${err.message})"
                 }
             }
         }
