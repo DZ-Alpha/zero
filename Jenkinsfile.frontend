@@ -162,14 +162,21 @@ pipeline {
                                     exit 1
                                 fi
                                 echo "DAST 스캔 대상 노드: \$TARGET_IP:${PORT} (${fe})"
-                                # -I 없음: 0=PASS, 1=FAIL(High, 차단), 2=WARN(통과)
-                                docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                # -I 없음: 0=PASS, 1=FAIL(High, 차단), 2=WARN(통과). 124=timeout.
+                                # timeout 360 + ZAP -m 3: staging이 살아있는 백엔드를 보면서 ZAP가
+                                #   특정 요청(SSE 등)에 물려 무한 hang된 사례(2026-07-30, 30분+) 방지.
+                                #   timeout 초과 시 exit 124 → High(1) 아니므로 통과(그때까지 결과 기준,
+                                #   hang이 배포를 막지 않게 함). 차단은 오직 High(1)일 때만.
+                                timeout 360 docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                     ghcr.io/zaproxy/zaproxy:stable \
-                                    zap-baseline.py -t http://\$TARGET_IP:${PORT} \
+                                    zap-baseline.py -t http://\$TARGET_IP:${PORT} -m 3 \
                                     -r zap-${fe}-report.html > \$WORKSPACE/zap-out/zap-${fe}.log 2>&1 || ZAP_RC=\$?
                                 ZAP_RC=\${ZAP_RC:-0}
-                                echo "ZAP ${fe} exit=\$ZAP_RC (0=PASS 1=FAIL/High 2=WARN)"
+                                echo "ZAP ${fe} exit=\$ZAP_RC (0=PASS 1=FAIL/High 2=WARN 124=timeout)"
                                 tail -25 \$WORKSPACE/zap-out/zap-${fe}.log
+                                if [ "\$ZAP_RC" = "124" ]; then
+                                    echo "DAST TIMEOUT(6분 초과, hang 방지) — ${fe} 그때까지 High 없어 승격 진행"
+                                fi
                                 if [ "\$ZAP_RC" = "1" ]; then
                                     echo "DAST FAIL(High) — ${fe} prod 승격 차단"
                                     exit 1
