@@ -209,7 +209,13 @@ async def list_recent_activities(
     if not room_by_id:
         return [], None
 
-    stmt = select(RoomMealThread).where(RoomMealThread.room_id.in_(room_by_id.keys()))
+    stmt = select(RoomMealThread).where(
+        RoomMealThread.room_id.in_(room_by_id.keys()),
+        # 내 기록은 홈 "모임의 새 식탁"에 안 띄운다(2026-07-30 요청) - 이 피드는
+        # "다른 멤버들이 뭘 먹었나"를 보는 곳이고, 내가 방금 올린 사진이 항상
+        # 맨 앞을 차지하면 정작 남의 새 기록이 밀려난다.
+        RoomMealThread.user_id != viewer_id,
+    )
     if today_only:
         stmt = stmt.where(RoomMealThread.record_date == today_kst())
     if cursor:
