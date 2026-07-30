@@ -142,9 +142,12 @@ def seed() -> None:
             members = {user_ids[i % N_USERS], user_ids[(i + 1) % N_USERS]}
             for uid in members:
                 role = "owner" if uid == user_ids[i % N_USERS] else "member"
+                # nudge_notifications/activity_notifications는 모델 default=True지만
+                # DB엔 server_default 없이 NOT NULL → raw INSERT는 명시해야 한다.
                 conn.execute(text(
-                    "INSERT INTO community.room_members (room_id, user_id, role) "
-                    "VALUES (:rid, :uid, :role) ON CONFLICT DO NOTHING"
+                    "INSERT INTO community.room_members "
+                    "(room_id, user_id, role, nudge_notifications, activity_notifications) "
+                    "VALUES (:rid, :uid, :role, true, true) ON CONFLICT DO NOTHING"
                 ), {"rid": rid, "uid": uid, "role": role})
 
     print(f"시딩 완료: users={N_USERS}, health_profiles={N_USERS}, "
