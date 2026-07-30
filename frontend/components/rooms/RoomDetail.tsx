@@ -11,6 +11,7 @@ import { ApiError } from "@/lib/api/client";
 import {
   addRoomMealComment,
   deleteRoomMealComment,
+  getRoomCalendar,
   getRoomDetail,
   getRoomMealComments,
   getRoomMemberCalendar,
@@ -22,6 +23,7 @@ import {
   MealType,
   MemberCalendarDay,
   MemberMealSlot,
+  RoomCalendarDay,
   RoomComment,
   RoomDetailResponse,
 } from "@/lib/rooms/contracts";
@@ -69,6 +71,18 @@ function toLocalDateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function parseDateKey(key: string) {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+
+function formatDateLabel(key: string) {
+  const date = parseDateKey(key);
+  return `${date.getMonth() + 1}월 ${date.getDate()}일 (${WEEKDAY_LABELS[date.getDay()]})`;
+}
+
 export function RoomDetail({ roomId }: { roomId: string }) {
   const { ready: authReady, signedIn, token } = useAuthSession();
   const [detail, setDetail] = useState<RoomDetailResponse | null>(null);
@@ -91,6 +105,14 @@ export function RoomDetail({ roomId }: { roomId: string }) {
   const [pendingNudge, setPendingNudge] = useState<{ memberId: string; memberName: string; mealType: MealType } | null>(null);
   const [nudgeSending, setNudgeSending] = useState(false);
   const [memberCalendars, setMemberCalendars] = useState<Record<string, MemberCalendarDay[]>>({});
+  // 날짜 이동(2026-07-30 연장업무) - 기본은 오늘, 캘린더/화살표로 과거 조회.
+  const [selectedDate, setSelectedDate] = useState(() => toLocalDateKey(new Date()));
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calMonth, setCalMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() + 1 };
+  });
+  const [roomCalendars, setRoomCalendars] = useState<Record<string, RoomCalendarDay[]>>({});
 
   const tabsRef = useRef<HTMLElement>(null);
   const didInitialScroll = useRef(false);
@@ -100,7 +122,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     let active = true;
     setLoading(true);
     setNotFound(false);
-    getRoomDetail(token, roomId)
+    getRoomDetail(token, roomId, selectedDate)
       .then((response) => {
         if (!active) return;
         setDetail(response);
@@ -122,7 +144,25 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     return () => {
       active = false;
     };
-  }, [token, roomId]);
+  }, [token, roomId, selectedDate]);
+
+  // 캘린더가 열려 있는 동안 보고 있는 달의 기록 현황을 불러온다(월 단위 캐시).
+  const calMonthKey = `${calMonth.year}-${String(calMonth.month).padStart(2, "0")}`;
+  useEffect(() => {
+    if (!calendarOpen || !token || roomCalendars[calMonthKey]) return;
+    let active = true;
+    getRoomCalendar(token, roomId, calMonth.year, calMonth.month)
+      .then(({ days }) => {
+        if (active) setRoomCalendars((current) => ({ ...current, [calMonthKey]: days }));
+      })
+      .catch(() => {
+        if (active) setRoomCalendars((current) => ({ ...current, [calMonthKey]: [] }));
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendarOpen, token, roomId, calMonthKey]);
 
   useEffect(() => {
     setTodayView(getCurrentMealView());
@@ -171,7 +211,23 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     };
   }, [reportMeal]);
 
-  if (!authReady || (signedIn && token && loading)) {
+  useEffect(() => {
+    if (!calendarOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCalendarOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [calendarOpen]);
+
+  // 첫 로드만 전체 게이트 - 날짜 이동으로 다시 불러올 땐 기존 화면을 유지한
+  // 채로 갈아끼운다(화면 전체가 깜빡이지 않게).
+  if (!authReady || (signedIn && token && loading && !detail)) {
     return (
       <main className={styles.page}>
         <div className={styles.wrap}>
@@ -220,6 +276,33 @@ export function RoomDetail({ roomId }: { roomId: string }) {
   }
 
   const slotsByKey = new Map<string, MemberMealSlot>(detail.todayMealSlots.map((slot) => [slotKey(slot.memberId, slot.mealType), slot]));
+
+  const serverToday = detail.serverDate;
+  const isToday = selectedDate >= serverToday;
+  // 콕 찌르기는 서버가 항상 "오늘" 기준으로 기록하므로(POST /nudges에 날짜가
+  // 없다), 과거 날짜를 보는 동안엔 버튼 영역 자체를 내리지 않는다.
+  const dateLabel = formatDateLabel(selectedDate);
+
+  function shiftDay(delta: number) {
+    const date = parseDateKey(selectedDate);
+    date.setDate(date.getDate() + delta);
+    const next = toLocalDateKey(date);
+    if (next > serverToday) return;
+    setSelectedDate(next);
+  }
+
+  function toggleCalendar() {
+    if (!calendarOpen) {
+      const date = parseDateKey(selectedDate);
+      setCalMonth({ year: date.getFullYear(), month: date.getMonth() + 1 });
+    }
+    setCalendarOpen((value) => !value);
+  }
+
+  function shiftCalMonth(delta: number) {
+    const date = new Date(calMonth.year, calMonth.month - 1 + delta, 1);
+    setCalMonth({ year: date.getFullYear(), month: date.getMonth() + 1 });
+  }
 
   function copyInvite() {
     void navigator.clipboard.writeText(`${window.location.origin}/rooms/${roomId}/settings#invite`)
@@ -319,7 +402,9 @@ export function RoomDetail({ roomId }: { roomId: string }) {
             </div>
           </div>
           <div className={styles.roomHeaderActions}>
-            <button type="button" className={styles.secondaryButton} onClick={copyInvite}>초대 링크</button>
+            {room.permissions.canInvite && (
+              <button type="button" className={styles.secondaryButton} onClick={copyInvite}>초대 링크</button>
+            )}
             <Link className={styles.secondaryButton} href={`/rooms/${room.id}/settings`}>모임 관리</Link>
             <Link className={styles.primaryButton} href="/">내 식단 기록</Link>
           </div>
@@ -342,7 +427,81 @@ export function RoomDetail({ roomId }: { roomId: string }) {
         <div className={styles.tabContent}>
           {tab === "today" && (
             <section aria-labelledby="today-room-title">
-              <nav className={styles.mealViewTabs} aria-label="오늘 식사 보기">
+              <div className={styles.dateNav}>
+                <button type="button" className={styles.dateNavArrow} aria-label="이전 날" onClick={() => shiftDay(-1)}>◀</button>
+                <button
+                  type="button"
+                  className={styles.dateNavLabel}
+                  aria-expanded={calendarOpen}
+                  onClick={toggleCalendar}
+                >
+                  {dateLabel}{isToday && <em>오늘</em>}<i aria-hidden="true">▾</i>
+                </button>
+                <button type="button" className={styles.dateNavArrow} aria-label="다음 날" disabled={isToday} onClick={() => shiftDay(1)}>▶</button>
+                {!isToday && (
+                  <button type="button" className={styles.dateNavToday} onClick={() => setSelectedDate(serverToday)}>오늘로</button>
+                )}
+              </div>
+
+              {calendarOpen && (() => {
+                const calDays = roomCalendars[calMonthKey];
+                const calByDate = new Map((calDays ?? []).map((day) => [day.date, day]));
+                const daysInMonth = new Date(calMonth.year, calMonth.month, 0).getDate();
+                const leadingBlanks = new Date(calMonth.year, calMonth.month - 1, 1).getDay();
+                const isCurrentMonth = calMonthKey >= serverToday.slice(0, 7);
+                return (
+                  <div
+                    className={styles.modalBackdrop}
+                    role="presentation"
+                    onMouseDown={(event) => {
+                      if (event.target === event.currentTarget) setCalendarOpen(false);
+                    }}
+                  >
+                    <section className={styles.roomCalendar} role="dialog" aria-modal="true" aria-label="날짜 선택">
+                      <button type="button" className={styles.roomCalendarClose} onClick={() => setCalendarOpen(false)} aria-label="닫기">×</button>
+                      <header>
+                        <button type="button" aria-label="이전 달" onClick={() => shiftCalMonth(-1)}>◀</button>
+                        <strong>{calMonth.year}년 {calMonth.month}월</strong>
+                        <button type="button" aria-label="다음 달" disabled={isCurrentMonth} onClick={() => shiftCalMonth(1)}>▶</button>
+                      </header>
+                      <div className={styles.roomCalendarWeekdays} aria-hidden="true">
+                        {WEEKDAY_LABELS.map((label) => <span key={label}>{label}</span>)}
+                      </div>
+                      <div className={styles.roomCalendarGrid}>
+                        {Array.from({ length: leadingBlanks }, (_, index) => <i key={`blank-${index}`} />)}
+                        {Array.from({ length: daysInMonth }, (_, index) => {
+                          const dayKey = `${calMonthKey}-${String(index + 1).padStart(2, "0")}`;
+                          const info = calByDate.get(dayKey);
+                          // 나도 올린 날(mine) / 남만 올린 날(others) 색 구분.
+                          const state = info ? (info.myRecordCount > 0 ? "mine" : "others") : "none";
+                          return (
+                            <button
+                              type="button"
+                              key={dayKey}
+                              data-state={state}
+                              data-selected={dayKey === selectedDate || undefined}
+                              disabled={dayKey > serverToday}
+                              onClick={() => {
+                                setSelectedDate(dayKey);
+                                setCalendarOpen(false);
+                              }}
+                            >
+                              {index + 1}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className={styles.roomCalendarLegend}>
+                        <span><i data-state="mine" />나도 올린 날</span>
+                        <span><i data-state="others" />나만 안 올린 날</span>
+                      </div>
+                      {calDays === undefined && <p className={styles.roomCalendarLoading}>기록을 불러오는 중…</p>}
+                    </section>
+                  </div>
+                );
+              })()}
+
+              <nav className={styles.mealViewTabs} aria-label="식사 보기">
                 {todayViews.map((view) => (
                   <button
                     type="button"
@@ -359,7 +518,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                 <>
                   <header className={styles.todayHeading}>
                     <div>
-                      <p className={styles.eyebrow}>오늘의 식탁</p>
+                      <p className={styles.eyebrow}>{isToday ? "오늘의 식탁" : `${dateLabel}의 식탁`}</p>
                       <h2 id="today-room-title">멤버별 기록</h2>
                     </div>
                   </header>
@@ -410,10 +569,10 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                 <section className={styles.mealMoment} aria-labelledby="today-room-title">
                   <header className={styles.mealMomentHeader}>
                     <div>
-                      <p className={styles.eyebrow}>오늘의 {MEAL_LABELS[todayView]}</p>
+                      <p className={styles.eyebrow}>{isToday ? "오늘" : dateLabel}의 {MEAL_LABELS[todayView]}</p>
                       <h2 id="today-room-title">{MEAL_LABELS[todayView]} 식탁</h2>
                     </div>
-                    <Link href="/" className={styles.mealUploadButton}>＋ 내 {MEAL_LABELS[todayView]} 올리기</Link>
+                    {isToday && <Link href="/" className={styles.mealUploadButton}>＋ 내 {MEAL_LABELS[todayView]} 올리기</Link>}
                   </header>
 
                   <div
@@ -425,21 +584,23 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                       const slot = slotsByKey.get(slotKey(member.id, todayView));
                       if (!slot?.hasRecord || !slot.record) {
                         const canSend = slot?.nudge.canSend ?? false;
+                        const refused = slot?.nudge.refused ?? false;
                         const alreadyNudged = nudgedSlots[slotKey(member.id, todayView)] || slot?.nudge.sentByMe;
                         return (
                           <article className={`${styles.setlogCard} ${styles.setlogEmptyCard}`} key={`empty-${todayView}-${member.id}`}>
                             <div className={styles.setlogEmptyPhoto}>
                               <span className={styles.avatar} style={{ background: member.color, color: "#18221b" }} aria-hidden="true">{member.avatarText}</span>
-                              <p>아직 {MEAL_LABELS[todayView]} 사진이 없어요</p>
+                              <p>{isToday ? `아직 ${MEAL_LABELS[todayView]} 사진이 없어요` : `이날 ${MEAL_LABELS[todayView]} 기록이 없어요`}</p>
                             </div>
-                            {canSend && (
+                            {isToday && (canSend || refused) && (
                               <footer className={styles.setlogEmptyAction}>
                                 <button
                                   type="button"
-                                  disabled={alreadyNudged}
+                                  disabled={alreadyNudged || refused}
+                                  title={refused ? "이 멤버는 콕 찌르기를 받지 않아요." : undefined}
                                   onClick={() => setPendingNudge({ memberId: member.id, memberName: member.name, mealType: todayView })}
                                 >
-                                  {alreadyNudged ? "콕 찔렀어요" : "콕 찌르기"}
+                                  {refused ? "콕 안 받아요" : alreadyNudged ? "콕 찔렀어요" : "콕 찌르기"}
                                 </button>
                               </footer>
                             )}
@@ -465,17 +626,30 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                           <div className={styles.setlogPhoto}>
                             <SafeImage src={activeImage} alt={`${activeName} ${photoIndex + 1}번째 사진`} fallbackLabel="식단 사진" />
                             {photos.length > 1 && (
-                              <button
-                                type="button"
-                                className={styles.setlogGalleryOpen}
-                                onClick={() => setPhotoIndexes((current) => ({
-                                  ...current,
-                                  [meal.id]: ((current[meal.id] ?? 0) + 1) % photos.length,
-                                }))}
-                                aria-label={`${meal.memberName}님의 다음 ${MEAL_LABELS[todayView]} 사진 보기`}
-                              >
-                                <span>다음 사진 보기</span>
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  className={styles.setlogGalleryPrev}
+                                  onClick={() => setPhotoIndexes((current) => ({
+                                    ...current,
+                                    [meal.id]: ((current[meal.id] ?? 0) - 1 + photos.length) % photos.length,
+                                  }))}
+                                  aria-label={`${meal.memberName}님의 이전 ${MEAL_LABELS[todayView]} 사진 보기`}
+                                >
+                                  <span>이전 사진 보기</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.setlogGalleryNext}
+                                  onClick={() => setPhotoIndexes((current) => ({
+                                    ...current,
+                                    [meal.id]: ((current[meal.id] ?? 0) + 1) % photos.length,
+                                  }))}
+                                  aria-label={`${meal.memberName}님의 다음 ${MEAL_LABELS[todayView]} 사진 보기`}
+                                >
+                                  <span>다음 사진 보기</span>
+                                </button>
+                              </>
                             )}
                             <div className={styles.setlogAuthor}>
                               <span className={styles.avatar} aria-hidden="true">{meal.memberAvatar}</span>
@@ -486,6 +660,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                             </div>
                             {photos.length > 1 && (
                               <>
+                                <span className={styles.setlogPrevHint} aria-hidden="true">‹</span>
                                 <span className={styles.setlogNextHint} aria-hidden="true">›</span>
                                 <span className={styles.setlogDots} aria-hidden="true">
                                   {photos.map((url, index) => <i key={`${url}-${index}`} data-active={photoIndex === index} />)}
@@ -500,7 +675,11 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                                   void loadComments(meal.id);
                                 }}
                               >
-                                댓글 {meal.commentCount}
+                                {/* 2026-07-30 QA 리포트 - meal.commentCount는 페이지를 처음 연
+                                    시점의 서버 스냅샷이라, 같은 화면에서 댓글을 남기거나
+                                    지워도 안 바뀌었다("3개 남겼는데 1에서 안 올라감").
+                                    댓글을 한 번이라도 불러온 뒤로는 그 실제 개수를 쓴다. */}
+                                댓글 {mealComments?.length ?? meal.commentCount}
                               </button>
                               <button type="button" onClick={() => toggleReaction(meal.id, reaction.reacted, reaction.count)} aria-pressed={reaction.reacted}>
                                 맛있겠다 {reaction.count}

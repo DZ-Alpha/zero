@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.room import Room
@@ -124,11 +125,48 @@ def avatar_text(display_name: str) -> str:
     return stripped[:2] if stripped else "?"
 
 
-def compute_permissions(room: Room, membership: RoomMember, active_member_count: int) -> dict[str, bool]:
+async def get_member_invite_enabled(db: AsyncSession, room_id: uuid.UUID) -> bool:
+    """member_invite_enabled는 Room에 매핑 안 된 컬럼이라(app/models/room.py
+    주석 참고) 여기서 raw SQL로만 읽는다. 배포 전 ALTER TABLE을 아직 안
+    돌렸으면(컬럼 없음) DBAPIError를 잡아 "꺼짐"으로 폴백한다 - 실패한 문장
+    뒤엔 세션이 아무 쓰기도 안 했어도 트랜잭션이 aborted 상태가 되므로,
+    이후 같은 세션의 쿼리가 계속 실패하지 않도록 rollback이 필수다."""
+    try:
+        result = await db.execute(
+            text("SELECT member_invite_enabled FROM community.rooms WHERE id = :room_id"),
+            {"room_id": room_id},
+        )
+        value = result.scalar_one_or_none()
+        return bool(value) if value is not None else False
+    except DBAPIError:
+        await db.rollback()
+        return False
+
+
+async def set_member_invite_enabled(db: AsyncSession, room_id: uuid.UUID, value: bool) -> bool:
+    """반환값은 실제로 반영됐는지 여부. 컬럼이 아직 없으면(배포 전 ALTER TABLE
+    미실행) False를 반환하고 아무것도 바꾸지 않는다 - 호출부가 조용히
+    무시하거나 안내만 하면 된다(요청: "일단은 옵션을 비활성화 처리")."""
+    try:
+        await db.execute(
+            text("UPDATE community.rooms SET member_invite_enabled = :value WHERE id = :room_id"),
+            {"value": value, "room_id": room_id},
+        )
+        await db.commit()
+        return True
+    except DBAPIError:
+        await db.rollback()
+        return False
+
+
+def compute_permissions(room: Room, membership: RoomMember, active_member_count: int, member_invite_enabled: bool) -> dict[str, bool]:
     is_owner = membership.role == "owner"
     return {
         "canEditRoom": is_owner,
-        "canInvite": True,
+        # 2026-07-30 요청 - 기본은 방장만, 방장이 켜면 멤버도 가능. 값은
+        # 호출부가 get_member_invite_enabled()로 미리 조회해서 넘긴다(이
+        # 함수는 DB에 안 닿는 순수 계산 함수로 유지).
+        "canInvite": is_owner or member_invite_enabled,
         "canManageMembers": is_owner,
         "canTransferOwnership": is_owner and active_member_count > 1,
         "canDeleteRoom": is_owner,
@@ -177,7 +215,7 @@ def _generate_invite_code() -> str:
 
 
 async def create_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int) -> tuple[RoomInvite, str]:
-    await require_owner(db, room_id, actor_id)
+    await require_invite_access(db, room_id, actor_id)
 
     # "새 코드 발급 시 기존 활성 코드는 즉시 무효화"
     result = await db.execute(
@@ -210,7 +248,7 @@ async def create_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int) -> 
 
 
 async def get_active_invite(db: AsyncSession, room_id: uuid.UUID, actor_id: int) -> RoomInvite | None:
-    await require_owner(db, room_id, actor_id)
+    await require_invite_access(db, room_id, actor_id)
     now = datetime.now(timezone.utc)
     result = await db.execute(
         select(RoomInvite)
@@ -324,8 +362,27 @@ async def require_owner(db: AsyncSession, room_id: uuid.UUID, user_id: int) -> R
     return membership
 
 
+async def require_invite_access(db: AsyncSession, room_id: uuid.UUID, user_id: int) -> RoomMember:
+    """초대 코드 생성/조회 권한(2026-07-30 요청). 방장은 항상 가능하고,
+    멤버는 방장이 member_invite_enabled를 켜둔 경우에만 가능하다(기본 꺼짐).
+    코드를 없애는 건(revoke_invite) 계속 방장 전용 - require_owner 그대로 쓴다."""
+    membership = await require_membership(db, room_id, user_id)
+    if membership.role == "owner":
+        return membership
+    if not await get_member_invite_enabled(db, room_id):
+        raise _access_denied()
+    return membership
+
+
 async def update_room(
-    db: AsyncSession, room_id: uuid.UUID, actor_id: int, *, name: str | None, emoji: str | None, ranking_opt_in: bool | None
+    db: AsyncSession,
+    room_id: uuid.UUID,
+    actor_id: int,
+    *,
+    name: str | None,
+    emoji: str | None,
+    ranking_opt_in: bool | None,
+    member_invite_enabled: bool | None = None,
 ) -> Room:
     await require_owner(db, room_id, actor_id)
     room = await get_room(db, room_id)
@@ -338,6 +395,11 @@ async def update_room(
     room.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(room)
+    # member_invite_enabled는 매핑 컬럼이 아니라 room에 안 실려있다 - 커밋과
+    # 별개의 raw SQL로 처리(컬럼 없으면 set_member_invite_enabled가 조용히
+    # False를 반환하고 넘어간다 - "일단 비활성화" 요청대로).
+    if member_invite_enabled is not None:
+        await set_member_invite_enabled(db, room_id, member_invite_enabled)
     return room
 
 
@@ -540,6 +602,12 @@ async def send_nudge(
     target = await get_membership(db, room_id, target_user_id)
     if target is None:
         raise RoomError(404, "ROOM_NOT_FOUND", "대상 멤버를 찾을 수 없어요.")
+    # 2026-07-30: nudge_notifications는 원래 "받은 콕 표시"만 걸렀는데(§11),
+    # 방별 콕 찌르기 거부 요청에 따라 발송 자체를 막는 옵트아웃으로 승격.
+    # build_meal_slots의 canSend=False로 버튼도 숨겨지지만, 화면이 열린 채
+    # 상대가 설정을 바꾼 경우가 있으니 서버에서도 한 번 더 막는다.
+    if not target.nudge_notifications:
+        raise RoomError(409, "NUDGE_REFUSED", "이 멤버는 콕 찌르기를 받지 않도록 설정했어요.")
 
     now = datetime.now(timezone.utc)
     result = await db.execute(

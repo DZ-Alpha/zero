@@ -165,16 +165,21 @@ function query(path: string, values: Record<string, string | number | boolean | 
   return `${path}?${params.toString()}`;
 }
 
+// 2026-07-30 QA 보안 리포트 — usr(JWT)를 쿼리스트링/바디에 실어 보내면 접근
+// 로그·프록시·브라우저 히스토리·Referrer에 토큰이 그대로 남는다(OWASP 세션관리
+// 가이드 위반). 모든 서비스가 이미 Authorization: Bearer를 usr보다 우선
+// 받아들이므로(PRODUCTION_HANDOFF.md P0-4, 각 서비스 core/auth.py 확인),
+// 프론트만 헤더로 옮기면 백엔드 변경 없이 바로 적용된다.
 export function getDailyGauge(token: string) {
-  return apiRequest<GaugeResponse>(query("/home/user-sugar-calorie", { usr: token }));
+  return apiRequest<GaugeResponse>("/home/user-sugar-calorie", { headers: authHeader(token) });
 }
 
 export function getMyPage(token: string) {
-  return apiRequest<MyPageResponse>(query("/user/mypage", { usr: token }));
+  return apiRequest<MyPageResponse>("/user/mypage", { headers: authHeader(token) });
 }
 
 export function deleteAccount(token: string) {
-  return apiRequest<{ status: string }>(query("/user/mypage", { usr: token, exituser: "EXIT" }), { method: "DELETE" });
+  return apiRequest<{ status: string }>(query("/user/mypage", { exituser: "EXIT" }), { method: "DELETE", headers: authHeader(token) });
 }
 
 // DB의 ck_health_gender 체크 제약은 영문 코드(MALE/FEMALE)만 허용하는데, 프론트는
@@ -185,7 +190,7 @@ const GENDER_TO_CODE: Record<string, string> = { "여성": "FEMALE", "남성": "
 const GENDER_FROM_CODE: Record<string, string> = { FEMALE: "여성", MALE: "남성" };
 
 export async function getHealthProfile(token: string) {
-  const profile = await apiRequest<HealthProfileResponse>(query("/home/health-profile", { usr: token }));
+  const profile = await apiRequest<HealthProfileResponse>("/home/health-profile", { headers: authHeader(token) });
   return { ...profile, gender: profile.gender ? GENDER_FROM_CODE[profile.gender] ?? profile.gender : profile.gender };
 }
 
@@ -201,15 +206,16 @@ export function updateFirstSet(token: string, payload: {
 }) {
   return apiRequest<{ status: string }>("/user/firstset", {
     method: "POST",
-    body: JSON.stringify({ usr: token, ...payload }),
+    headers: authHeader(token),
+    body: JSON.stringify(payload),
   });
 }
 
 export function updateHealthProfile(token: string, payload: HealthProfileResponse) {
   return apiRequest<HealthProfileResponse & { status: string }>("/home/health-profile", {
     method: "PUT",
+    headers: authHeader(token),
     body: JSON.stringify({
-      usr: token,
       consent: payload.consent ?? false,
       birthYear: payload.birthYear,
       gender: payload.gender ? GENDER_TO_CODE[payload.gender] ?? payload.gender : payload.gender,
@@ -255,8 +261,30 @@ function authHeader(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
+// 2026-07-30 QA 리포트 — 마이페이지 진입 한 번에 /recipes/favorite/list가 39번
+// 호출됨(여러 컴포넌트가 각자 찜 목록을 조회 - RecipeFeed/RecordMealModal/
+// SavedMenuDrawer 등). 개별 호출부를 다 합치는 대신, 같은 토큰으로 동시에
+// 들어온 요청은 하나의 네트워크 요청/Promise를 공유하도록 이 두 조회 함수에만
+// 얕은 캐시를 둔다. 찜 상태가 바뀌면(toggle) 캐시를 지워서 다음 조회는 새로 간다.
+type FavoritesCache<T> = { token: string | null; promise: Promise<T> | null };
+
+function cachedFavorites<T>(cache: FavoritesCache<T>, token: string, fetcher: () => Promise<T>): Promise<T> {
+  if (cache.token === token && cache.promise) return cache.promise;
+  cache.token = token;
+  const promise = fetcher().catch((error: unknown) => {
+    if (cache.promise === promise) cache.promise = null;
+    throw error;
+  });
+  cache.promise = promise;
+  return promise;
+}
+
+const productFavoritesCache: FavoritesCache<{ "list-products": Array<{ id: string; name: string; brand?: string | null; image?: string | null }> }> = { token: null, promise: null };
+const recipeFavoritesCache: FavoritesCache<{ "list-receipe": Array<{ id: number; name: string; image?: string | null }> }> = { token: null, promise: null };
+
 // 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P0-4/P1-4 반영분(PR-0307/0308) — 상품 찜.
 export function toggleProductFavorite(id: string, token: string) {
+  productFavoritesCache.promise = null;
   return apiRequest<{ status: string; liked: boolean }>("/product/favorite", {
     method: "POST",
     headers: authHeader(token),
@@ -265,10 +293,11 @@ export function toggleProductFavorite(id: string, token: string) {
 }
 
 export function getProductFavorites(token: string) {
-  return apiRequest<{ "list-products": Array<{ id: string; name: string; brand?: string | null; image?: string | null }> }>(
-    "/product/favorite/list",
-    { headers: authHeader(token) },
-  );
+  return cachedFavorites(productFavoritesCache, token, () =>
+    apiRequest<{ "list-products": Array<{ id: string; name: string; brand?: string | null; image?: string | null }> }>(
+      "/product/favorite/list",
+      { headers: authHeader(token) },
+    ));
 }
 
 export function getProductDetail(id: string) {
@@ -284,7 +313,7 @@ export function getProductSweetenerInfo(id: string) {
 }
 
 export function getUserRecommendations(token: string) {
-  return apiRequest<{ listProducts: HomeProductItem[] }>(query("/home/user-recommend", { usr: token }));
+  return apiRequest<{ listProducts: HomeProductItem[] }>("/home/user-recommend", { headers: authHeader(token) });
 }
 
 export function getProductRanking() {
@@ -292,11 +321,11 @@ export function getProductRanking() {
 }
 
 export function getDietCalendar(token: string, year: number, month: number) {
-  return apiRequest<{ list: DietCalendarItem[] }>(query("/diet/calender", { usr: token, year, month }));
+  return apiRequest<{ list: DietCalendarItem[] }>(query("/diet/calender", { year, month }), { headers: authHeader(token) });
 }
 
 export function getDietOtherFoods(token: string, id: string) {
-  return apiRequest<DietAnalysisResponse>(query("/diet/other-foods", { usr: token, id }));
+  return apiRequest<DietAnalysisResponse>(query("/diet/other-foods", { id }), { headers: authHeader(token) });
 }
 
 // 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P0-2/P1-3 반영분(RC-0113~0117) — 식단
@@ -362,6 +391,7 @@ export function getRecipeSubstitutes(id: number) {
 // 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P0-4/P1-4 반영분(RC-0111/0112) — 레시피 찜.
 // recipe-service는 이 두 엔드포인트가 Authorization: Bearer 헤더만 받는다(usr 쿼리 불가).
 export function toggleRecipeFavorite(id: number, token: string) {
+  recipeFavoritesCache.promise = null;
   return apiRequest<{ status: string; liked: boolean }>("/recipes/favorite", {
     method: "POST",
     headers: authHeader(token),
@@ -370,10 +400,11 @@ export function toggleRecipeFavorite(id: number, token: string) {
 }
 
 export function getRecipeFavorites(token: string) {
-  return apiRequest<{ "list-receipe": Array<{ id: number; name: string; image?: string | null }> }>(
-    "/recipes/favorite/list",
-    { headers: authHeader(token) },
-  );
+  return cachedFavorites(recipeFavoritesCache, token, () =>
+    apiRequest<{ "list-receipe": Array<{ id: number; name: string; image?: string | null }> }>(
+      "/recipes/favorite/list",
+      { headers: authHeader(token) },
+    ));
 }
 
 export type ChatbotResponse = {
@@ -501,8 +532,8 @@ export async function streamChatbotMessage(
 
 export function unlinkSocialAccount(token: string, provider: string) {
   return apiRequest<{ status: string; enabledSns: string[] }>(
-    query(`/user/social/${provider}`, { usr: token }),
-    { method: "DELETE" },
+    `/user/social/${provider}`,
+    { method: "DELETE", headers: authHeader(token) },
   );
 }
 
