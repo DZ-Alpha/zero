@@ -1,3 +1,4 @@
+# CI: DAST 인증 active scan 게이트 실동작 검증용 트리거 (2026-07-31). 동작 영향 없음.
 import logging
 import time
 
