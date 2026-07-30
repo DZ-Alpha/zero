@@ -6,6 +6,7 @@ import { HomeAdBanner } from "@/components/HomeAdBanner";
 import { RecordMealModal } from "@/components/RecordMealModal";
 import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
+import { teamRanking as mockTeamRanking } from "@/components/rooms/roomData";
 import { products, recipes } from "@/data/catalog";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useDailyGauge } from "@/hooks/useDailyGauge";
@@ -53,6 +54,15 @@ function markActivitySeen(roomId: string, activityId: string) {
 
 const recipeRanking: RankingItem[] = recipes.map((recipe) => ({ name: recipe.title, meta: `${recipe.time} · 등록 재료 당류 ${recipe.estimatedSugar}g`, saved: recipe.savedDemo, href: `/recipes/${recipe.slug}` }));
 const fallbackProductRanking: RankingItem[] = products.slice(0, 10).map((product) => ({ name: product.title, meta: `${product.serving} 기준 · 당류 ${product.sugar}g · ${product.calories}kcal`, saved: product.savedDemo, href: `/product/${product.slug}` }));
+// 실제 랭킹 참여 조건(멤버 3명+·개설 7일+)을 만족하는 방이 아직 없으면
+// weeklyRanking이 통째로 빈 배열로 온다 - 그렇다고 카드를 비워두면 안
+// 만들어진 기능처럼 보이니, 저당픽 랭킹과 같은 패턴으로 목업을 채워둔다.
+const fallbackRoomRanking: RankingItem[] = mockTeamRanking.slice(0, 3).map((team, index) => ({
+  name: team.name,
+  meta: `멤버 ${team.members}명 · 기록률 ${team.recordRate}% · 평균 당류 ${team.averageSugar}g`,
+  saved: index + 1,
+  href: "/rooms",
+}));
 const emptyRoomsHome: RoomsHomeResponse = {
   rooms: [],
   recentActivities: [],
@@ -271,7 +281,7 @@ export function HomeDashboard() {
   const myRoomActivities = myRoom
     ? roomsHome.recentActivities.filter((activity) => activity.roomId === myRoom.id).slice(0, 4)
     : [];
-  const roomRanking = toRoomRanking(roomsHome.weeklyRanking);
+  const roomRanking = roomsHome.weeklyRanking.length > 0 ? toRoomRanking(roomsHome.weeklyRanking) : fallbackRoomRanking;
 
   useEffect(() => {
     setSeenActivityId(myRoom ? getSeenActivityId(myRoom.id) : null);
