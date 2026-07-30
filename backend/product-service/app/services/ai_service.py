@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 import httpx
 
@@ -22,6 +23,43 @@ _BEDROCK_FAILURE_MSG = "AI 요약을 생성하지 못했습니다. 잠시 후 �
 
 def is_summary_unavailable(text: str) -> bool:
     return text in (_NO_API_KEY_MSG, _BEDROCK_FAILURE_MSG)
+
+
+# 상품 상세 요약 서식 규칙(2026-07-30 요청): 제목/부제목/헤딩/목록/이모지 없이
+# 순수 문장만. 강조는 **단어** 마커만 허용 - 프론트(ProductDetail.tsx)가
+# <strong>으로 렌더한다. 프롬프트로 지시하지만 모델이 어길 수 있어(특히 감미료
+# 설명처럼 성분별 나열이 자연스러운 경우 헤딩·이모지가 자주 섞임) 후처리로도
+# 걷어낸다. 캐시(product_ai_summaries)에 이미 저장된 과거 응답에도 적용해야
+# 하므로 라우터가 캐시 조회 결과에도 이 함수를 태운다.
+_FORMAT_RULE = (
+    "서식 규칙: 제목·부제목·헤딩(#)·목록·이모지를 절대 쓰지 말고, 이어지는 "
+    "순수한 문장으로만 답하세요. 꼭 강조할 단어가 있으면 **단어** 형태만 쓸 수 있습니다."
+)
+
+_HEADING_LINE_RE = re.compile(r"^\s{0,3}#{1,6}\s.*$", re.MULTILINE)
+_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+", re.MULTILINE)
+# 이모지·기호 계열: 그림문자/딩뱃/화살표 장식/변형 선택자/ZWJ. 한글·라틴·일반
+# 문장부호는 건드리지 않는다.
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001f000-\U0001faff"  # 그림문자 전반(이모티콘·음식·사물 등)
+    "\u2600-\u27bf"          # 기타 기호·딩뱃(별·체크·손가락 등)
+    "\U0001f1e6-\U0001f1ff"  # 국기(리전 인디케이터)
+    "\u2b00-\u2bff"          # 화살표·별 장식
+    "\ufe0f"                  # 이모지 변형 선택자
+    "\u200d"                  # ZWJ(조합 이모지 연결자)
+    "]"
+)
+
+
+def sanitize_summary(text: str) -> str:
+    """헤딩 줄(제목/부제목)은 통째로 제거, 목록 마커·이모지는 걷어내고 한
+    문단으로 정리한다. **강조** 마커는 프론트가 굵게 렌더하므로 남긴다."""
+    text = _HEADING_LINE_RE.sub("", text)
+    text = _LIST_MARKER_RE.sub("", text)
+    text = _EMOJI_RE.sub("", text)
+    text = re.sub(r"\s*\n+\s*", " ", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
 async def _call_claude_anthropic(prompt: str) -> str:
@@ -84,7 +122,7 @@ async def generate_product_summary(product: Product, tags: list[Tag]) -> str:
         f"대체 당: {', '.join(sweetener_names) if sweetener_names else '없음'}\n"
         f"알레르기 유발 성분: {', '.join(allergen_names) if allergen_names else '없음'}\n"
         f"원재료: {product.ingredient_text or '정보 없음'}\n"
-        f"한 문장으로만 답하세요."
+        f"한 문장으로만 답하세요. {_FORMAT_RULE}"
     )
     return await _call_claude(prompt)
 
@@ -103,6 +141,7 @@ async def generate_sweetener_description(product: Product, sweetener_tags: list[
     prompt = (
         f"다음은 '{product.product_name}'에 들어간 대체 당 성분들입니다.\n"
         + "\n".join(descriptions)
-        + "\n소비자가 이해하기 쉽도록 각 성분을 2~3문장으로 설명해주세요."
+        + "\n소비자가 이해하기 쉽도록 각 성분을 2~3문장으로 설명해주세요. "
+        + _FORMAT_RULE
     )
     return await _call_claude(prompt)

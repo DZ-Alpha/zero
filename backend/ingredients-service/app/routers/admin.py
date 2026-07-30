@@ -27,13 +27,53 @@ def _parse_uuid(value: str, label: str) -> uuid.UUID:
         raise HTTPException(status_code=422, detail=f"유효하지 않은 {label} UUID 형식입니다.")
 
 
+# ── RESTful 분리 엔드포인트 (Istio 전환 요청서 §1, 2026-07-30) ────────────────
+# 프록시가 JSON body의 menu 값을 읽어 서비스를 고르던 구조(아래 레거시 POST
+# /admin)를 없애기 위해 기능별 URL을 분리했다. 경로만으로 소유 서비스가
+# 정해진다: /admin/tags/* → ingredients-service(여기).
+
+
+@router.post("/tags")
+async def create_tag_endpoint(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+) -> dict[str, object]:
+    """태그 신설 (구 menu=create-tag)."""
+    return await _handle_create_tag(body, db)
+
+
+@router.patch("/tags/{tag_id}")
+async def update_tag_endpoint(
+    tag_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+) -> dict[str, object]:
+    """태그 수정 (구 menu=update-tag)."""
+    return await _handle_update_tag({**body, "id": tag_id}, db)
+
+
+@router.delete("/tags/{tag_id}")
+async def deactivate_tag_endpoint(
+    tag_id: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+) -> dict[str, object]:
+    """태그 비활성화 (구 menu=deactivate-tag). 실제 삭제가 아니라 active=false -
+    RESTRICT 정책이지만, 기능 의미상 DELETE 메서드를 쓴다."""
+    return await _handle_deactivate_tag({"id": tag_id}, db)
+
+
 @router.post("")
 async def admin_endpoint(
     body: dict,
     db: AsyncSession = Depends(get_db),
     _admin: dict = Depends(get_current_admin),
 ) -> dict[str, object]:
-    """AD-0104 (태그 마스터 관리): menu=create-tag | update-tag | deactivate-tag."""
+    """[레거시] AD-0104 (태그 마스터 관리): menu=create-tag | update-tag | deactivate-tag.
+    Istio 전환 요청서 §1로 위 RESTful 경로들이 정식이 됐다 - frontend-admin이
+    전부 새 경로로 전환된 뒤 제거 예정. 그때까지 하위호환으로만 유지."""
     menu = body.get("menu", "")
 
     if menu == "create-tag":

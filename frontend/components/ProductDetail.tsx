@@ -10,6 +10,7 @@ import { useDailyGauge } from "@/hooks/useDailyGauge";
 import { getTodayKey, useDietRecords } from "@/hooks/useDietRecords";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { getProductAiSummary, getProductDetail, getProductSweetenerInfo, ProductDetailResponse } from "@/lib/api/zerocheck";
+import { renderInlineMarkdown } from "@/lib/inlineMarkdown";
 
 function format(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
@@ -138,7 +139,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
         <div className="product-detail-photo"><SafeImage src={detail.image} alt={`${detail.title} 제품 이미지`} loading="eager" fallbackLabel="제품 이미지 준비 중" /></div>
         <div className="product-detail-copy">
           <h1>{detail.title}</h1>
-          <p>{liveSummary && <span className="ai-summary-badge">AI 요약</span>}{detail.summary}</p>
+          <p>{liveSummary && <span className="ai-summary-badge">AI 요약</span>}{renderInlineMarkdown(detail.summary)}</p>
           <div className="product-key-nutrients"><div><span>당류</span><strong>{format(detail.sugar)}g</strong></div><div><span>열량</span><strong>{format(detail.calories)}kcal</strong></div><div><span>단백질</span><strong>{format(detail.protein)}g</strong></div><div><span>탄수화물</span><strong>{format(detail.carbs)}g</strong></div></div>
           <FavoriteButton label={detail.title} id={productId} kind="product" checkInitial />
         </div>
@@ -159,7 +160,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
         <article>
           <p className="eyebrow">단맛을 낸 원재료</p>
           <h2>{sweetenerTitle}</h2>
-          <p>{liveSweetenerInfo && <span className="ai-summary-badge">AI 요약</span>}{liveSweetenerInfo || (detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "원재료명에서 특정 대체 감미료를 바로 확인하기 어려워요. 구매한 제품의 최신 원재료명을 한 번 더 확인해 주세요.")}</p>
+          <p>{liveSweetenerInfo && <span className="ai-summary-badge">AI 요약</span>}{renderInlineMarkdown(liveSweetenerInfo || (detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "원재료명에서 특정 대체 감미료를 바로 확인하기 어려워요. 구매한 제품의 최신 원재료명을 한 번 더 확인해 주세요."))}</p>
           <Link href="/search">다른 제품과 비교하기 →</Link>
         </article>
         <div className="personal-product-analysis">
