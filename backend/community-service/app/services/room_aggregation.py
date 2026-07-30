@@ -209,7 +209,13 @@ async def list_recent_activities(
     if not room_by_id:
         return [], None
 
-    stmt = select(RoomMealThread).where(RoomMealThread.room_id.in_(room_by_id.keys()))
+    stmt = select(RoomMealThread).where(
+        RoomMealThread.room_id.in_(room_by_id.keys()),
+        # 내 기록은 홈 "모임의 새 식탁"에 안 띄운다(2026-07-30 요청) - 이 피드는
+        # "다른 멤버들이 뭘 먹었나"를 보는 곳이고, 내가 방금 올린 사진이 항상
+        # 맨 앞을 차지하면 정작 남의 새 기록이 밀려난다.
+        RoomMealThread.user_id != viewer_id,
+    )
     if today_only:
         stmt = stmt.where(RoomMealThread.record_date == today_kst())
     if cursor:
@@ -374,6 +380,36 @@ async def build_member_calendar(
     return [{"date": d.isoformat(), "recordCount": c} for d, c in sorted(counts.items())]
 
 
+async def build_room_calendar(
+    db: AsyncSession, room_id: uuid.UUID, viewer_id: int, year: int, month: int
+) -> list[dict[str, object]]:
+    """방 상세 캘린더(2026-07-30 연장업무 - 과거 날짜 조회 진입점)용 월간
+    집계. 날짜별로 방 전체 기록 수와 그중 내 기록 수를 나눠 주면, 프론트가
+    "남만 올린 날"과 "나도 올린 날"을 색으로 구분한다. build_member_calendar와
+    같은 room_meal_threads 근사치 기준이다."""
+    start = date(year, month, 1)
+    end = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
+
+    result = await db.execute(
+        select(RoomMealThread.record_date, RoomMealThread.user_id).where(
+            RoomMealThread.room_id == room_id,
+            RoomMealThread.record_date >= start,
+            RoomMealThread.record_date <= end,
+        )
+    )
+    total: dict[date, int] = {}
+    mine: dict[date, int] = {}
+    for row in result.all():
+        total[row.record_date] = total.get(row.record_date, 0) + 1
+        if row.user_id == viewer_id:
+            mine[row.record_date] = mine.get(row.record_date, 0) + 1
+
+    return [
+        {"date": d.isoformat(), "recordCount": c, "myRecordCount": mine.get(d, 0)}
+        for d, c in sorted(total.items())
+    ]
+
+
 _BADGE_MIN_RECIPE_COUNT = 5
 
 
@@ -469,7 +505,13 @@ async def build_meal_slots(
                     db, room_id, viewer_id, member.user_id, record_date, meal_type_db
                 )
                 retry_after = None
-                can_send = viewer_id != member.user_id
+                # 본인 카드엔 버튼 자체가 없고(canSend/refused 모두 False),
+                # 콕 찌르기를 거부한 멤버(nudge_notifications off)는 버튼을
+                # 비활성으로 보여준다(refused=True - 숨기지 말라는 2026-07-30
+                # 요청). 발송 시점엔 send_nudge가 한 번 더 검사한다(NUDGE_REFUSED).
+                is_other = viewer_id != member.user_id
+                can_send = is_other and member.nudge_notifications
+                refused = is_other and not member.nudge_notifications
                 if last_nudge is not None:
                     elapsed = (datetime.now(timezone.utc) - last_nudge.created_at).total_seconds()
                     if elapsed < room_store.NUDGE_COOLDOWN_SECONDS:
@@ -482,6 +524,7 @@ async def build_meal_slots(
                     "record": None,
                     "nudge": {
                         "canSend": can_send,
+                        "refused": refused,
                         "sentByMe": last_nudge is not None and retry_after is not None,
                         "retryAfterSeconds": retry_after,
                     },
@@ -531,7 +574,7 @@ async def build_meal_slots(
                     "commentCount": comment_count,
                     "reactedByMe": reacted_by_me,
                 },
-                "nudge": {"canSend": False, "sentByMe": False, "retryAfterSeconds": None},
+                "nudge": {"canSend": False, "refused": False, "sentByMe": False, "retryAfterSeconds": None},
             })
 
     return slots

@@ -540,6 +540,12 @@ async def send_nudge(
     target = await get_membership(db, room_id, target_user_id)
     if target is None:
         raise RoomError(404, "ROOM_NOT_FOUND", "대상 멤버를 찾을 수 없어요.")
+    # 2026-07-30: nudge_notifications는 원래 "받은 콕 표시"만 걸렀는데(§11),
+    # 방별 콕 찌르기 거부 요청에 따라 발송 자체를 막는 옵트아웃으로 승격.
+    # build_meal_slots의 canSend=False로 버튼도 숨겨지지만, 화면이 열린 채
+    # 상대가 설정을 바꾼 경우가 있으니 서버에서도 한 번 더 막는다.
+    if not target.nudge_notifications:
+        raise RoomError(409, "NUDGE_REFUSED", "이 멤버는 콕 찌르기를 받지 않도록 설정했어요.")
 
     now = datetime.now(timezone.utc)
     result = await db.execute(

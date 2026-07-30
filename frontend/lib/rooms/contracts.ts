@@ -118,6 +118,9 @@ export type MemberMealSlot = {
   record: MealRecord | null;
   nudge: {
     canSend: boolean;
+    // 대상 멤버가 이 방에서 콕 찌르기를 거부(설정 off)한 상태 - 버튼을 숨기지
+    // 않고 비활성으로 보여주기 위한 구분값. 본인 카드는 canSend/refused 모두 false.
+    refused?: boolean;
     sentByMe: boolean;
     retryAfterSeconds: number | null;
   };
@@ -245,6 +248,15 @@ export type CursorPage<T> = {
 export type MemberCalendarDay = {
   date: string;
   recordCount: number;
+};
+
+// GET /rooms/{id}/calendar - 방 상세의 날짜 이동 캘린더. recordCount는 방
+// 전체(멤버 합산) 기록 수, myRecordCount는 그중 내 기록 수 - "나도 올린 날"과
+// "남만 올린 날"을 색으로 구분하는 데 쓴다.
+export type RoomCalendarDay = {
+  date: string;
+  recordCount: number;
+  myRecordCount: number;
 };
 
 export type ReportRoomContentInput = {
