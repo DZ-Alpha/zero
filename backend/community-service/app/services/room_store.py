@@ -417,6 +417,13 @@ async def get_or_create_thread(
     db.add(thread)
     try:
         await db.flush()
+        # flush()는 같은 트랜잭션 안에서만 보이게 할 뿐 실제로 커밋하지
+        # 않는다 - get_db()가 요청 끝에 별도 commit 없이 세션을 닫기
+        # 때문에(app/core/database.py), 여기서 커밋을 안 하면 방 상세를
+        # 열거나 diet-service 웹훅을 받아 스레드를 만들어도 그 요청이
+        # 끝나는 순간 통째로 롤백돼 DB에 전혀 안 남았다(2026-07-30
+        # 리포트: 방금 올린 사진이 얌로그 홈에 영영 안 뜨는 문제의 원인).
+        await db.commit()
     except Exception:
         # 동시에 두 요청이 같은 조합으로 get-or-create 하다 unique 제약에
         # 걸리면, 롤백 후 이미 만들어진 걸 다시 읽어온다.
