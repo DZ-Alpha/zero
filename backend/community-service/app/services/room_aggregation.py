@@ -475,7 +475,13 @@ async def build_meal_slots(
                     db, room_id, viewer_id, member.user_id, record_date, meal_type_db
                 )
                 retry_after = None
-                can_send = viewer_id != member.user_id
+                # 본인 카드엔 버튼 자체가 없고(canSend/refused 모두 False),
+                # 콕 찌르기를 거부한 멤버(nudge_notifications off)는 버튼을
+                # 비활성으로 보여준다(refused=True - 숨기지 말라는 2026-07-30
+                # 요청). 발송 시점엔 send_nudge가 한 번 더 검사한다(NUDGE_REFUSED).
+                is_other = viewer_id != member.user_id
+                can_send = is_other and member.nudge_notifications
+                refused = is_other and not member.nudge_notifications
                 if last_nudge is not None:
                     elapsed = (datetime.now(timezone.utc) - last_nudge.created_at).total_seconds()
                     if elapsed < room_store.NUDGE_COOLDOWN_SECONDS:
@@ -488,6 +494,7 @@ async def build_meal_slots(
                     "record": None,
                     "nudge": {
                         "canSend": can_send,
+                        "refused": refused,
                         "sentByMe": last_nudge is not None and retry_after is not None,
                         "retryAfterSeconds": retry_after,
                     },
@@ -537,7 +544,7 @@ async def build_meal_slots(
                     "commentCount": comment_count,
                     "reactedByMe": reacted_by_me,
                 },
-                "nudge": {"canSend": False, "sentByMe": False, "retryAfterSeconds": None},
+                "nudge": {"canSend": False, "refused": False, "sentByMe": False, "retryAfterSeconds": None},
             })
 
     return slots

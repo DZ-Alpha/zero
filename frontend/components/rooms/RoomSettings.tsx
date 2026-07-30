@@ -340,8 +340,8 @@ export function RoomSettings({ roomId }: { roomId: string }) {
             <section className={styles.settingsCard} id="sharing">
               <header><div><p className={styles.eyebrow}>내 설정</p><h2>알림</h2></div></header>
               <div className={styles.settingsToggle}>
-                <div><strong>콕 찌르기 알림</strong></div>
-                <button type="button" className={`${styles.switch} ${nudgeNotifications ? styles.switchOn : ""}`} aria-label="콕 찌르기 알림" aria-pressed={nudgeNotifications} onClick={() => setNudgeNotifications((value) => !value)} />
+                <div><strong>콕 찌르기 받기</strong><span>끄면 이 모임 멤버들이 나를 콕 찌를 수 없어요.</span></div>
+                <button type="button" className={`${styles.switch} ${nudgeNotifications ? styles.switchOn : ""}`} aria-label="콕 찌르기 받기" aria-pressed={nudgeNotifications} onClick={() => setNudgeNotifications((value) => !value)} />
               </div>
               <div className={styles.settingsToggle}>
                 <div><strong>댓글과 반응 알림</strong></div>

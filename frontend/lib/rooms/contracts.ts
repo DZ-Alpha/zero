@@ -118,6 +118,9 @@ export type MemberMealSlot = {
   record: MealRecord | null;
   nudge: {
     canSend: boolean;
+    // 대상 멤버가 이 방에서 콕 찌르기를 거부(설정 off)한 상태 - 버튼을 숨기지
+    // 않고 비활성으로 보여주기 위한 구분값. 본인 카드는 canSend/refused 모두 false.
+    refused?: boolean;
     sentByMe: boolean;
     retryAfterSeconds: number | null;
   };
