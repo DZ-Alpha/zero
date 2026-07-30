@@ -195,14 +195,12 @@ async def apply_vision_result(
     if status == "FAILED":
         log.analysis_status = "FAILED"
         log.vision_retryable = retryable
-        await enqueue_outbox(
+        await enqueue_activity(
             db,
-            event_type="diet.analysis_failed",
+            event_type="user.diet.analysis_failed",
             user_id=log.user_id,
             producer="diet-service",
-            aggregate_type="meal_log",
-            aggregate_id=str(meal_log_id),
-            payload={"meal_log_id": str(meal_log_id), "retryable": bool(retryable)},
+            properties={"meal_log_id": str(meal_log_id), "retryable": bool(retryable)},
         )
     else:
         await _replace_meal_items(db, meal_log_id, items)
@@ -215,14 +213,12 @@ async def apply_vision_result(
         else:
             log.analysis_status = "COMPLETED"
             log.needs_user_confirmation = False
-            await enqueue_outbox(
+            await enqueue_activity(
                 db,
-                event_type="diet.analysis_completed",
+                event_type="user.diet.analysis_completed",
                 user_id=log.user_id,
                 producer="diet-service",
-                aggregate_type="meal_log",
-                aggregate_id=str(meal_log_id),
-                payload={"meal_log_id": str(meal_log_id)},
+                properties={"meal_log_id": str(meal_log_id)},
             )
 
     await db.commit()
