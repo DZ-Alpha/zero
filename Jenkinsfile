@@ -58,9 +58,11 @@ pipeline {
                                 def skipped = rawFiles.findAll { isDoc(it) }
                                 if (skipped) { echo "문서·비코드 변경 무시: ${skipped.join(', ')}" }
                                 changed = all.findAll { svc -> files.any { it.startsWith("backend/${svc}/") } }
-                                // Jenkinsfile 자체가 바뀐 첫 실행에서도 새 빌드 경로를 검증한다.
+                                // event-pipeline은 자기 폴더가 바뀔 때만 빌드한다. Jenkinsfile만
+                                // 바꿔도 딸려오면(옛 '|| Jenkinsfile' 조건) event-pipeline CVE 등이
+                                // 무관한 백엔드 빌드까지 막았다 → 트리거를 폴더 변경으로 한정.
                                 eventPipelineChanged = files.any {
-                                    it.startsWith('event-pipeline/') || it == 'Jenkinsfile'
+                                    it.startsWith('event-pipeline/')
                                 }
                             }
                         }
