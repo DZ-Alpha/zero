@@ -29,6 +29,7 @@ class GeminiVisionProvider:
     api_key: str
     model: str
     timeout_seconds: float
+    thinking_level: str = "minimal"
     thinking_budget: int = 512
     max_output_tokens: int = 4096
 
@@ -38,11 +39,18 @@ class GeminiVisionProvider:
         # the budget produced valid JSON on every measured attempt; raising
         # maxOutputTokens alone changed nothing.
         generation_config: dict[str, Any] = {
-            "temperature": 0,
             "responseMimeType": "application/json",
+            "responseJsonSchema": _GEMINI_RESPONSE_SCHEMA,
             "maxOutputTokens": self.max_output_tokens,
         }
-        if self.thinking_budget >= 0:
+        uses_thinking_level = (
+            self.model.startswith("gemini-3") or self.model == "gemini-flash-latest"
+        )
+        if uses_thinking_level:
+            generation_config["thinkingConfig"] = {"thinkingLevel": self.thinking_level}
+        else:
+            generation_config["temperature"] = 0
+        if not uses_thinking_level and self.thinking_budget >= 0:
             generation_config["thinkingConfig"] = {"thinkingBudget": self.thinking_budget}
         payload = {
             "contents": [{"parts": [
@@ -105,7 +113,8 @@ def create_provider(settings: Any) -> VisionProvider:
             raise RuntimeError("GEMINI_API_KEY is required when VISION_PROVIDER=gemini")
         return GeminiVisionProvider(
             settings.gemini_api_key, settings.gemini_model, settings.vision_timeout_seconds,
-            settings.gemini_thinking_budget, settings.gemini_max_output_tokens,
+            settings.gemini_thinking_level, settings.gemini_thinking_budget,
+            settings.gemini_max_output_tokens,
         )
     if provider == "foodlens":
         if not settings.foodlens_api_url or not settings.foodlens_token:
@@ -212,6 +221,9 @@ _GEMINI_PROMPT = (
     '{"name": <string>, "ingred-list": [{"name": <string>, "amount": <number>}], '
     '"dang": <number>, "calo": <number>}]}\n'
     'The "name" value is the food\'s Korean name. Do not rename any key.\n'
+    "Write every food and ingredient name in natural Korean only. Translate or "
+    "transliterate foreign names into Korean, and prefer the specific dish name "
+    "over a generic category when the photograph supports it.\n"
     '"amount" is grams as a bare number with no unit suffix. '
     '"dang" is estimated sugar in grams. "calo" is estimated kcal. '
     "Use 0 when a number is unknown.\n"
@@ -219,6 +231,46 @@ _GEMINI_PROMPT = (
     '{"confidence": 0.0, "list-diet": []}.\n'
     "Do not identify people or infer health facts."
 )
+
+_GEMINI_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "list-diet": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "구체적인 음식 이름. 반드시 자연스러운 한국어로 작성한다.",
+                    },
+                    "ingred-list": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "재료 이름. 반드시 자연스러운 한국어로 작성한다.",
+                                },
+                                "amount": {"type": "number"},
+                            },
+                            "required": ["name", "amount"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "dang": {"type": "number"},
+                    "calo": {"type": "number"},
+                },
+                "required": ["name", "ingred-list", "dang", "calo"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["confidence", "list-diet"],
+    "additionalProperties": False,
+}
 
 
 def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
