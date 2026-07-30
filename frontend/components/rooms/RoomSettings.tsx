@@ -338,7 +338,7 @@ export function RoomSettings({ roomId }: { roomId: string }) {
                 <div className={styles.invitePanel}>
                   <div>
                     <span>초대 코드</span>
-                    <strong>{inviteCode || "발급된 코드가 없어요"}</strong>
+                    {inviteCode ? <strong>{inviteCode}</strong> : <strong className={styles.invitePanelEmpty}>발급된 코드가 없어요</strong>}
                     {inviteExpiryLabel && <small>{inviteExpiryLabel}까지 사용</small>}
                   </div>
                   <div>
