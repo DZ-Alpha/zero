@@ -72,6 +72,15 @@ pipeline {
                     env.EVENT_PIPELINE_CHANGED = eventPipelineChanged ? 'true' : 'false'
                     echo "빌드 대상: ${env.CHANGED ?: '(없음 — 서비스 변경 없음)'}"
                     echo "event-pipeline 빌드: ${env.EVENT_PIPELINE_CHANGED}"
+                    // 이 job 소관(백엔드/event-pipeline) 변경이 하나도 없으면 = 프론트만 바뀐 커밋.
+                    // Poll SCM은 경로 필터가 없어 job은 뜨지만, 여기서 NOT_BUILT로 조용히 끝내고
+                    // Slack 알림도 스킵한다(post에서 NOOP 플래그 확인). 빌드 correctness는 이미
+                    // when 가드로 보장됨 — 이건 노이즈 제거용 표시일 뿐(변경감지 로직은 그대로).
+                    if (!env.CHANGED?.trim() && env.EVENT_PIPELINE_CHANGED != 'true') {
+                        env.PIPELINE_NOOP = 'true'
+                        currentBuild.result = 'NOT_BUILT'
+                        echo "백엔드/event-pipeline 변경 없음 — NOT_BUILT로 종료(알림 스킵)"
+                    }
                 }
             }
         }
@@ -441,7 +450,12 @@ pipeline {
             }
             // Slack 배포 알림. Incoming Webhook URL을 credential 'slack-webhook'(Secret text)로 주입.
             // 결과별 색: SUCCESS=초록, UNSTABLE(일부 실패)=노랑, FAILURE=빨강. curl POST(플러그인 불필요).
+            // NOOP(백엔드 변경 없이 프론트 커밋에 딸려 뜬 빌드)이면 알림 스킵 — 노이즈 제거.
             script {
+                if (env.PIPELINE_NOOP == 'true') {
+                    echo 'Slack 알림 스킵: 백엔드 변경 없는 NOOP 빌드'
+                    return
+                }
                 def result = currentBuild.result ?: 'SUCCESS'
                 def color = (result == 'SUCCESS') ? 'good' : (result == 'UNSTABLE') ? 'warning' : 'danger'
                 def emoji = (result == 'SUCCESS') ? '✅' : (result == 'UNSTABLE') ? '⚠️' : '❌'
