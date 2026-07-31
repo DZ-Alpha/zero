@@ -290,6 +290,10 @@ export function HomeDashboard() {
   const myRoomTodayActivities = myRoom
     ? roomsHome.todayActivities.filter((activity) => activity.roomId === myRoom.id).slice(0, 4)
     : [];
+  // 사진 갤러리는 실제 사진이 있는 업로드만 최신순으로 보여준다 - 사진 없는
+  // 기록까지 섞이면 빈 칸에 라벨만 뜬다(2026-07-31 리포트). 아바타/기록 수는
+  // 사진 유무와 무관하게 myRoomTodayActivities를 그대로 쓴다.
+  const myRoomTodayPhotos = myRoomTodayActivities.filter((activity) => activity.imageUrl);
   const roomRanking = roomsHome.weeklyRanking.length > 0 ? toRoomRanking(roomsHome.weeklyRanking) : fallbackRoomRanking;
 
   useEffect(() => {
@@ -393,7 +397,7 @@ export function HomeDashboard() {
             <p><strong>{myRoom.recordedTodayCount}명이 기록했어요</strong></p>
           </div>
           <div className="home-room-preview-photos" aria-label="방금 올라온 모임 식단">
-            {myRoomTodayActivities.map((activity) => (
+            {myRoomTodayPhotos.map((activity) => (
               <span key={activity.id}>
                 <SafeImage src={activity.imageUrl} alt="" fallbackLabel={MEAL_LABELS[activity.mealType]} />
                 <i>{activity.memberAvatar}</i>

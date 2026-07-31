@@ -227,7 +227,12 @@ export function RoomsHome() {
           ) : (
             <div className={styles.roomGrid}>
               {myRooms.map((room) => {
-              const recentMeals = todayActivity.filter((activity) => activity.roomId === room.id).slice(0, 3);
+              // 사진 미리보기 칸이라 실제 사진이 있는 업로드만 최신순으로 채운다 -
+              // 사진 없는 기록(수동 입력 등)까지 자리를 차지하면 "점심" 같은
+              // 라벨만 뜬 빈 칸이 실제 사진보다 먼저 보였다(2026-07-31 리포트).
+              const recentMeals = todayActivity
+                .filter((activity) => activity.roomId === room.id && activity.imageUrl)
+                .slice(0, 3);
               return (
                 <article className={styles.roomCard} key={room.id}>
                 <div className={styles.roomCardTop}>
