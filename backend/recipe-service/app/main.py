@@ -1,3 +1,5 @@
+# CI: DAST 게이트 검증 트리거 (2026-07-31) — recipe가 baseline만 타고 active scan은
+# 제외되는지 + 변경감지(#237)로 recipe만 잡히는지 확인용. 동작 영향 없음.
 import logging
 import time
 from contextlib import asynccontextmanager

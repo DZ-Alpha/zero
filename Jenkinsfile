@@ -9,7 +9,7 @@ pipeline {
     }
     stages {
         // Checkout stage 없음 — "Pipeline script from SCM"이 zero repo를 자동 체크아웃.
-        // 그 덕에 GIT_PREVIOUS_SUCCESSFUL_COMMIT이 채워진다.
+        // 그 덕에 GIT_PREVIOUS_COMMIT(직전 빌드가 처리한 커밋)이 채워진다.
 
         stage('Detect Changes') {
             steps {
@@ -17,12 +17,17 @@ pipeline {
                     def all = ['admin-service','ai','community-service','diet-service',
                                'ingredients-service','login-service','main-service',
                                'product-service','recipe-service']
-                    def prev = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
+                    // 직전 빌드(성공/실패 무관)가 처리한 커밋 기준으로 diff.
+                    // GIT_PREVIOUS_SUCCESSFUL_COMMIT(마지막 성공)을 쓰면 UNSTABLE이 누적될 때
+                    // 기준점이 갱신 안 돼, 실패한 남의 서비스가 매 빌드에 계속 딸려온다.
+                    // GIT_PREVIOUS_COMMIT은 매 빌드마다 갱신되므로 각 빌드가 "직전 빌드 이후
+                    // 실제 바뀐 서비스"만 처리한다(여러 push가 한 빌드에 묶여도 그 범위는 다 봄).
+                    def prev = env.GIT_PREVIOUS_COMMIT
                     def changed
                     def eventPipelineChanged = false
 
                     if (!prev) {
-                        echo "이전 성공 빌드 없음 — 전체 빌드"
+                        echo "직전 빌드 커밋 없음(첫 빌드) — 전체 빌드"
                         changed = all
                         eventPipelineChanged = true
                     } else {
@@ -53,9 +58,11 @@ pipeline {
                                 def skipped = rawFiles.findAll { isDoc(it) }
                                 if (skipped) { echo "문서·비코드 변경 무시: ${skipped.join(', ')}" }
                                 changed = all.findAll { svc -> files.any { it.startsWith("backend/${svc}/") } }
-                                // Jenkinsfile 자체가 바뀐 첫 실행에서도 새 빌드 경로를 검증한다.
+                                // event-pipeline은 자기 폴더가 바뀔 때만 빌드한다. Jenkinsfile만
+                                // 바꿔도 딸려오면(옛 '|| Jenkinsfile' 조건) event-pipeline CVE 등이
+                                // 무관한 백엔드 빌드까지 막았다 → 트리거를 폴더 변경으로 한정.
                                 eventPipelineChanged = files.any {
-                                    it.startsWith('event-pipeline/') || it == 'Jenkinsfile'
+                                    it.startsWith('event-pipeline/')
                                 }
                             }
                         }
@@ -74,69 +81,92 @@ pipeline {
             steps {
                 script {
                     def scannerHome = tool 'sonar-scanner'
+                    // 서비스별 독립 빌드: 한 서비스가 품질/취약점 게이트에 걸려도 다른 서비스는
+                    // 계속 빌드·승격한다(마이크로서비스 원칙). 실패한 서비스는 push/manifest/승격을
+                    // 건너뛰고, 빌드 전체는 UNSTABLE로 표시. (기존엔 abortPipeline:true라 한 서비스
+                    // 실패가 전체를 중단 → 남의 서비스 배포를 볼모로 잡았음.)
+                    def failedSvcs = []
+                    def okSvcs = []
                     for (svc in env.CHANGED.split(' ')) {
                         env.SVC = svc
                         echo "========== [${svc}] 빌드 시작 =========="
+                        // catchError: 이 서비스 블록이 실패해도 파이프라인은 계속(빌드는 UNSTABLE 표시).
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: "${svc} 빌드 실패") {
+                            // 1) SonarQube (서비스별 projectKey)
+                            withSonarQubeEnv('sonarqube') {
+                                sh '''
+                                    "''' + scannerHome + '''/bin/sonar-scanner" \
+                                        -Dsonar.projectKey=zero-${SVC} \
+                                        -Dsonar.projectName=zero-${SVC} \
+                                        -Dsonar.sources=backend/${SVC}
+                                '''
+                            }
+                            // 품질 게이트: abortPipeline:false로 결과만 받아, ERROR면 이 서비스만 실패 처리.
+                            def qg
+                            timeout(time: 5, unit: 'MINUTES') {
+                                qg = waitForQualityGate abortPipeline: false
+                            }
+                            if (qg.status != 'OK') {
+                                error("SonarQube 품질 게이트 실패(${qg.status}) — ${svc}")
+                            }
 
-                        // 1) SonarQube (서비스별 projectKey)
-                        withSonarQubeEnv('sonarqube') {
-                            sh '''
-                                "''' + scannerHome + '''/bin/sonar-scanner" \
-                                    -Dsonar.projectKey=zero-${SVC} \
-                                    -Dsonar.projectName=zero-${SVC} \
-                                    -Dsonar.sources=backend/${SVC}
-                            '''
-                        }
-                        timeout(time: 5, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: true
-                        }
-
-                        // 2) Build + Trivy
-                        sh '''
-                            SHA=$(git rev-parse --short HEAD)
-                            docker build -t backend-${SVC}:${SHA} backend/${SVC}
-                            trivy image --severity CRITICAL,HIGH --exit-code 1 \
-                                --ignorefile .trivyignore --scanners vuln --quiet backend-${SVC}:${SHA}
-                        '''
-
-                        // 3) Harbor push
-                        withCredentials([usernamePassword(credentialsId: 'harbor-cred',
-                                usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_TOKEN')]) {
+                            // 2) Build + Trivy
                             sh '''
                                 SHA=$(git rev-parse --short HEAD)
-                                IMAGE=${REGISTRY}/${PROJECT}/${SVC}
-                                echo "${HARBOR_TOKEN}" | docker login ${REGISTRY} -u "${HARBOR_USER}" --password-stdin
-                                docker tag backend-${SVC}:${SHA} ${IMAGE}:${SHA}
-                                docker push ${IMAGE}:${SHA}
-                                docker logout ${REGISTRY}
-                                echo "push 완료: ${IMAGE}:${SHA}"
+                                docker build -t backend-${SVC}:${SHA} backend/${SVC}
+                                trivy image --severity CRITICAL,HIGH --exit-code 1 \
+                                    --ignorefile .trivyignore --scanners vuln --quiet backend-${SVC}:${SHA}
                             '''
-                        }
 
-                        // 4) Update Manifest
-                        withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
-                                usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
-                            sh '''
-                                set -e
-                                SHA=$(git rev-parse --short HEAD)
-                                WORK=$(mktemp -d)
-                                git clone --depth 1 "https://${GIT_USER}:${GIT_PAT}@github.com/DZ-Alpha/zero-manifests.git" "$WORK"
-                                cd "$WORK"
-                                git config user.name  "jenkins-ci"
-                                git config user.email "ci@hizero.local"
-                                yq -i ".image.tag = \\"${SHA}\\"" charts/${SVC}/values-staging.yaml
-                                if git diff --quiet; then
-                                    echo "태그 변경 없음 (${SVC} ${SHA}) — skip"
-                                else
-                                    git commit -am "chore(${SVC}): update staging image tag to ${SHA} [skip ci]"
-                                    git push origin main
-                                    echo "manifest 갱신: ${SVC} tag=${SHA}"
-                                fi
-                                cd / && rm -rf "$WORK"
-                            '''
+                            // 3) Harbor push
+                            withCredentials([usernamePassword(credentialsId: 'harbor-cred',
+                                    usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_TOKEN')]) {
+                                sh '''
+                                    SHA=$(git rev-parse --short HEAD)
+                                    IMAGE=${REGISTRY}/${PROJECT}/${SVC}
+                                    echo "${HARBOR_TOKEN}" | docker login ${REGISTRY} -u "${HARBOR_USER}" --password-stdin
+                                    docker tag backend-${SVC}:${SHA} ${IMAGE}:${SHA}
+                                    docker push ${IMAGE}:${SHA}
+                                    docker logout ${REGISTRY}
+                                    echo "push 완료: ${IMAGE}:${SHA}"
+                                '''
+                            }
+
+                            // 4) Update Manifest
+                            withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
+                                    usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
+                                sh '''
+                                    set -e
+                                    SHA=$(git rev-parse --short HEAD)
+                                    WORK=$(mktemp -d)
+                                    git clone --depth 1 "https://${GIT_USER}:${GIT_PAT}@github.com/DZ-Alpha/zero-manifests.git" "$WORK"
+                                    cd "$WORK"
+                                    git config user.name  "jenkins-ci"
+                                    git config user.email "ci@hizero.local"
+                                    yq -i ".image.tag = \\"${SHA}\\"" charts/${SVC}/values-staging.yaml
+                                    if git diff --quiet; then
+                                        echo "태그 변경 없음 (${SVC} ${SHA}) — skip"
+                                    else
+                                        git commit -am "chore(${SVC}): update staging image tag to ${SHA} [skip ci]"
+                                        git push origin main
+                                        echo "manifest 갱신: ${SVC} tag=${SHA}"
+                                    fi
+                                    cd / && rm -rf "$WORK"
+                                '''
+                            }
+                            okSvcs << svc   // 여기 도달 = 이 서비스 빌드·push 성공
+                            echo "========== [${svc}] 완료 =========="
                         }
-                        echo "========== [${svc}] 완료 =========="
+                        // catchError 블록 밖: 실패해도 여기 도달. ok에 없으면 실패로 기록.
+                        if (!okSvcs.contains(svc)) { failedSvcs << svc }
                     }
+                    // 승격 단계가 성공 서비스만 대상으로 하도록 CHANGED를 재설정.
+                    env.CHANGED = okSvcs.join(' ')
+                    // Slack 알림(post{})에서 쓰도록 성공/실패 서비스 목록을 env로 노출.
+                    env.OK_SVCS = okSvcs.join(', ')
+                    env.FAILED_SVCS = failedSvcs.join(', ')
+                    echo "빌드 성공(승격 대상): ${okSvcs.join(', ') ?: '(없음)'}"
+                    if (failedSvcs) { echo "빌드 실패(승격 제외): ${failedSvcs.join(', ')}" }
                 }
             }
         }
@@ -145,6 +175,10 @@ pipeline {
             when { expression { env.EVENT_PIPELINE_CHANGED == 'true' } }
             steps {
                 script {
+                  // event-pipeline 격리: 이 스테이지가 실패해도 뒤 스테이지(백엔드 Wait Staging&
+                  // active scan 게이트)로 넘어가게 catchError로 감싼다. event-pipeline 실패는
+                  // event-pipeline 배포만 막고, 백엔드 서비스 승격은 막지 않는다(독립).
+                  catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: 'event-pipeline 빌드 실패') {
                     def scannerHome = tool 'sonar-scanner'
                     withSonarQubeEnv('sonarqube') {
                         sh '''
@@ -155,8 +189,13 @@ pipeline {
                                 -Dsonar.tests=event-pipeline/tests
                         '''
                     }
+                    // 품질 게이트: abortPipeline:false로 결과만 받아, ERROR면 이 스테이지만 실패.
+                    def qg
                     timeout(time: 5, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
+                        qg = waitForQualityGate abortPipeline: false
+                    }
+                    if (qg.status != 'OK') {
+                        error("event-pipeline SonarQube 품질 게이트 실패(${qg.status})")
                     }
 
                     sh '''
@@ -227,6 +266,7 @@ pipeline {
                             rm -rf "$WORK"
                         '''
                     }
+                  }  // catchError (event-pipeline 격리)
                 }
             }
         }
@@ -235,7 +275,9 @@ pipeline {
             when { expression { env.EVENT_PIPELINE_CHANGED == 'true' } }
             steps {
                 script {
-                    def SERVER = '192.168.0.68:30080'
+                  // 격리: event-pipeline staging wait이 실패(타임아웃 등)해도 뒤 백엔드 승격
+                  // 스테이지로 넘어가게 catchError. event-pipeline 배포 실패가 백엔드를 막지 않음.
+                  catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: 'event-pipeline wait 실패') {
                     withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
                         sh '''
                             argocd app get dang-pipeline \
@@ -247,6 +289,7 @@ pipeline {
                                 --sync --health --timeout 300
                         '''
                     }
+                  }  // catchError (event-pipeline wait 격리)
                 }
             }
         }
@@ -256,7 +299,10 @@ pipeline {
             steps {
                 script {
                     def SERVER = '192.168.0.68:30080'   // ArgoCD NodePort (HTTP, insecure)
-                    withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
+                    // active scan은 staging JWT_SECRET으로 유저 토큰을 직접 서명(pyjwt).
+                    // Jenkins는 클러스터 밖이라 kubectl exec 불가 → credential로 secret 주입.
+                    withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN'),
+                                     string(credentialsId: 'staging-jwt-secret', variable: 'STG_JWT_SECRET')]) {
                         for (svc in env.CHANGED.split(' ')) {
                             env.SVC = svc
                             echo "========== [${svc}] staging 대기 후 prod 승격 =========="
@@ -309,8 +355,49 @@ pipeline {
                                         echo "DAST FAIL(High) — ${svc} prod 승격 차단"
                                         exit 1
                                     fi
-                                    echo "DAST 통과 — ${svc} 승격 진행"
+                                    echo "DAST baseline 통과 — ${svc}"
                                 """
+
+                                // ★ 인증 active scan (zap-api-scan.py): openapi import + Bearer 주입.
+                                //   baseline이 못 잡는 SQLi/XSS/주입을 인증 상태로 전 엔드포인트에 검사.
+                                //   recipe-service는 staging에서 service.recipes(데이터팀 테이블) 의존으로
+                                //   CrashLoop → active 대상 제외(baseline만). High(exit1)면 승격 차단.
+                                //   토큰은 STG_JWT_SECRET으로 pyjwt 직접 서명(kubectl 불필요, 실증 검증됨).
+                                if (svc == 'recipe-service') {
+                                    echo "active scan 스킵(${svc}): 데이터팀 테이블 의존 — baseline만 적용"
+                                } else {
+                                    sh """
+                                        set -e
+                                        # 도달 노드 재선택(TARGET_IP는 baseline 블록의 shell 변수라 여기선 없음).
+                                        TARGET_IP=""
+                                        for ip in ${NODE_IPS}; do
+                                            code=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://\$ip:${PORT}/openapi.json" || echo 000)
+                                            if [ "\$code" != "000" ]; then TARGET_IP=\$ip; break; fi
+                                        done
+                                        if [ -z "\$TARGET_IP" ]; then
+                                            echo "active scan 대상 도달 불가 — ${svc} openapi 안 뜸. 승격 차단"
+                                            exit 1
+                                        fi
+                                        # staging 유저(user_id=1) 토큰을 pyjwt로 직접 서명. exp 짧게(1h), 매 스캔 새로 발급.
+                                        TOKEN=\$(python3 -c "import jwt,time,os;s=os.environ['STG_JWT_SECRET'];n=int(time.time());print(jwt.encode({'sub':'1','user_id':1,'provider':'dast-ci','nickname':'ci','role':'user','iat':n,'exp':n+3600},s,algorithm='HS256'))")
+                                        # openapi import + active scan + Bearer replacer.
+                                        # -I: 경고(WARN,exit2)는 통과 처리 — 보안헤더 등 Medium 이하는 승격 막지 않음.
+                                        #    High(exit1)만 차단. (baseline과 동일 기준: High면 실패)
+                                        timeout 600 docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                            ghcr.io/zaproxy/zaproxy:stable \
+                                            zap-api-scan.py -t "http://\$TARGET_IP:${PORT}/openapi.json" -f openapi -I \
+                                            -z "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Authorization -config replacer.full_list(0).replacement=Bearer\\ \$TOKEN" \
+                                            -r zap-api-${svc}-report.html > \$WORKSPACE/zap-out/zap-api-${svc}.log 2>&1 || API_RC=\$?
+                                        API_RC=\${API_RC:-0}
+                                        echo "ZAP active ${svc} exit=\$API_RC (0=PASS 1=FAIL/High, -I라 WARN은 0)"
+                                        tail -20 \$WORKSPACE/zap-out/zap-api-${svc}.log
+                                        if [ "\$API_RC" = "1" ]; then
+                                            echo "active scan FAIL(High) — ${svc} prod 승격 차단"
+                                            exit 1
+                                        fi
+                                        echo "active scan 통과 — ${svc} 승격 진행"
+                                    """
+                                }
                             }
                             // 2) 통과 → values-production.yaml tag 승격
                             withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
@@ -350,6 +437,29 @@ pipeline {
                     archiveArtifacts artifacts: 'zap-out/*.html,zap-out/*.log', allowEmptyArchive: true
                 } else {
                     echo 'DAST 미실행(백엔드 변경 없음) — 보관할 ZAP 리포트 없음'
+                }
+            }
+            // Slack 배포 알림. Incoming Webhook URL을 credential 'slack-webhook'(Secret text)로 주입.
+            // 결과별 색: SUCCESS=초록, UNSTABLE(일부 실패)=노랑, FAILURE=빨강. curl POST(플러그인 불필요).
+            script {
+                def result = currentBuild.result ?: 'SUCCESS'
+                def color = (result == 'SUCCESS') ? 'good' : (result == 'UNSTABLE') ? 'warning' : 'danger'
+                def emoji = (result == 'SUCCESS') ? '✅' : (result == 'UNSTABLE') ? '⚠️' : '❌'
+                // 메시지 조립(성공/실패 서비스 목록 포함). null/빈값 안전 처리.
+                def okLine  = env.OK_SVCS?.trim()     ? "배포 완료: ${env.OK_SVCS}"     : "배포된 서비스 없음"
+                def failLine = env.FAILED_SVCS?.trim() ? "\\n실패(제외): ${env.FAILED_SVCS}" : ""
+                def text = "${emoji} 백엔드 파이프라인 ${result} (#${env.BUILD_NUMBER})\\n${okLine}${failLine}\\n${env.BUILD_URL}"
+                // Webhook 미설정 시 알림만 스킵(빌드 결과에 영향 없음).
+                try {
+                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_HOOK')]) {
+                        sh """
+                            curl -s -X POST -H 'Content-type: application/json' \
+                              --data '{"attachments":[{"color":"${color}","text":"${text}"}]}' \
+                              "\$SLACK_HOOK" || echo 'Slack 알림 전송 실패(무시)'
+                        """
+                    }
+                } catch (err) {
+                    echo "Slack 알림 스킵: credential 'slack-webhook' 없음 또는 오류(${err.message})"
                 }
             }
         }
