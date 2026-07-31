@@ -191,7 +191,7 @@ pipeline {
                                 #   trap에서 kill '전에' docker logs로 컨테이너 내부 stdout을 별도 파일
                                 #   (zap-${fe}.container.log)로 건져, 다음 hang 원인을 반드시 남긴다.
                                 ZAP_NAME=zap-base-${fe}-${BUILD_NUMBER}
-                                trap 'docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-${fe}.container.log 2>/dev/null && [ -s \$WORKSPACE/zap-out/zap-${fe}.container.log ] || rm -f \$WORKSPACE/zap-out/zap-${fe}.container.log; docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
+                                trap 'if [ "\$(docker inspect -f "{{.State.Running}}" "\$ZAP_NAME" 2>/dev/null)" = "true" ]; then docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-${fe}.container.log 2>&1 || true; docker kill "\$ZAP_NAME" 2>/dev/null || true; fi' EXIT
                                 timeout 360 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                     ghcr.io/zaproxy/zaproxy:stable \
                                     zap-baseline.py -t http://\$TARGET_IP:${PORT} -m 3 \

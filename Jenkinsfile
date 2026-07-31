@@ -228,7 +228,7 @@ pipeline {
                                     #   된 프론트 사례. kill '전에' docker logs로 컨테이너 stdout을 별도
                                     #   파일(zap-${svc}.container.log)로 건져 hang 원인을 남긴다.
                                     ZAP_NAME=zap-base-${svc}-${BUILD_NUMBER}
-                                    trap 'docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-${svc}.container.log 2>/dev/null && [ -s \$WORKSPACE/zap-out/zap-${svc}.container.log ] || rm -f \$WORKSPACE/zap-out/zap-${svc}.container.log; docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
+                                    trap 'if [ "\$(docker inspect -f "{{.State.Running}}" "\$ZAP_NAME" 2>/dev/null)" = "true" ]; then docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-${svc}.container.log 2>&1 || true; docker kill "\$ZAP_NAME" 2>/dev/null || true; fi' EXIT
                                     timeout 360 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                         ghcr.io/zaproxy/zaproxy:stable \
                                         zap-baseline.py -t http://\$TARGET_IP:${PORT} -m 3 \
@@ -277,7 +277,7 @@ pipeline {
                                         # ★ 진단성(2026-07-31): kill 전 docker logs로 컨테이너 stdout을
                                         #   별도 파일(zap-api-${svc}.container.log)로 건져 hang 원인 보존.
                                         ZAP_NAME=zap-api-${svc}-${BUILD_NUMBER}
-                                        trap 'docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-api-${svc}.container.log 2>/dev/null && [ -s \$WORKSPACE/zap-out/zap-api-${svc}.container.log ] || rm -f \$WORKSPACE/zap-out/zap-api-${svc}.container.log; docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
+                                        trap 'if [ "\$(docker inspect -f "{{.State.Running}}" "\$ZAP_NAME" 2>/dev/null)" = "true" ]; then docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-api-${svc}.container.log 2>&1 || true; docker kill "\$ZAP_NAME" 2>/dev/null || true; fi' EXIT
                                         timeout 600 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                             ghcr.io/zaproxy/zaproxy:stable \
                                             zap-api-scan.py -t "http://\$TARGET_IP:${PORT}/openapi.json" -f openapi -I \
