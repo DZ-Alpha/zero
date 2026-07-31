@@ -367,9 +367,7 @@ async def require_invite_access(db: AsyncSession, room_id: uuid.UUID, user_id: i
     멤버는 방장이 member_invite_enabled를 켜둔 경우에만 가능하다(기본 꺼짐).
     코드를 없애는 건(revoke_invite) 계속 방장 전용 - require_owner 그대로 쓴다."""
     membership = await require_membership(db, room_id, user_id)
-    if membership.role == "owner":
-        return membership
-    if not await get_member_invite_enabled(db, room_id):
+    if membership.role != "owner" and not await get_member_invite_enabled(db, room_id):
         raise _access_denied()
     return membership
 
