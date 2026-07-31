@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AUTH_EXPIRED_EVENT } from "@/lib/api/client";
 
 export function ConfirmDialog({
@@ -34,7 +35,13 @@ export function ConfirmDialog({
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [busy, onClose]);
 
-  return (
+  // site-header가 backdrop-filter(blur)를 쓰는데, backdrop-filter/filter가 걸린
+  // 조상은 자손 position:fixed의 containing block이 된다(스펙) - 이 다이얼로그가
+  // HeaderAuth(로그아웃 확인 등)처럼 site-header 안에서 렌더되면 "화면 정중앙"이
+  // 아니라 56px짜리 헤더 박스 안에서만 중앙 정렬되고, 배경 딤/블러도 그 박스
+  // 안에만 걸려서 나머지 페이지는 그대로 보이는 버그가 생긴다. document.body에
+  // 바로 포탈해서 조상 stacking context에 영향받지 않게 한다.
+  return createPortal(
     <div className="system-dialog-backdrop" role="presentation" onMouseDown={() => !busy && onClose()}>
       <section className="system-dialog" role="alertdialog" aria-modal="true" aria-labelledby="system-dialog-title" aria-describedby="system-dialog-description" onMouseDown={(event) => event.stopPropagation()}>
         <span className="system-dialog-mark" aria-hidden="true" />
@@ -45,7 +52,8 @@ export function ConfirmDialog({
           <button type="button" className={destructive ? "is-destructive" : "is-primary"} onClick={onConfirm} disabled={busy}>{busy ? "처리하고 있어요" : confirmLabel}</button>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -60,7 +68,7 @@ export function LoginPromptDialog({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div className="system-dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="system-dialog auth-required-dialog" role="dialog" aria-modal="true" aria-labelledby="login-required-title" onMouseDown={(event) => event.stopPropagation()}>
         <span className="system-dialog-mark" aria-hidden="true" />
@@ -68,7 +76,8 @@ export function LoginPromptDialog({ onClose }: { onClose: () => void }) {
         <p>즐겨찾기와 식단 기록을 계정에 남기려면 먼저 로그인해 주세요.</p>
         <div><button type="button" onClick={onClose}>다음에</button><Link ref={loginRef} href="/login" className="is-primary">로그인하기</Link></div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -18,7 +18,7 @@
   --sugar-character-offset-x:0px;--sugar-character-offset-y:0px;--sugar-float-distance:10px;
 }
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;overflow-anchor:none}
 /* 2026-07-31 - SUIT 롤백. 이름만 있고 실제로 못 불러오던(next/font 등 전무)
    'IBM Plex Sans KR'/'Noto Sans KR'을 layout.tsx의 next/font로 실제 로드해서
    CSS 변수로 받는다 - 원래 있던 두 폰트 순서(본문은 IBM Plex 우선, 제목/버튼은
@@ -108,6 +108,16 @@ img{max-width:100%}
 .recipe-feed{display:grid;grid-template-columns:repeat(3,1fr);gap:34px 18px;padding-top:24px}.feed-card{position:relative;transition:transform 180ms var(--ease)}.feed-card:hover{transform:translateY(-2px)}.feed-image{position:relative;height:230px;display:block;overflow:hidden;background:var(--soft)}.feed-image img{object-fit:cover;transition:transform 260ms var(--ease)}.feed-card:hover .feed-image img{transform:scale(1.025)}.feed-image>span{position:absolute;left:12px;top:12px;padding:7px 9px;background:rgba(255,255,255,.9);font-size:8px}.feed-card-copy{padding:14px 3px 0}.feed-card-copy small{color:var(--muted);font-size:8px}.feed-card-copy h2{min-height:2.8em;margin:6px 0 9px;font-size:16px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.feed-card-copy p{margin:0;color:var(--muted);font-size:9px}.feed-card>.heart,.product-feed-card>.heart{position:absolute;z-index:4;right:10px;top:10px;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.9);box-shadow:0 3px 12px rgba(23,32,25,.08)}.feed-sentinel,.empty-catalog{padding:35px;text-align:center;color:var(--muted);font-size:9px}
 .personal-products>div{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#dfe7d6}.personal-products>div>a{position:relative;display:grid;grid-template-columns:105px 1fr;align-items:center;gap:14px;min-height:145px;padding:13px;background:#fff}.personal-products .product-art{height:116px}.personal-products .pack{width:54px;height:82px}.personal-products small{color:var(--muted);font-size:8px}.personal-products h3{margin:5px 0;font-size:12px}.personal-products p{margin:0;color:var(--muted);font-size:8px}.personal-products>a>span{position:absolute;right:12px;top:10px;font-size:8px}
 .product-filter-section{margin-top:24px;border-top:1px solid var(--ink);border-bottom:1px solid var(--line)}.filter-row{display:grid;grid-template-columns:100px 1fr;align-items:center;gap:15px;padding:14px 0;border-bottom:1px solid var(--line)}.filter-row:last-child{border:0}.filter-row>span{font-size:9px;font-weight:800}.filter-row>div{display:flex;gap:6px;flex-wrap:wrap}
+/* 2026-07-31 요청 - 저당픽 필터(카테고리/영양 기준/감미료)를 기본 접힘,
+   눌러서 펼치는 방식으로. grid-template-rows: 0fr -> 1fr 트릭으로 높이를
+   미리 몰라도 부드럽게 펼쳐진다(내용 높이를 JS로 잴 필요 없음). */
+.filter-toggle{width:100%;padding:12px 2px;display:flex;align-items:center;gap:8px;border:0;background:transparent;color:var(--ink);font-size:12px;font-weight:800;cursor:pointer}
+.filter-toggle b{min-width:18px;height:18px;padding:0 5px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--green);color:#fff;font-size:10px;font-weight:800}
+.filter-toggle i{margin-left:auto;font-size:14px;font-style:normal;color:var(--muted);transition:transform 180ms var(--ease)}
+.filter-toggle i[data-open="true"]{transform:rotate(180deg)}
+.filter-collapse{display:grid;grid-template-rows:0fr;transition:grid-template-rows 220ms var(--ease)}
+.filter-collapse.is-open{grid-template-rows:1fr}
+.filter-collapse>div{overflow:hidden;min-height:0}
 .product-feed{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:34px 13px;padding-top:24px}.product-feed-card{position:relative;min-width:0;transition:transform 180ms var(--ease)}.product-feed-card:hover{transform:translateY(-2px)}.product-feed-art{position:relative;display:block}.product-feed-art .product-art{height:220px}.product-feed-art>span{position:absolute;left:10px;top:10px;padding:6px 8px;background:rgba(255,255,255,.92);font-size:8px}.product-feed-card>div:nth-child(2){min-width:0;padding:12px 2px 0}.product-feed-card small{display:block;overflow:hidden;color:var(--muted);font-size:8px;text-overflow:ellipsis;white-space:nowrap}.product-feed-card h2{min-height:2.8em;margin:6px 0 9px;font-size:14px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.product-feed-card p{margin:0 0 9px;color:var(--muted);font-size:9px}.product-feed-card em{display:inline-block;max-width:100%;overflow:hidden;padding:4px 7px;background:var(--soft);font-size:7px;font-style:normal;text-overflow:ellipsis;white-space:nowrap}
 
 /* Product art */
@@ -1722,7 +1732,7 @@ body{font-size:17px}
 .product-results-band .filter-row>span{
   font-size:12px;
 }
-.product-filter-section>.filter-reset-compact{
+.product-filter-section .filter-reset-compact{
   margin:8px 0 0 auto;
   padding:4px 0;
   display:block;
@@ -3666,7 +3676,7 @@ body{font-size:17px}
 .product-results-band .filter-row>span{
   font-size:12px;
 }
-.product-filter-section>.filter-reset-compact{
+.product-filter-section .filter-reset-compact{
   margin:8px 0 0 auto;
   padding:4px 0;
   display:block;
