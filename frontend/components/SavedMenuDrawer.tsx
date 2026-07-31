@@ -18,20 +18,37 @@ type SavedMenuFilter = "all" | "recipe" | "product";
 
 const FAVORITES_CHANGED_EVENT = "dangdang:favorites-changed";
 
+// Shell(따라서 이 컴포넌트)이 페이지마다 새로 마운트되는 구조라, 캐시가 없으면
+// 페이지를 옮길 때마다 찜 목록 API(레시피+저당픽 2건)를 매번 다시 불렀다
+// (2026-07-31 리포트). 모듈 레벨에 마지막으로 불러온 결과를 token별로 남겨서,
+// 캐시가 신선하면(TTL 이내) 리마운트해도 재호출 없이 그대로 쓰고, 실제로 하트를
+// 토글한 경우(FAVORITES_CHANGED_EVENT)에만 캐시를 무시하고 바로 다시 부른다.
+const FAVORITES_CACHE_TTL_MS = 60_000;
+let favoritesCache: { token: string; items: SavedMenu[]; fetchedAt: number } | null = null;
+
 export function SavedMenuDrawer() {
   const { ready, signedIn, token } = useAuthSession();
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<SavedMenuFilter>("all");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(favoritesCache === null);
   const [loadFailed, setLoadFailed] = useState(false);
-  const [items, setItems] = useState<SavedMenu[]>([]);
+  const [items, setItems] = useState<SavedMenu[]>(favoritesCache?.items ?? []);
   const drawerRef = useRef<HTMLElement>(null);
   const panelId = useId();
 
-  const loadFavorites = useCallback(async () => {
+  const loadFavorites = useCallback(async (force = false) => {
     if (!signedIn || !token) {
+      favoritesCache = null;
       setItems([]);
       setLoadFailed(false);
+      setLoading(false);
+      return;
+    }
+
+    if (!force && favoritesCache && favoritesCache.token === token && Date.now() - favoritesCache.fetchedAt < FAVORITES_CACHE_TTL_MS) {
+      setItems(favoritesCache.items);
+      setLoadFailed(false);
+      setLoading(false);
       return;
     }
 
@@ -62,8 +79,10 @@ export function SavedMenuDrawer() {
       })));
     }
 
+    const failed = recipes.status === "rejected" && products.status === "rejected";
+    if (!failed) favoritesCache = { token, items: nextItems, fetchedAt: Date.now() };
     setItems(nextItems);
-    setLoadFailed(recipes.status === "rejected" && products.status === "rejected");
+    setLoadFailed(failed);
     setLoading(false);
   }, [signedIn, token]);
 
@@ -72,7 +91,7 @@ export function SavedMenuDrawer() {
   }, [loadFavorites, ready]);
 
   useEffect(() => {
-    const refresh = () => void loadFavorites();
+    const refresh = () => void loadFavorites(true);
     window.addEventListener(FAVORITES_CHANGED_EVENT, refresh);
     return () => window.removeEventListener(FAVORITES_CHANGED_EVENT, refresh);
   }, [loadFavorites]);
