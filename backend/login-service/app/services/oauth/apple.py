@@ -1,3 +1,4 @@
+import logging
 import time
 from urllib.parse import urlencode
 
@@ -10,6 +11,8 @@ from app.services.oauth.types import NormalizedProfile, OAuthExchangeError
 AUTHORIZE_URL = "https://appleid.apple.com/auth/authorize"
 TOKEN_URL = "https://appleid.apple.com/auth/token"
 JWKS_URL = "https://appleid.apple.com/auth/keys"
+
+logger = logging.getLogger("app.oauth.apple")
 
 _jwks_client = pyjwt.PyJWKClient(JWKS_URL)
 
@@ -35,18 +38,34 @@ def _build_client_secret() -> str:
     매 요청 서명하는 JWT(ES256)를 요구한다 — 최대 6개월 만료가 규칙이라
     여유있게 5분짜리로 그때그때 새로 만든다."""
     now = int(time.time())
-    return pyjwt.encode(
-        {
-            "iss": settings.apple_team_id,
-            "iat": now,
-            "exp": now + 300,
-            "aud": "https://appleid.apple.com",
-            "sub": settings.apple_client_id,
-        },
-        settings.apple_private_key_pem,
-        algorithm="ES256",
-        headers={"kid": settings.apple_key_id},
-    )
+    key_pem = settings.apple_private_key_pem
+    if "BEGIN" not in key_pem or "PRIVATE KEY" not in key_pem:
+        # pyjwt/cryptography가 던지는 "Unable to load PEM file ...
+        # MalformedFraming"만으로는 APPLE_PRIVATE_KEY 시크릿이 비어있는지/
+        # 깨졌는지 구분이 안 돼서(2026-07-31 프로덕션에서 재현) 여기서 먼저
+        # 걸러 원인을 로그에 남긴다. 키 값 자체는 절대 로그에 남기지 않는다.
+        logger.error(
+            "apple_private_key_pem이 올바른 PEM 형식이 아닙니다(길이=%d) - "
+            "APPLE_PRIVATE_KEY 환경변수/시크릿 값을 확인해주세요.",
+            len(key_pem),
+        )
+        raise OAuthExchangeError("Apple 로그인 설정에 문제가 있어 이용할 수 없습니다.")
+    try:
+        return pyjwt.encode(
+            {
+                "iss": settings.apple_team_id,
+                "iat": now,
+                "exp": now + 300,
+                "aud": "https://appleid.apple.com",
+                "sub": settings.apple_client_id,
+            },
+            key_pem,
+            algorithm="ES256",
+            headers={"kid": settings.apple_key_id},
+        )
+    except ValueError as error:
+        logger.error("Apple client_secret JWT 서명 실패: %s", error)
+        raise OAuthExchangeError("Apple 로그인 설정에 문제가 있어 이용할 수 없습니다.") from error
 
 
 async def exchange_code_for_token(code: str, state: str) -> str:
