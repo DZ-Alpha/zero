@@ -155,6 +155,7 @@ export type IncomingNudge = {
 export type RoomsHomeResponse = {
   rooms: RoomSummary[];
   recentActivities: RoomActivityItem[];
+  todayActivities: RoomActivityItem[];
   weeklyRanking: TeamRankingItem[];
   activeTeamCount: number;
   maxRoomCount: number;

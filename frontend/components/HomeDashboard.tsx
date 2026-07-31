@@ -66,6 +66,7 @@ const fallbackRoomRanking: RankingItem[] = mockTeamRanking.slice(0, 3).map((team
 const emptyRoomsHome: RoomsHomeResponse = {
   rooms: [],
   recentActivities: [],
+  todayActivities: [],
   weeklyRanking: [],
   activeTeamCount: 0,
   maxRoomCount: 3,
@@ -278,8 +279,16 @@ export function HomeDashboard() {
   const today = keyToDate(todayKey);
   const todayLabel = `${today.getMonth() + 1}월 ${today.getDate()}일 ${["일", "월", "화", "수", "목", "금", "토"][today.getDay()]}요일`;
   const myRoom = roomsHome.rooms[0] ?? null;
+  // recentActivities는 "다른 멤버가 새로 올렸는지" 알림용이라 내 기록은 빠져
+  // 있다 - "새 사진 알림" 배지엔 계속 이걸 쓰지만, 오늘 실제로 누가 기록했는지
+  // (나 포함) 보여줘야 하는 아바타/사진 미리보기/"아무도 없어요" 문구는
+  // todayActivities(내 기록 포함)를 써야 한다. 안 그러면 오늘 나 혼자만
+  // 기록한 방에서 "오늘 아무도 등록하지 않았어요"라고 잘못 뜬다(2026-07-31 리포트).
   const myRoomActivities = myRoom
     ? roomsHome.recentActivities.filter((activity) => activity.roomId === myRoom.id).slice(0, 4)
+    : [];
+  const myRoomTodayActivities = myRoom
+    ? roomsHome.todayActivities.filter((activity) => activity.roomId === myRoom.id).slice(0, 4)
     : [];
   const roomRanking = roomsHome.weeklyRanking.length > 0 ? toRoomRanking(roomsHome.weeklyRanking) : fallbackRoomRanking;
 
@@ -291,7 +300,7 @@ export function HomeDashboard() {
   // 첫 항목이 가장 최근 활동.
   const latestRoomActivityId = myRoomActivities[0]?.id ?? null;
   const showRoomPhotoNudge = Boolean(myRoom && latestRoomActivityId && latestRoomActivityId !== seenActivityId);
-  const showNoRoomActivityNotice = Boolean(myRoom && myRoomActivities.length === 0);
+  const showNoRoomActivityNotice = Boolean(myRoom && myRoomTodayActivities.length === 0);
 
   return (
     <main className="home-dashboard">
@@ -380,11 +389,11 @@ export function HomeDashboard() {
             <div><p className="eyebrow">내 모임 · 오늘</p><h2 id="home-room-title">{myRoom.name}</h2></div>
           </div>
           <div className="home-room-preview-activity">
-            <div className="home-room-avatars">{myRoomActivities.map((activity) => <span key={activity.id}>{activity.memberAvatar}</span>)}</div>
+            <div className="home-room-avatars">{myRoomTodayActivities.map((activity) => <span key={activity.id}>{activity.memberAvatar}</span>)}</div>
             <p><strong>{myRoom.recordedTodayCount}명이 기록했어요</strong></p>
           </div>
           <div className="home-room-preview-photos" aria-label="방금 올라온 모임 식단">
-            {myRoomActivities.map((activity) => (
+            {myRoomTodayActivities.map((activity) => (
               <span key={activity.id}>
                 <SafeImage src={activity.imageUrl} alt="" fallbackLabel={MEAL_LABELS[activity.mealType]} />
                 <i>{activity.memberAvatar}</i>

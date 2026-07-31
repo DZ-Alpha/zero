@@ -2219,7 +2219,9 @@ body{font-size:17px}
    breaks up the surrounding meal and room content. */
 .home-ad-banner{
   position:relative;
-  min-height:346px;
+  min-height:250px;
+  max-width:840px;
+  margin-inline:auto;
   margin-top:28px;
   overflow:clip;
   border:1px solid rgba(23,32,25,.16);
@@ -2262,11 +2264,11 @@ body{font-size:17px}
 .home-ad-copy{
   z-index:2;
   min-width:0;
-  padding:34px 38px 36px;
+  padding:26px 30px 28px;
   animation:home-ad-copy-in 280ms cubic-bezier(.23,1,.32,1) both;
 }
 .home-ad-labels{display:flex;align-items:center;gap:10px}.home-ad-labels span{padding:5px 8px;border:1px solid currentColor;border-radius:999px;font-size:10px;font-weight:900}.home-ad-labels b{font-size:11px;letter-spacing:.12em}
-.home-ad-copy h2{margin:23px 0 0;font-size:clamp(38px,4vw,52px);line-height:1.03;letter-spacing:-.065em;word-break:keep-all}.home-ad-copy h2 span{display:block}
+.home-ad-copy h2{margin:16px 0 0;font-size:clamp(28px,3vw,38px);line-height:1.05;letter-spacing:-.065em;word-break:keep-all}.home-ad-copy h2 span{display:block}
 .home-ad-copy>p{margin:16px 0 0;font-size:14px;font-weight:700;line-height:1.55}
 .home-ad-copy>a{
   display:none;
@@ -2274,7 +2276,7 @@ body{font-size:17px}
 .home-ad-copy>a:hover{background:#fff;transform:translateY(-2px)}.home-ad-copy>a:active{transform:scale(.98)}
 .home-ad-copy>a span{overflow:hidden;font-weight:750;text-overflow:ellipsis;white-space:nowrap}.home-ad-copy>a b{flex:0 0 auto;font-size:12px}
 .home-ad-stage{position:relative;min-width:0;overflow:hidden;animation:home-ad-stage-in 320ms cubic-bezier(.23,1,.32,1) both}
-.home-ad-zero{position:absolute;left:-10px;top:39px;color:currentColor;font-size:clamp(86px,10vw,138px);font-weight:950;letter-spacing:-.09em;line-height:.75;opacity:.1;transform:rotate(-8deg)}
+.home-ad-zero{position:absolute;left:-10px;top:28px;color:currentColor;font-size:clamp(60px,7vw,96px);font-weight:950;letter-spacing:-.09em;line-height:.75;opacity:.1;transform:rotate(-8deg)}
 .home-ad-stage img{
   position:absolute;
   z-index:1;
@@ -2291,17 +2293,17 @@ body{font-size:17px}
 .home-ad-badge{
   position:absolute;
   z-index:2;
-  right:24px;
-  top:27px;
-  min-width:82px;
-  height:82px;
-  padding:0 10px;
+  right:18px;
+  top:18px;
+  min-width:62px;
+  height:62px;
+  padding:0 8px;
   display:grid;
   place-items:center;
   border:2px solid currentColor;
   border-radius:50%;
   background:var(--ad-accent);
-  font-size:15px;
+  font-size:12px;
   font-weight:950;
   letter-spacing:-.03em;
   transform:rotate(8deg);
