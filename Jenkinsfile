@@ -47,6 +47,9 @@ pipeline {
                                 // (파일 단위로 거름 — 코드+문서 동시 변경이면 코드가 남아 빌드는 됨)
                                 def isDoc = { String f ->
                                     def lower = f.toLowerCase()
+                                    // requirements.txt는 .txt지만 의존성 명세(코드/보안) — 문서 제외 안 함.
+                                    // (CVE 패치가 requirements.txt만 바꾸는데 문서로 오판돼 빌드 스킵→초록불 방지)
+                                    if (lower.tokenize('/').last() == 'requirements.txt') { return false }
                                     lower.endsWith('.md') || lower.endsWith('.txt') ||
                                     lower.endsWith('license') || lower.endsWith('.gitignore')
                                 }
