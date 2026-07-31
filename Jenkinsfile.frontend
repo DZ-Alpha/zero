@@ -147,10 +147,18 @@ pipeline {
             steps {
                 script {
                     def SERVER = '192.168.0.68:30080'   // ArgoCD NodePort (HTTP, insecure)
+                    // 서비스별 독립 승격: 한 프론트의 승격 실패(staging wait 타임아웃/DAST High/
+                    // 매니페스트 push 실패)가 다른 프론트 승격을 막지 않게 catchError로 격리한다.
+                    // (백엔드 Jenkinsfile과 동일 패턴. 이전엔 격리가 없어 frontend의 argocd wait
+                    // 타임아웃(exit20)이 for 루프를 깨고 frontend-admin 승격을 건너뛰었음.)
+                    def promotedFes = []
+                    def failedPromoteFes = []
                     withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
                         for (fe in env.CHANGED.split(' ')) {
                             env.FE = fe
                             echo "========== [${fe}] staging 대기 후 prod 승격 =========="
+                            // catchError: 이 프론트 승격이 실패해도 파이프라인은 계속(빌드는 UNSTABLE 표시).
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: "${fe} 승격 실패") {
                             // 1) staging App(frontend/frontend-admin) Synced+Healthy 대기 (게이트)
                             sh """
                                 argocd app wait ${fe} \
@@ -231,8 +239,19 @@ pipeline {
                                 '''
                             }
                             echo "========== [${fe}] prod 승격 완료 =========="
+                            promotedFes << fe   // 여기 도달 = 이 프론트 승격 성공
+                            } // catchError
+                            // catchError 블록 밖: 실패해도 여기 도달. 성공목록에 없으면 실패로 기록.
+                            if (!promotedFes.contains(fe)) { failedPromoteFes << fe }
                         }
                     }
+                    // Slack이 실제 prod 승격 성공/실패를 정확히 표기하도록 env로 노출.
+                    // CHANGED를 덮어쓰지 않는다 — 덮어쓰면 둘 다 실패 시 CHANGED=''가 되어
+                    // Slack이 '프론트 변경 없음'(NOOP처럼)으로 오보한다(#90과 같은 종류).
+                    env.PROMOTED_FES = promotedFes.join(', ')
+                    env.FAILED_PROMOTE_FES = failedPromoteFes.join(', ')
+                    echo "prod 승격 성공: ${promotedFes.join(', ') ?: '(없음)'}"
+                    if (failedPromoteFes) { echo "prod 승격 실패: ${failedPromoteFes.join(', ')}" }
                 }
             }
         }
@@ -266,7 +285,16 @@ pipeline {
                 def result = currentBuild.result ?: 'SUCCESS'
                 def color = (result == 'SUCCESS') ? 'good' : (result == 'UNSTABLE') ? 'warning' : 'danger'
                 def emoji = (result == 'SUCCESS') ? '✅' : (result == 'UNSTABLE') ? '⚠️' : '❌'
-                def target = env.CHANGED?.trim() ? "대상: ${env.CHANGED}" : "프론트 변경 없음"
+                // 승격 성공/실패를 정확히 표기. PROMOTED_FES는 Promote 스테이지가 돌아야 세팅됨
+                // → 없으면(Promote 전 실패 등) CHANGED로 폴백해 '대상'만 표기.
+                def target
+                if (env.PROMOTED_FES != null || env.FAILED_PROMOTE_FES?.trim()) {
+                    def okLine   = env.PROMOTED_FES?.trim() ? "배포 완료: ${env.PROMOTED_FES}" : "배포된 프론트 없음"
+                    def failPart = env.FAILED_PROMOTE_FES?.trim() ? "\\n실패(제외): ${env.FAILED_PROMOTE_FES}" : ""
+                    target = "${okLine}${failPart}"
+                } else {
+                    target = env.CHANGED?.trim() ? "대상: ${env.CHANGED}" : "프론트 변경 없음"
+                }
                 def text = "${emoji} 프론트 파이프라인 ${result} (#${env.BUILD_NUMBER})\\n${target}\\n${env.BUILD_URL}"
                 // Webhook 미설정 시 알림만 스킵(빌드 결과에 영향 없음).
                 try {
