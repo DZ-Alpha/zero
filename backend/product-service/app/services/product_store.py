@@ -2,7 +2,7 @@ import uuid
 import logging
 from decimal import Decimal
 
-from sqlalchemy import select, or_, func, exists, and_
+from sqlalchemy import select, or_, func, exists, and_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -66,6 +66,24 @@ def _apply_search_filters(stmt, query: str | None, category_codes: list[str] | N
     return stmt
 
 
+def _relevance_rank(query: str):
+    """검색어와 얼마나 잘 맞는지를 SQL만으로 점수화한다(낮을수록 우선) - 정식
+    rank(형태소 분석/색인) 구현은 Kafka/MongoDB 파이프라인이 필요해 보류
+    중이지만, 그때까지 "검색하면 정확도 높은 순으로 나와야 한다"는 요청
+    (2026-07-31)에 맞춰 이름 완전일치 > 이름 시작 일치 > 이름 포함 >
+    브랜드 시작 일치 > 브랜드 포함 순으로 최소한의 관련도 정렬을 준다."""
+    prefix = f"{query}%"
+    contains = f"%{query}%"
+    return case(
+        (func.lower(Product.product_name) == query.lower(), 0),
+        (Product.product_name.ilike(prefix), 1),
+        (Product.product_name.ilike(contains), 2),
+        (Product.brand_name.ilike(prefix), 3),
+        (Product.brand_name.ilike(contains), 4),
+        else_=5,
+    )
+
+
 async def search_products(
     db: AsyncSession,
     query: str | None,
@@ -76,9 +94,13 @@ async def search_products(
 ) -> list[Product]:
     stmt = _apply_search_filters(select(Product), query, category_codes, warning_codes)
 
-    # rank 구현은 Kafka/MongoDB 파이프라인 필요. created_at 컬럼이 데이터팀
-    # 재설계로 삭제돼 "최신순" 기본 정렬도 더 이상 불가능 — 두 경우 다 이름순.
-    stmt = stmt.order_by(Product.product_name)
+    # created_at 컬럼이 데이터팀 재설계로 삭제돼 "최신순" 정렬은 불가능하다.
+    # sort="abc"거나 검색어가 없으면(카테고리만 탐색) 이름순, 검색어가 있으면
+    # 기본(rank)으로 관련도순 정렬.
+    if query and sort != "abc":
+        stmt = stmt.order_by(_relevance_rank(query), Product.product_name)
+    else:
+        stmt = stmt.order_by(Product.product_name)
 
     stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
     result = await db.execute(stmt)
