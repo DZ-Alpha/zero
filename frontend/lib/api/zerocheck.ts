@@ -100,6 +100,7 @@ export type ProductSearchItem = {
 };
 
 export type HomeProductItem = {
+  id?: string | null;
   rank?: number | null;
   name: string;
   brand?: string | null;

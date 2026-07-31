@@ -9,7 +9,7 @@ import { useAuthSession } from "@/hooks/useAuthSession";
 import { useDailyGauge } from "@/hooks/useDailyGauge";
 import { getTodayKey, useDietRecords } from "@/hooks/useDietRecords";
 import { useUserSettings } from "@/hooks/useUserSettings";
-import { getProductAiSummary, getProductDetail, getProductSweetenerInfo, ProductDetailResponse } from "@/lib/api/zerocheck";
+import { getProductAiSummary, getProductDetail, ProductDetailResponse } from "@/lib/api/zerocheck";
 import { renderInlineMarkdown } from "@/lib/inlineMarkdown";
 
 function format(value: number) {
@@ -45,7 +45,6 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   }), [catalogDetail, productId, slug]);
   const [liveDetail, setLiveDetail] = useState<ProductDetailResponse | null>(null);
   const [liveSummary, setLiveSummary] = useState<string | null>(null);
-  const [liveSweetenerInfo, setLiveSweetenerInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(productId));
   const [unavailable, setUnavailable] = useState(!catalogDetail && !productId);
 
@@ -80,15 +79,13 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
 
   useEffect(() => {
     setLiveSummary(null);
-    setLiveSweetenerInfo(null);
     if (!productId) return;
     let active = true;
 
+    // 단맛을 낸 원재료 섹션은 AI 요약(gammi-info)을 뺐다(2026-07-31 요청) -
+    // 원재료명 기반 고정 문구만 쓰므로 더 이상 호출하지 않는다.
     getProductAiSummary(productId).then((summary) => {
       if (active) setLiveSummary(summary?.["ai-oneline"] ?? null);
-    }).catch(() => {});
-    getProductSweetenerInfo(productId).then((sweetener) => {
-      if (active) setLiveSweetenerInfo(sweetener?.["gammi-info"] ?? null);
     }).catch(() => {});
 
     return () => {
@@ -161,7 +158,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
         <article>
           <p className="eyebrow">단맛을 낸 원재료</p>
           <h2>{sweetenerTitle}</h2>
-          <p>{liveSweetenerInfo && <span className="ai-summary-badge">AI 요약</span>}{renderInlineMarkdown(liveSweetenerInfo || (detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "원재료명에서 특정 대체 감미료를 바로 확인하기 어려워요. 구매한 제품의 최신 원재료명을 한 번 더 확인해 주세요."))}</p>
+          <p>{renderInlineMarkdown(detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "원재료명에서 특정 대체 감미료를 바로 확인하기 어려워요. 구매한 제품의 최신 원재료명을 한 번 더 확인해 주세요.")}</p>
           <Link href="/search">다른 제품과 비교하기 →</Link>
         </article>
         <div className="personal-product-analysis">

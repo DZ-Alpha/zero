@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { SafeImage } from "@/components/SafeImage";
 import { FavoriteIconButton } from "@/components/FavoriteButton";
 import { products as mockProducts } from "@/data/catalog";
@@ -18,8 +19,9 @@ const personalSlugs = new Set([
 ]);
 const personalIds = new Set(mockProducts.filter((product) => personalSlugs.has(product.slug)).map((product) => product.backendId).filter(Boolean));
 
-export function ProductFeed() {
-  const [query, setQuery] = useState("");
+function ProductFeedContent() {
+  const searchParams = useSearchParams();
+  const [query, setQuery] = useState(() => searchParams.get("query") ?? "");
   const [category, setCategory] = useState("전체");
   const [sugarFilter, setSugarFilter] = useState("전체");
   const [sweetener, setSweetener] = useState("전체");
@@ -32,6 +34,13 @@ export function ProductFeed() {
   const sentinel = useRef<HTMLDivElement>(null);
   const { ready: authReady, signedIn, token } = useAuthSession();
   const [favoriteProductIds, setFavoriteProductIds] = useState<Set<string>>(new Set());
+
+  // /search?query=... 로 직접 들어오거나 다른 query값으로 링크를 다시 눌렀을 때도
+  // 검색창과 실제 검색 요청에 반영되어야 한다 - 이전엔 query state가 항상 빈
+  // 문자열로 시작해 URL의 query가 무시됐다(2026-07-31 리포트).
+  useEffect(() => {
+    setQuery(searchParams.get("query") ?? "");
+  }, [searchParams]);
 
   // 목록 카드마다 즐겨찾기 여부를 개별 조회하면 N+1이라, 즐겨찾기 목록을 한 번만
   // 통으로 불러와 Set으로 대조한다(RecordMealModal.tsx/RecipeFeed.tsx와 같은 패턴).
@@ -168,5 +177,13 @@ export function ProductFeed() {
         </section>
       </section>
     </main>
+  );
+}
+
+export function ProductFeed() {
+  return (
+    <Suspense fallback={<main className="catalog-page product-catalog page-wrap"><div className="catalog-loading" aria-live="polite"><i /><i /><i /><span>저당픽을 불러오고 있어요.</span></div></main>}>
+      <ProductFeedContent />
+    </Suspense>
   );
 }
