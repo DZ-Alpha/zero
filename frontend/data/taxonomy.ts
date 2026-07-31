@@ -14,7 +14,11 @@ export const PRODUCT_CATEGORIES = [
 
 export type ProductCategory = typeof PRODUCT_CATEGORIES[number]["label"];
 
-export const RECIPE_CATEGORIES = ["한 끼", "반찬", "간식", "면", "분식", "소스"] as const;
+// 2026-07-31 요청 - 카테고리가 너무 적어 대부분의 실제(비목업) 레시피가 "한 끼"
+// 하나로 몰렸다. service.recipes 테이블엔 category 컬럼이 없어(데이터팀 스키마
+// 추가 필요, useRecipeCatalog.ts 참고) 실서버 카테고리를 직접 못 받으니, 그때까지
+// 이름 기반 추정이 더 세분화되도록 국·찌개/샐러드를 추가해 분포를 넓힌다.
+export const RECIPE_CATEGORIES = ["한 끼", "국·찌개", "반찬", "샐러드", "간식", "면", "분식", "소스"] as const;
 export type RecipeCategory = typeof RECIPE_CATEGORIES[number];
 
 export const HEALTH_LABELS = [
