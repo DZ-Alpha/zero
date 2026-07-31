@@ -32,6 +32,11 @@ export function RoomsHome() {
   const [loading, setLoading] = useState(true);
   const myRooms = home?.rooms ?? [];
   const roomActivity = home?.recentActivities ?? [];
+  // recentActivities는 "다른 멤버의 새 식탁" 리본 전용(내 기록 제외) - 방
+  // 카드의 "오늘 최근 식단" 미리보기는 나를 포함한 실제 오늘 기록을 보여줘야
+  // 하므로 todayActivities를 쓴다(2026-07-31 리포트: 오늘 나 혼자 기록한
+  // 방의 카드에 사진이 하나도 안 보이던 문제).
+  const todayActivity = home?.todayActivities ?? [];
   const realTeamRanking = home?.weeklyRanking ?? [];
   const isMockRanking = realTeamRanking.length === 0;
   const teamRanking = isMockRanking ? MOCK_TEAM_RANKING : realTeamRanking;
@@ -222,7 +227,7 @@ export function RoomsHome() {
           ) : (
             <div className={styles.roomGrid}>
               {myRooms.map((room) => {
-              const recentMeals = roomActivity.filter((activity) => activity.roomId === room.id).slice(0, 3);
+              const recentMeals = todayActivity.filter((activity) => activity.roomId === room.id).slice(0, 3);
               return (
                 <article className={styles.roomCard} key={room.id}>
                 <div className={styles.roomCardTop}>

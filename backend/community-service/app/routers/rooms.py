@@ -69,6 +69,13 @@ async def get_rooms_home(
         summaries.append(summary)
 
     activities, activities_cursor = await room_aggregation.list_recent_activities(db, user.user_id, None, today_only=True)
+    # recentActivities는 "다른 멤버가 새로 올린 사진" 전용이라 내 기록을 뺀다 -
+    # 방 카드 사진 미리보기/홈 "내 모임" 요약처럼 나를 포함한 "오늘 실제 기록"이
+    # 필요한 화면은 이 목록만 쓰면 오늘 나 혼자 기록한 방이 빈 카드로 보인다
+    # (2026-07-31 리포트) - 그래서 따로 내 기록 포함 버전을 함께 내려준다.
+    today_activities, _ = await room_aggregation.list_recent_activities(
+        db, user.user_id, None, today_only=True, include_self=True,
+    )
     ranking, ranking_cursor = await room_aggregation.list_weekly_ranking(db, user.user_id, None)
     for index, entry in enumerate(ranking):
         entry["rank"] = index + 1
@@ -77,6 +84,7 @@ async def get_rooms_home(
     return {
         "rooms": summaries,
         "recentActivities": activities,
+        "todayActivities": today_activities,
         "weeklyRanking": ranking,
         "activeTeamCount": len(summaries),
         "maxRoomCount": room_store.MAX_ROOM_COUNT,

@@ -198,25 +198,33 @@ async def build_room_members(db: AsyncSession, room: Room, members: list[RoomMem
 
 
 async def list_recent_activities(
-    db: AsyncSession, viewer_id: int, cursor: str | None, limit: int = 20, today_only: bool = False
+    db: AsyncSession, viewer_id: int, cursor: str | None, limit: int = 20, today_only: bool = False,
+    include_self: bool = False,
 ) -> tuple[list[dict[str, object]], str | None]:
     """today_only=True면 오늘(KST) 기록만 반환한다 - 홈 화면(/rooms)의 "방금
     올라왔어요"/방 카드 사진 미리보기가 여러 방을 합쳐 최근 20건만 보다 보니,
     당장은 조용한 방의 카드에 며칠 지난 사진이 "오늘 기록 보러가기" 버튼과 함께
     뜨는 문제가 있었다(2026-07-30 리포트). "더보기"(GET /rooms/activities) 같은
-    과거 이력 탐색은 이 필터 없이 그대로 전체 히스토리를 페이지네이션한다."""
+    과거 이력 탐색은 이 필터 없이 그대로 전체 히스토리를 페이지네이션한다.
+
+    include_self=False(기본)면 내 기록은 뺀다 - "모임의 새 식탁"처럼 "다른
+    멤버들이 뭘 먹었나"를 보는 피드용. 방 카드 사진 미리보기/오늘 기록 요약처럼
+    "오늘 이 방에 (나를 포함해) 실제로 무슨 기록이 있었나"가 필요한 곳은
+    include_self=True로 불러야 한다 - 아니면 오늘 나 혼자만 기록한 방은
+    recordedTodayCount>0인데도 사진이 하나도 안 보이는 것처럼 보인다
+    (2026-07-31 리포트)."""
     my_rooms = await room_store.list_rooms_for_user(db, viewer_id)
     room_by_id = {room.id: room for room, _membership in my_rooms}
     if not room_by_id:
         return [], None
 
-    stmt = select(RoomMealThread).where(
-        RoomMealThread.room_id.in_(room_by_id.keys()),
+    conditions = [RoomMealThread.room_id.in_(room_by_id.keys())]
+    if not include_self:
         # 내 기록은 홈 "모임의 새 식탁"에 안 띄운다(2026-07-30 요청) - 이 피드는
         # "다른 멤버들이 뭘 먹었나"를 보는 곳이고, 내가 방금 올린 사진이 항상
         # 맨 앞을 차지하면 정작 남의 새 기록이 밀려난다.
-        RoomMealThread.user_id != viewer_id,
-    )
+        conditions.append(RoomMealThread.user_id != viewer_id)
+    stmt = select(RoomMealThread).where(*conditions)
     if today_only:
         stmt = stmt.where(RoomMealThread.record_date == today_kst())
     if cursor:
