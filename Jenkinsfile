@@ -218,7 +218,12 @@ pipeline {
                                     # timeout 360 + ZAP -m 3: staging이 살아있는 백엔드를 보면서 ZAP가
                                     #   특정 요청에 물려 무한 hang되는 것 방지(프론트 2026-07-30 사례와 대칭).
                                     #   timeout 초과 시 exit 124 → High(1) 아니므로 통과. 차단은 오직 High(1)일 때만.
-                                    timeout 360 docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                    # ★ 좀비 방지(2026-07-31): timeout은 docker CLI만 죽이고 dockerd의
+                                    #   ZAP 컨테이너는 살아남아 좀비화(프론트에서 14분+ 실증). --name +
+                                    #   trap EXIT으로 shell이 어떤 경로로 끝나도 반드시 kill.
+                                    ZAP_NAME=zap-base-${svc}-${BUILD_NUMBER}
+                                    trap 'docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
+                                    timeout 360 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                         ghcr.io/zaproxy/zaproxy:stable \
                                         zap-baseline.py -t http://\$TARGET_IP:${PORT} -m 3 \
                                         -r zap-${svc}-report.html > \$WORKSPACE/zap-out/zap-${svc}.log 2>&1 || ZAP_RC=\$?
@@ -260,7 +265,12 @@ pipeline {
                                         # openapi import + active scan + Bearer replacer.
                                         # -I: 경고(WARN,exit2)는 통과 처리 — 보안헤더 등 Medium 이하는 승격 막지 않음.
                                         #    High(exit1)만 차단. (baseline과 동일 기준: High면 실패)
-                                        timeout 600 docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                        # ★ 좀비 방지(2026-07-31): timeout이 죽이는 건 docker CLI뿐이라
+                                        #   ZAP 컨테이너가 좀비로 생존. 이 블록은 set -e라 TARGET_IP 미도달/
+                                        #   토큰 실패로 중간 exit돼도 trap EXIT이 컨테이너를 반드시 kill.
+                                        ZAP_NAME=zap-api-${svc}-${BUILD_NUMBER}
+                                        trap 'docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
+                                        timeout 600 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                             ghcr.io/zaproxy/zaproxy:stable \
                                             zap-api-scan.py -t "http://\$TARGET_IP:${PORT}/openapi.json" -f openapi -I \
                                             -z "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Authorization -config replacer.full_list(0).replacement=Bearer\\ \$TOKEN" \

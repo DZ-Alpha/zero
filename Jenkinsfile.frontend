@@ -179,7 +179,13 @@ pipeline {
                                 #   특정 요청(SSE 등)에 물려 무한 hang된 사례(2026-07-30, 30분+) 방지.
                                 #   timeout 초과 시 exit 124 → High(1) 아니므로 통과(그때까지 결과 기준,
                                 #   hang이 배포를 막지 않게 함). 차단은 오직 High(1)일 때만.
-                                timeout 360 docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                # ★ 좀비 방지(2026-07-31): timeout은 docker CLI만 죽이고 dockerd의
+                                #   ZAP 컨테이너는 살아남아(--rm도 CLI 정상종료 때만 작동) 14분+ 좀비로
+                                #   생존한 사례 실증. --name으로 이름 붙이고 trap EXIT으로 shell이
+                                #   어떤 경로(124/set -e/abort)로 끝나도 반드시 kill.
+                                ZAP_NAME=zap-base-${fe}-${BUILD_NUMBER}
+                                trap 'docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
+                                timeout 360 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                     ghcr.io/zaproxy/zaproxy:stable \
                                     zap-baseline.py -t http://\$TARGET_IP:${PORT} -m 3 \
                                     -r zap-${fe}-report.html > \$WORKSPACE/zap-out/zap-${fe}.log 2>&1 || ZAP_RC=\$?
