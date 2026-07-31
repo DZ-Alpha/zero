@@ -592,7 +592,11 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                               <span className={styles.avatar} style={{ background: member.color, color: "#18221b" }} aria-hidden="true">{member.avatarText}</span>
                               <p>{isToday ? `아직 ${MEAL_LABELS[todayView]} 사진이 없어요` : `이날 ${MEAL_LABELS[todayView]} 기록이 없어요`}</p>
                             </div>
-                            {isToday && (canSend || refused) && (
+                            {isToday && member.isMe ? (
+                              <footer className={styles.setlogEmptyAction}>
+                                <button type="button" disabled title="본인에게는 콕 찌르기를 보낼 수 없어요.">셀프 콕 찌르기 안돼요</button>
+                              </footer>
+                            ) : isToday && (canSend || refused) && (
                               <footer className={styles.setlogEmptyAction}>
                                 <button
                                   type="button"
