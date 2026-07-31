@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { RecordMealModal } from "@/components/RecordMealModal";
 import { SafeImage } from "@/components/SafeImage";
 import { suppressScrollTopGuard } from "@/components/ScrollToTop";
+import { useExitPresence } from "@/hooks/useDelayedClose";
 import type { MealType as DietMealType } from "@/hooks/useDietRecords";
 import { ConfirmDialog } from "@/components/SystemFeedback";
 import styles from "@/components/rooms/Rooms.module.css";
@@ -102,6 +103,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
   const [reactionState, setReactionState] = useState<Record<string, { reacted: boolean; count: number }>>({});
   const [photoIndexes, setPhotoIndexes] = useState<Record<string, number>>({});
   const [reportMeal, setReportMeal] = useState<{ id: string; member: string } | null>(null);
+  const { rendered: reportMealView, closing: reportMealClosing } = useExitPresence(reportMeal);
   const [reportReason, setReportReason] = useState("");
   const [comments, setComments] = useState<Record<string, RoomComment[]>>({});
   const [nudgedSlots, setNudgedSlots] = useState<Record<string, boolean>>({});
@@ -111,6 +113,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
   // 날짜 이동(2026-07-30 연장업무) - 기본은 오늘, 캘린더/화살표로 과거 조회.
   const [selectedDate, setSelectedDate] = useState(() => toLocalDateKey(new Date()));
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const { rendered: calendarView, closing: calendarClosing } = useExitPresence(calendarOpen ? true : null);
   const [calMonth, setCalMonth] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() + 1 };
@@ -417,7 +420,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
               <button type="button" className={styles.secondaryButton} onClick={copyInvite}>초대 링크</button>
             )}
             <Link className={styles.secondaryButton} href={`/rooms/${room.id}/settings`}>모임 관리</Link>
-            <Link className={styles.primaryButton} href="/">내 식단 기록</Link>
+            <button type="button" className={styles.primaryButton} onClick={() => setUploadMeal(getCurrentMealView())}>내 식단 기록</button>
           </div>
         </header>
 
@@ -454,7 +457,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                 )}
               </div>
 
-              {calendarOpen && (() => {
+              {calendarView && (() => {
                 const calDays = roomCalendars[calMonthKey];
                 const calByDate = new Map((calDays ?? []).map((day) => [day.date, day]));
                 const daysInMonth = new Date(calMonth.year, calMonth.month, 0).getDate();
@@ -462,13 +465,13 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                 const isCurrentMonth = calMonthKey >= serverToday.slice(0, 7);
                 return (
                   <div
-                    className={styles.modalBackdrop}
+                    className={`${styles.modalBackdrop}${calendarClosing ? ` ${styles.isClosing}` : ""}`}
                     role="presentation"
                     onMouseDown={(event) => {
                       if (event.target === event.currentTarget) setCalendarOpen(false);
                     }}
                   >
-                    <section className={styles.roomCalendar} role="dialog" aria-modal="true" aria-label="날짜 선택">
+                    <section className={`${styles.roomCalendar}${calendarClosing ? ` ${styles.isClosing}` : ""}`} role="dialog" aria-modal="true" aria-label="날짜 선택">
                       <button type="button" className={styles.roomCalendarClose} onClick={() => setCalendarOpen(false)} aria-label="닫기">×</button>
                       <header>
                         <button type="button" aria-label="이전 달" onClick={() => shiftCalMonth(-1)}>◀</button>
@@ -853,11 +856,11 @@ export function RoomDetail({ roomId }: { roomId: string }) {
         </div>
       </div>
 
-      {reportMeal && (
-        <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => {
+      {reportMealView && (
+        <div className={`${styles.modalBackdrop}${reportMealClosing ? ` ${styles.isClosing}` : ""}`} role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setReportMeal(null);
         }}>
-          <section className={`${styles.modal} ${styles.reportModal}`} role="dialog" aria-modal="true" aria-labelledby="report-title">
+          <section className={`${styles.modal} ${styles.reportModal}${reportMealClosing ? ` ${styles.isClosing}` : ""}`} role="dialog" aria-modal="true" aria-labelledby="report-title">
             <header className={styles.modalHeader}>
               <div><h2 id="report-title">이 식사를 신고할까요?</h2><p>가장 가까운 이유를 골라주세요.</p></div>
               <button type="button" className={styles.closeButton} onClick={() => setReportMeal(null)} aria-label="닫기">×</button>

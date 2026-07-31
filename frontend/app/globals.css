@@ -81,6 +81,12 @@ img{max-width:100%}
 .meal-panel-backdrop{position:fixed;z-index:100;inset:0;padding:92px 20px 24px;display:flex;align-items:flex-start;justify-content:center;background:rgba(17,29,20,.32);backdrop-filter:blur(4px);animation:backdrop-in 180ms linear both}
 .meal-entry-panel{width:min(920px,100%);max-height:calc(100vh - 116px);overflow:auto;border:1px solid rgba(23,32,25,.14);border-radius:18px;background:#fff;box-shadow:0 30px 90px rgba(12,28,18,.2);animation:panel-in 260ms var(--ease) both}
 @keyframes backdrop-in{from{opacity:0}to{opacity:1}}@keyframes panel-in{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+/* 2026-07-31 요청 - 닫을 때도 애니메이션. backdrop-in/panel-in을 쓰는 모든
+   팝업(식사 기록 팝업, 마이페이지 설정 편집기)이 공유한다. */
+.meal-panel-backdrop.is-closing,.settings-editor-backdrop.is-closing{animation:backdrop-out 180ms linear both}
+.meal-entry-panel.is-closing,.settings-editor.is-closing{animation:panel-out 180ms var(--ease) both}
+@keyframes backdrop-out{to{opacity:0}}
+@keyframes panel-out{to{opacity:0;transform:translateY(10px) scale(.985)}}
 .meal-entry-head{position:sticky;z-index:4;top:0;display:flex;justify-content:space-between;gap:20px;padding:25px 29px 20px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.96);backdrop-filter:blur(12px)}.meal-entry-head h2{margin:0;font-size:23px;letter-spacing:-.05em}.panel-back{border:0;padding:0 0 8px;background:transparent;color:var(--muted);font-size:9px}.panel-close{width:35px;height:35px;border:1px solid var(--line);border-radius:50%;background:#fff;font-size:21px}
 .entry-source-tabs{display:grid;grid-template-columns:repeat(4,1fr);padding:0 29px;border-bottom:1px solid var(--line)}.entry-source-tabs button{position:relative;padding:17px 8px;border:0;background:#fff;color:var(--muted);font-size:11px;font-weight:700}.entry-source-tabs button::after{content:"";position:absolute;left:50%;right:50%;bottom:-1px;height:2px;background:var(--green);transition:left 180ms var(--ease),right 180ms var(--ease)}.entry-source-tabs button.is-active{color:var(--ink)}.entry-source-tabs button.is-active::after{left:0;right:0}
 .entry-browser{padding:23px 29px 30px}.entry-search{height:47px;display:flex;align-items:center;border-bottom:1px solid var(--ink)}.entry-search input{flex:1;border:0;outline:0;background:transparent;font-size:12px}.entry-search span{font-size:18px}.entry-categories{display:flex;gap:6px;padding:17px 0}.entry-categories button,.filter-chips button,.filter-row button{border:1px solid var(--line);border-radius:999px;padding:7px 12px;background:#fff;color:var(--muted);font-size:9px}.entry-categories button.is-active,.filter-chips button.is-active,.filter-row button.is-active{border-color:var(--green);background:var(--green);color:#fff}
@@ -164,6 +170,13 @@ img{max-width:100%}
 .session-expired-notice{position:fixed;z-index:210;left:50%;bottom:24px;width:min(620px,calc(100% - 32px));padding:13px 46px 13px 17px;display:flex;align-items:center;gap:18px;border:1px solid #cfd9ca;border-radius:13px;background:#fff;box-shadow:0 18px 44px rgba(21,42,28,.16);transform:translateX(-50%);animation:feedback-toast-in 240ms var(--ease) both}.session-expired-notice>div{min-width:0;display:flex;flex:1;flex-direction:column}.session-expired-notice b{font-size:14px}.session-expired-notice span{color:var(--muted);font-size:12px}.session-expired-notice>a{padding:8px 12px;border-radius:999px;background:var(--green);color:#fff;font-size:12px;font-weight:800}.session-expired-notice>button{position:absolute;right:12px;top:50%;width:28px;height:28px;border:0;background:transparent;font-size:20px;transform:translateY(-50%)}
 .action-toast{position:fixed;z-index:300;left:50%;bottom:25px;min-height:46px;padding:10px 17px;display:flex;align-items:center;gap:10px;border-radius:999px;background:var(--ink);color:#fff;box-shadow:0 14px 35px rgba(14,26,18,.2);font-size:13px;font-weight:700;transform:translateX(-50%);animation:feedback-toast-in 220ms var(--ease) both}.action-toast>span{width:9px;height:9px;border-radius:50%;background:var(--lime)}
 @keyframes feedback-fade-in{from{opacity:0}}@keyframes feedback-dialog-in{from{opacity:0;transform:translateY(10px) scale(.985)}}@keyframes feedback-toast-in{from{opacity:0;transform:translate(-50%,8px)}}
+/* 2026-07-31 요청 - 팝업 열릴 때뿐 아니라 닫힐 때도 애니메이션(useDelayedClose
+   훅이 실제 언마운트 전에 이 클래스를 붙여서 exit 애니메이션이 다 재생될
+   시간을 준다). */
+.system-dialog-backdrop.is-closing{animation:feedback-fade-out 180ms linear both}
+.system-dialog.is-closing{animation:feedback-dialog-out 180ms var(--ease) both}
+@keyframes feedback-fade-out{to{opacity:0}}
+@keyframes feedback-dialog-out{to{opacity:0;transform:translateY(10px) scale(.985)}}
 
 .inline-service-notice{margin:20px 0 4px;padding:14px 15px 14px 17px;display:flex;align-items:center;justify-content:space-between;gap:18px;border-left:3px solid var(--warn);border-radius:0 10px 10px 0;background:#fbf7ed}.inline-service-notice>div{display:flex;flex-direction:column}.inline-service-notice b{font-size:13px}.inline-service-notice span{color:var(--muted);font-size:12px}.inline-service-notice button{flex:0 0 auto;padding:8px 12px;border:1px solid #d7c49b;border-radius:999px;background:#fff;font-size:12px;font-weight:800}
 .active-filter-summary{margin:18px 0 0;display:flex;align-items:center;flex-wrap:wrap;gap:7px}.active-filter-summary>span{margin-right:3px;color:var(--muted);font-size:12px}.active-filter-summary>b{padding:6px 10px;border-radius:999px;background:#eaf3dd;color:var(--green);font-size:12px}.active-filter-summary>button{padding:5px 8px;border:0;background:transparent;color:#637063;font-size:12px;text-decoration:underline;text-underline-offset:3px}.feed-end{padding:34px 0 4px;color:#7a8379;font-size:12px;text-align:center}.empty-catalog{min-height:230px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;border-radius:16px;background:#f6f8f3}.empty-catalog>b{color:var(--ink);font-size:18px}.empty-catalog>span{font-size:13px}.empty-catalog>button{margin-top:10px;padding:10px 15px;border:1px solid #cad5c5;border-radius:999px;background:#fff;color:var(--green);font-size:12px;font-weight:800}
@@ -223,6 +236,8 @@ img{max-width:100%}
 .chat-widget-popup .chat-log{flex:1;min-height:0;overflow-y:auto}
 .chat-widget-close{position:absolute;z-index:2;right:12px;top:12px;width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;background:#fff;font-size:14px;color:var(--muted)}
 @keyframes chat-widget-in{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
+.chat-widget-popup.is-closing{animation:chat-widget-out 180ms var(--ease) both}
+@keyframes chat-widget-out{to{opacity:0;transform:translateY(12px) scale(.97)}}
 @media(max-width:700px){
   .chat-widget-popup{right:12px;bottom:90px;width:calc(100vw - 24px);height:min(520px,calc(100dvh - 112px));border-radius:18px}
   .chat-widget-fab{right:10px;bottom:10px;width:78px;height:70px}

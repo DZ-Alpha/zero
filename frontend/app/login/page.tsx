@@ -1,6 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { AuthFrame } from "@/components/AuthFrame";
 import { OAuthButtons } from "@/components/OAuthButtons";
+
+export const metadata: Metadata = {
+  title: "로그인",
+  description: "소셜 계정으로 간편하게 로그인하고 식단 기록을 이어가요.",
+};
 
 export default async function Page({
   searchParams,
