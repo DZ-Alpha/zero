@@ -91,6 +91,7 @@ export function RoomSettings({ roomId }: { roomId: string }) {
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("🌿");
   const [rankingOptIn, setRankingOptIn] = useState(true);
+  const [memberInviteEnabled, setMemberInviteEnabled] = useState(false);
   const [nudgeNotifications, setNudgeNotifications] = useState(true);
   const [activityNotifications, setActivityNotifications] = useState(true);
   const [inviteCode, setInviteCode] = useState("");
@@ -113,6 +114,7 @@ export function RoomSettings({ roomId }: { roomId: string }) {
         setName(response.room.name);
         setEmoji(response.room.emoji);
         setRankingOptIn(response.room.rankingOptIn);
+        setMemberInviteEnabled(response.memberInviteEnabled);
         setNudgeNotifications(response.notifications.nudges);
         setActivityNotifications(response.notifications.commentsAndReactions);
         setInviteCode(response.activeInvite?.code ?? "");
@@ -199,8 +201,8 @@ export function RoomSettings({ roomId }: { roomId: string }) {
       return;
     }
     try {
-      const response = await updateRoom(token, roomId, { name: name.trim(), emoji, rankingOptIn });
-      setSettings((prev) => prev && { ...prev, room: response.room });
+      const response = await updateRoom(token, roomId, { name: name.trim(), emoji, rankingOptIn, memberInviteEnabled });
+      setSettings((prev) => prev && { ...prev, room: response.room, memberInviteEnabled: response.memberInviteEnabled });
       setName(response.room.name);
       setToast("모임 정보를 저장했어요.");
     } catch (error) {
@@ -321,27 +323,45 @@ export function RoomSettings({ roomId }: { roomId: string }) {
 
             <section className={styles.settingsCard} id="invite">
               <header><div><p className={styles.eyebrow}>초대</p><h2>친구 초대하기</h2></div></header>
-              <div className={styles.invitePanel}>
-                <div>
-                  <span>초대 코드</span>
-                  <strong>{inviteCode || "발급된 코드가 없어요"}</strong>
-                  {inviteExpiryLabel && <small>{inviteExpiryLabel}까지 사용</small>}
+              {permissions.canEditRoom && (
+                <div className={styles.settingsToggle}>
+                  <div><strong>멤버도 초대 코드 만들기</strong><span>끄면 방장만 초대 코드를 만들고 볼 수 있어요.</span></div>
+                  <button
+                    type="button"
+                    className={`${styles.switch} ${memberInviteEnabled ? styles.switchOn : ""}`}
+                    aria-pressed={memberInviteEnabled}
+                    onClick={() => setMemberInviteEnabled((value) => !value)}
+                  />
                 </div>
-                <div>
-                  <button type="button" className={styles.primaryButton} onClick={copyInvite} disabled={!inviteCode}>링크 복사</button>
-                  {permissions.canInvite && <button type="button" className={styles.secondaryButton} onClick={() => setConfirmAction({ type: "regenerate" })}>새 코드 만들기</button>}
-                  {permissions.canInvite && inviteCode && (
-                    <button type="button" className={styles.secondaryButton} onClick={() => setConfirmAction({ type: "revoke_invite" })}>코드 삭제</button>
-                  )}
+              )}
+              {permissions.canInvite ? (
+                <div className={styles.invitePanel}>
+                  <div>
+                    <span>초대 코드</span>
+                    {inviteCode ? <strong>{inviteCode}</strong> : <strong className={styles.invitePanelEmpty}>발급된 코드가 없어요</strong>}
+                    {inviteExpiryLabel && <small>{inviteExpiryLabel}까지 사용</small>}
+                  </div>
+                  <div>
+                    <button type="button" className={styles.primaryButton} onClick={copyInvite} disabled={!inviteCode}>링크 복사</button>
+                    <button type="button" className={styles.secondaryButton} onClick={() => setConfirmAction({ type: "regenerate" })}>새 코드 만들기</button>
+                    {inviteCode && (
+                      <button type="button" className={styles.secondaryButton} onClick={() => setConfirmAction({ type: "revoke_invite" })}>코드 삭제</button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className={styles.settingsEmptyNote}>
+                  <strong>초대 권한이 없어요</strong>
+                  <small>초대가 필요할 경우 모임 관리자에게 요청해주세요.</small>
+                </div>
+              )}
             </section>
 
             <section className={styles.settingsCard} id="sharing">
               <header><div><p className={styles.eyebrow}>내 설정</p><h2>알림</h2></div></header>
               <div className={styles.settingsToggle}>
-                <div><strong>콕 찌르기 알림</strong></div>
-                <button type="button" className={`${styles.switch} ${nudgeNotifications ? styles.switchOn : ""}`} aria-label="콕 찌르기 알림" aria-pressed={nudgeNotifications} onClick={() => setNudgeNotifications((value) => !value)} />
+                <div><strong>콕 찌르기 받기</strong><span>끄면 이 모임 멤버들이 나를 콕 찌를 수 없어요.</span></div>
+                <button type="button" className={`${styles.switch} ${nudgeNotifications ? styles.switchOn : ""}`} aria-label="콕 찌르기 받기" aria-pressed={nudgeNotifications} onClick={() => setNudgeNotifications((value) => !value)} />
               </div>
               <div className={styles.settingsToggle}>
                 <div><strong>댓글과 반응 알림</strong></div>

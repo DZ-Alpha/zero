@@ -118,6 +118,9 @@ export type MemberMealSlot = {
   record: MealRecord | null;
   nudge: {
     canSend: boolean;
+    // 대상 멤버가 이 방에서 콕 찌르기를 거부(설정 off)한 상태 - 버튼을 숨기지
+    // 않고 비활성으로 보여주기 위한 구분값. 본인 카드는 canSend/refused 모두 false.
+    refused?: boolean;
     sentByMe: boolean;
     retryAfterSeconds: number | null;
   };
@@ -213,6 +216,10 @@ export type RoomSettingsResponse = {
     nudges: boolean;
     commentsAndReactions: boolean;
   };
+  // 2026-07-30 - 방장이 멤버에게도 초대 코드 생성/조회를 열어줄지 토글하는 값.
+  // 기본 false(멤버는 못 만듦) - room.permissions.canInvite가 이 값과 방장
+  // 여부를 합쳐서 최종 권한을 알려준다.
+  memberInviteEnabled: boolean;
   activeInvite: RoomInvite | null;
   members: RoomMember[];
 };
@@ -221,6 +228,7 @@ export type UpdateRoomInput = {
   name?: string;
   emoji?: string;
   rankingOptIn?: boolean;
+  memberInviteEnabled?: boolean;
 };
 
 export type UpdateRoomNotificationsInput = {
@@ -245,6 +253,15 @@ export type CursorPage<T> = {
 export type MemberCalendarDay = {
   date: string;
   recordCount: number;
+};
+
+// GET /rooms/{id}/calendar - 방 상세의 날짜 이동 캘린더. recordCount는 방
+// 전체(멤버 합산) 기록 수, myRecordCount는 그중 내 기록 수 - "나도 올린 날"과
+// "남만 올린 날"을 색으로 구분하는 데 쓴다.
+export type RoomCalendarDay = {
+  date: string;
+  recordCount: number;
+  myRecordCount: number;
 };
 
 export type ReportRoomContentInput = {

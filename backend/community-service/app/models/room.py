@@ -22,6 +22,13 @@ class Room(Base):
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ranking_opt_in: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 2026-07-30 요청 - "멤버도 초대 코드 생성/조회 가능" 여부. 의도적으로
+    # 매핑 컬럼으로 안 뒀다 - 매핑하면 SQLAlchemy가 이 클래스로 만드는 모든
+    # SELECT(방 조회·목록 등 얌로그 전체)에 이 컬럼을 넣어서, 배포 전
+    # ALTER TABLE을 깜빡하면 방 관련 기능 전체가 500난다. 대신 room_store의
+    # get_member_invite_enabled/set_member_invite_enabled가 별도 raw SQL로
+    # 읽고 쓰며, 컬럼이 아직 없으면(그 두 함수 안에서) 예외를 잡아 "꺼짐"으로
+    # 조용히 폴백한다 - 이 필드 하나만 기능이 빠질 뿐 나머지는 영향 없다.
     # soft delete — §5 "soft delete 여부는 운영 정책으로 확정" 전까지는 항상
     # soft delete로 두고(deleted_at 세팅), 하드 삭제 정책이 나오면 그때 별도
     # batch job으로 뺀다. 목록/조회 쪽은 전부 deleted_at IS NULL로 필터링한다.

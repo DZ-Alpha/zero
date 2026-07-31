@@ -780,6 +780,7 @@
   place-items: center;
   background: rgba(17, 29, 20, .42);
   backdrop-filter: blur(6px);
+  animation: modal-backdrop-in 180ms linear both;
 }
 
 .modal {
@@ -790,6 +791,17 @@
   border-radius: 22px;
   background: #fff;
   box-shadow: 0 28px 90px rgba(17, 29, 20, .24);
+  animation: modal-panel-in 240ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+@keyframes modal-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-panel-in {
+  from { opacity: 0; transform: translateY(10px) scale(.985); }
+  to { opacity: 1; transform: none; }
 }
 
 .modalHeader {
@@ -1052,6 +1064,220 @@
 
 .tabContent {
   padding-top: 26px;
+}
+
+/* 날짜 이동(2026-07-30) - 방 상세 "오늘" 탭 상단의 이전/다음 날 + 캘린더.
+   캘린더는 2026-07-31부터 다른 얌로그 모달들과 같은 .modalBackdrop 패턴
+   (화면 중앙 + 뒷배경 블러 + 우상단 닫기)으로 뜬다 - 날짜 라벨에 앵커될
+   필요가 없어져서 .dateNav의 position:relative는 이제 장식용이 아니라
+   그냥 남겨둔 값이다(제거해도 무방). */
+.dateNav {
+  position: relative;
+  margin: 0 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dateNav button {
+  height: 40px;
+  border: 1px solid #d5ddd2;
+  border-radius: 999px;
+  background: #fff;
+  color: #667064;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.dateNav button:disabled {
+  opacity: .35;
+}
+
+.dateNavArrow {
+  width: 40px;
+  flex: 0 0 auto;
+}
+
+.dateNav .dateNavLabel {
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--room-green);
+  font-size: 14px;
+}
+
+.dateNavLabel em {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--room-lime);
+  color: #1c2b20;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.dateNavLabel i {
+  color: #97a196;
+  font-style: normal;
+}
+
+.dateNav .dateNavToday {
+  padding: 0 14px;
+  border-color: var(--room-green);
+  color: var(--room-green);
+}
+
+/* 2026-07-31 요청 - 날짜 라벨 아래 앵커 팝오버 대신, 다른 모달들과 같은
+   화면 중앙 + 뒷배경 블러 모달로 변경. .modalBackdrop이 배경 블러/애니메이션과
+   가운데 정렬(display:grid;place-items:center)을 이미 해주므로, 이 안에서는
+   위치 지정 없이 카드 자체의 스타일만 갖는다. */
+.roomCalendar {
+  position: relative;
+  z-index: 12;
+  width: min(340px, calc(100vw - 48px));
+  /* 상단 여백을 넉넉히 둬서 우상단 닫기 버튼과 header의 "다음 달" 버튼이
+     안 겹치게 한다. */
+  padding: 44px 18px 14px;
+  border: 1px solid var(--room-line);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 20px 48px rgba(20, 35, 23, .16);
+  animation: room-calendar-in 220ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+.roomCalendarClose {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--room-line);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 17px;
+  color: #4b544c;
+}
+
+@keyframes room-calendar-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.roomCalendar > header {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.roomCalendar > header strong {
+  font-size: 15px;
+}
+
+.roomCalendar > header button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #d5ddd2;
+  border-radius: 50%;
+  background: #fff;
+  color: #667064;
+  font-size: 11px;
+}
+
+.roomCalendar > header button:disabled {
+  opacity: .35;
+}
+
+.roomCalendarWeekdays {
+  margin-bottom: 4px;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  color: var(--room-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.roomCalendarGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.roomCalendarGrid > i {
+  min-height: 38px;
+}
+
+.roomCalendarGrid > button {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: #f4f6f2;
+  color: #4b544c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.roomCalendarGrid > button:disabled {
+  background: transparent;
+  color: #c3cabf;
+}
+
+/* 남은 멤버만 올린 날(나는 안 올림) */
+.roomCalendarGrid > button[data-state="others"] {
+  border-color: #ecd9a6;
+  background: #fbf1d4;
+  color: #7c6018;
+}
+
+/* 나도 올린 날 */
+.roomCalendarGrid > button[data-state="mine"] {
+  border-color: #b5d77a;
+  background: #e3f3c2;
+  color: #2c4a1c;
+}
+
+.roomCalendarGrid > button[data-selected] {
+  border-color: var(--room-green);
+  box-shadow: inset 0 0 0 1px var(--room-green);
+}
+
+.roomCalendarLegend {
+  margin-top: 12px;
+  display: flex;
+  gap: 16px;
+  color: var(--room-muted);
+  font-size: 12px;
+}
+
+.roomCalendarLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.roomCalendarLegend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+
+.roomCalendarLegend i[data-state="mine"] {
+  border: 1px solid #b5d77a;
+  background: #e3f3c2;
+}
+
+.roomCalendarLegend i[data-state="others"] {
+  border: 1px solid #ecd9a6;
+  background: #fbf1d4;
+}
+
+.roomCalendarLoading {
+  margin: 10px 0 0;
+  color: var(--room-muted);
+  font-size: 12px;
 }
 
 .mealViewTabs {
@@ -1391,7 +1617,6 @@
   border-style: dashed;
   border-color: #cfd9ca;
   background: #f3f6ef;
-  box-shadow: none;
 }
 
 .setlogEmptyPhoto {
@@ -1418,8 +1643,8 @@
 }
 
 .setlogEmptyAction {
-  min-height: 62px;
-  padding: 12px 16px;
+  min-height: 76px;
+  padding: 16px 18px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1428,14 +1653,21 @@
 }
 
 .setlogEmptyAction button {
-  min-height: 38px;
-  padding: 0 14px;
+  min-height: 44px;
+  padding: 0 20px;
   border: 1px solid #b8c7b4;
   border-radius: 999px;
   background: #fff;
   color: var(--room-green);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 850;
+}
+
+.setlogEmptyAction button:disabled {
+  border-color: #d6ddd3;
+  background: #f4f6f2;
+  color: #8a9188;
+  cursor: not-allowed;
 }
 
 .setlogEmptyMeta {
@@ -1488,16 +1720,31 @@
   transition: transform 260ms cubic-bezier(.23, 1, .32, 1);
 }
 
-.setlogGalleryOpen {
+/* 2026-07-30 QA 리포트 - 사진이 2장 이상이어도 넘김이 "다음"(오른쪽) 한
+   방향뿐이라 뒤로 못 돌아가는 것처럼 보였다. 사진 전체를 덮던 버튼 하나를
+   좌/우 절반으로 나눠 이전/다음을 각각 맡긴다. */
+.setlogGalleryPrev,
+.setlogGalleryNext {
   position: absolute;
   z-index: 1;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  width: 50%;
   border: 0;
   background: transparent;
   cursor: pointer;
 }
 
-.setlogGalleryOpen span {
+.setlogGalleryPrev {
+  left: 0;
+}
+
+.setlogGalleryNext {
+  right: 0;
+}
+
+.setlogGalleryPrev span,
+.setlogGalleryNext span {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1511,11 +1758,11 @@
   transform: scale(1.025);
 }
 
-.setlogNextHint {
+.setlogNextHint,
+.setlogPrevHint {
   position: absolute;
   z-index: 2;
   top: 50%;
-  right: 14px;
   width: 36px;
   height: 36px;
   display: grid;
@@ -1529,6 +1776,14 @@
   pointer-events: none;
   transform: translateY(-50%);
   backdrop-filter: blur(7px);
+}
+
+.setlogNextHint {
+  right: 14px;
+}
+
+.setlogPrevHint {
+  left: 14px;
 }
 
 .setlogDots {
@@ -1632,6 +1887,14 @@
   color: #fff;
   font-size: 18px;
   backdrop-filter: blur(7px);
+}
+
+/* 2026-07-30 요청 - "맛있겠다"를 누른 사진은 그 버튼에 연한 빨간 배경을
+   표시한다. 댓글/신고(···) 버튼엔 aria-pressed가 없어 이 속성 선택자가
+   맛있겠다 버튼에만 걸린다. */
+.setlogActions button[aria-pressed="true"] {
+  background: rgba(224, 74, 61, .55);
+  border-color: rgba(255, 255, 255, .85);
 }
 
 .setlogBubbles {
@@ -3399,6 +3662,12 @@
   .photoFrame img {
     transition: none;
   }
+
+  .modalBackdrop,
+  .modal,
+  .roomCalendar {
+    animation: none;
+  }
 }
 
 .previewNotice {
@@ -3717,6 +3986,29 @@
   background: #f1f6ed;
 }
 
+/* 2026-07-31 요청 - 초대 권한이 없는 멤버에게 보여주는 안내(코드/링크 자체는
+   안 보임). 연한 빨간 배경 + 큰 제목 + 작은 설명, .dangerCard 계열과 같은
+   빨강 톤(#9d3e39 등)을 재사용. */
+.settingsEmptyNote {
+  margin: 0;
+  padding: 19px 20px;
+  border-radius: 20px;
+  background: #fdf1ef;
+}
+
+.settingsEmptyNote strong {
+  display: block;
+  color: #9d3e39;
+  font-size: 15px;
+}
+
+.settingsEmptyNote small {
+  display: block;
+  margin-top: 5px;
+  color: #b07571;
+  font-size: 11px;
+}
+
 .invitePanel > div:first-child {
   min-width: 0;
   display: flex;
@@ -3738,6 +4030,18 @@
      같은 폴백 문구는 nowrap이면 줄바꿈 없이 넓어져서 모바일에서 페이지 자체가
      옆으로 밀리는 문제가 있었다 - 문구가 길어질 수 있는 상태를 감안해 제거. */
   overflow-wrap: anywhere;
+}
+
+/* 2026-07-31 요청 - "발급된 코드가 없어요" 안내문은 실제 코드가 아니니
+   코드체(넓은 자간·큰 글씨) 대신 본문과 같은 일반 글씨체로 보여준다.
+   .invitePanel strong(0,1,1)보다 특이도가 높아야 이겨서, 클래스 단독이
+   아니라 이 형태로 써야 한다 - 안 그러면 챗봇 버튼 때와 같은 특이도
+   버그가 재현된다. */
+.invitePanel strong.invitePanelEmpty {
+  font-size: 15px;
+  letter-spacing: normal;
+  font-weight: 800;
+  color: var(--room-muted);
 }
 
 .invitePanel small {

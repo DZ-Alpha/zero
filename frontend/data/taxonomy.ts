@@ -28,3 +28,12 @@ export const HEALTH_LABELS = [
 ] as const;
 
 export const SWEETENER_FILTERS = ["알룰로스", "에리스리톨", "말티톨", "수크랄로스", "스테비아"] as const;
+
+// 2026-07-30 QA 리포트 - 가입 화면(SignupProfileForm)과 마이페이지 "주의할 성분
+// 바꾸기"(PersonalPage)가 각자 다른 하드코딩 목록을 썼다(마이페이지 쪽은 개수도
+// 다르고 견과류/달걀/갑각류처럼 더 뭉뚱그린 이름을 씀). 그 결과 가입 때 고른
+// 성분이 마이페이지 편집 화면 옵션에 없어서, 편집 화면을 열면 실제로 갖고 있는
+// 주의 성분 중 일부만 선택 표시되고 나머지는 편집기에서 보이지도 선택되지도
+// 않는 불일치가 있었다. 두 화면이 이 하나의 목록만 쓰도록 통일한다.
+export const ALLERGEN_OPTIONS = ["우유", "대두", "땅콩", "호두", "밀", "난류", "새우", "게", "복숭아", "토마토"] as const;
+export type AllergenOption = typeof ALLERGEN_OPTIONS[number];
