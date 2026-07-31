@@ -1,5 +1,11 @@
+import type { Metadata } from "next";
 import { AuthFrame } from "@/components/AuthFrame";
 import { SignupProfileForm } from "@/components/SignupProfileForm";
+
+export const metadata: Metadata = {
+  title: "회원가입 - 프로필 입력",
+  robots: { index: false, follow: false },
+};
 
 type ProfileSearchParams = {
   provider?: string;

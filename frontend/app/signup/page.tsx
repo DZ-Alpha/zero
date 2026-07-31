@@ -1,6 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { AuthFrame } from "@/components/AuthFrame";
 import { OAuthButtons } from "@/components/OAuthButtons";
+
+export const metadata: Metadata = {
+  title: "회원가입",
+  description: "소셜 계정으로 간편하게 가입하고, 나에게 맞는 하루 목표를 설정해요.",
+};
 
 export default async function Page({
   searchParams,

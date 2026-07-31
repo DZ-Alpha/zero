@@ -29,8 +29,18 @@ const notoSansKr = Noto_Sans_KR({
   display: "swap",
 });
 
+// 2026-07-31 요청 - 페이지마다 title/description이 바뀌어야 하고, 브라우저가
+// 아닌 크롤러가 직접 들어와도(JS 미실행) 의미 있는 내용을 봐야 한다. Next
+// App Router의 export const metadata/generateMetadata는 서버에서 렌더된
+// HTML <head>에 그대로 박혀서 나가므로 JS 실행 여부와 무관하게 동작한다.
+// title.template으로 각 페이지가 title만 짧게 넘기면 "OOO | 당당" 형태로
+// 통일된다. metadataBase는 OpenGraph 등 상대 URL을 절대경로로 풀 때 기준.
 export const metadata: Metadata = {
-  title: "당당 — 먹기 전에, 한 번 더 당당하게",
+  metadataBase: new URL("https://zerodang.org"),
+  title: {
+    default: "당당 — 먹기 전에, 한 번 더 당당하게",
+    template: "%s | 당당",
+  },
   description: "식단 기록과 건강정보를 바탕으로 나에게 맞는 저당픽을 고르는 서비스",
 };
 
