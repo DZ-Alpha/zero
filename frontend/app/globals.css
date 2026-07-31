@@ -18,7 +18,7 @@
   --sugar-character-offset-x:0px;--sugar-character-offset-y:0px;--sugar-float-distance:10px;
 }
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;overflow-anchor:none}
 /* 2026-07-31 - SUIT 롤백. 이름만 있고 실제로 못 불러오던(next/font 등 전무)
    'IBM Plex Sans KR'/'Noto Sans KR'을 layout.tsx의 next/font로 실제 로드해서
    CSS 변수로 받는다 - 원래 있던 두 폰트 순서(본문은 IBM Plex 우선, 제목/버튼은
