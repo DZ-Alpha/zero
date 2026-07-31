@@ -417,7 +417,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
               <button type="button" className={styles.secondaryButton} onClick={copyInvite}>초대 링크</button>
             )}
             <Link className={styles.secondaryButton} href={`/rooms/${room.id}/settings`}>모임 관리</Link>
-            <Link className={styles.primaryButton} href="/">내 식단 기록</Link>
+            <button type="button" className={styles.primaryButton} onClick={() => setUploadMeal(getCurrentMealView())}>내 식단 기록</button>
           </div>
         </header>
 
