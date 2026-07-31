@@ -200,6 +200,9 @@ pipeline {
                                 echo "DAST 포트 매핑 없음(${svc}) — 스캔 스킵"
                             } else {
                                 sh """
+                                    # 이전 빌드 잔재 제거(zap-out은 workspace라 빌드 간 남음 → 옛 report/log가
+                                    # 이번 아티팩트로 섞여 진단을 오도. 매 빌드 깨끗이 시작).
+                                    rm -rf \$WORKSPACE/zap-out
                                     mkdir -p \$WORKSPACE/zap-out && chmod 777 \$WORKSPACE/zap-out
                                     # NodePort는 모든 노드에 열리므로, 살아있는(도달되는) 첫 노드를 골라 스캔.
                                     # 노드 1개 장애 시 다음 노드로 폴백. 전부 불통이면 서비스 자체 장애로 보고 실패.
@@ -221,8 +224,11 @@ pipeline {
                                     # ★ 좀비 방지(2026-07-31): timeout은 docker CLI만 죽이고 dockerd의
                                     #   ZAP 컨테이너는 살아남아 좀비화(프론트에서 14분+ 실증). --name +
                                     #   trap EXIT으로 shell이 어떤 경로로 끝나도 반드시 kill.
+                                    # ★ 진단성(2026-07-31): kill 시 docker run stdout(>) 소실로 로그 0 B가
+                                    #   된 프론트 사례. kill '전에' docker logs로 컨테이너 stdout을 별도
+                                    #   파일(zap-${svc}.container.log)로 건져 hang 원인을 남긴다.
                                     ZAP_NAME=zap-base-${svc}-${BUILD_NUMBER}
-                                    trap 'docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
+                                    trap 'docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-${svc}.container.log 2>/dev/null && [ -s \$WORKSPACE/zap-out/zap-${svc}.container.log ] || rm -f \$WORKSPACE/zap-out/zap-${svc}.container.log; docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
                                     timeout 360 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                         ghcr.io/zaproxy/zaproxy:stable \
                                         zap-baseline.py -t http://\$TARGET_IP:${PORT} -m 3 \
@@ -268,8 +274,10 @@ pipeline {
                                         # ★ 좀비 방지(2026-07-31): timeout이 죽이는 건 docker CLI뿐이라
                                         #   ZAP 컨테이너가 좀비로 생존. 이 블록은 set -e라 TARGET_IP 미도달/
                                         #   토큰 실패로 중간 exit돼도 trap EXIT이 컨테이너를 반드시 kill.
+                                        # ★ 진단성(2026-07-31): kill 전 docker logs로 컨테이너 stdout을
+                                        #   별도 파일(zap-api-${svc}.container.log)로 건져 hang 원인 보존.
                                         ZAP_NAME=zap-api-${svc}-${BUILD_NUMBER}
-                                        trap 'docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
+                                        trap 'docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-api-${svc}.container.log 2>/dev/null && [ -s \$WORKSPACE/zap-out/zap-api-${svc}.container.log ] || rm -f \$WORKSPACE/zap-out/zap-api-${svc}.container.log; docker kill "\$ZAP_NAME" 2>/dev/null || true' EXIT
                                         timeout 600 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                             ghcr.io/zaproxy/zaproxy:stable \
                                             zap-api-scan.py -t "http://\$TARGET_IP:${PORT}/openapi.json" -f openapi -I \
