@@ -101,6 +101,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     title: liveDetail?.name || fallbackDetail.title,
     brand: liveDetail?.brand || fallbackDetail.brand,
     category: liveDetail?.category || fallbackDetail.category,
+    serving: liveDetail?.serving || fallbackDetail.serving,
     calories: liveDetail?.cal ?? fallbackDetail.calories,
     sugar: liveDetail?.dang ?? fallbackDetail.sugar,
     protein: liveDetail?.danb ?? fallbackDetail.protein,

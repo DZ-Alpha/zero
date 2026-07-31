@@ -50,11 +50,18 @@ def _to_uuid(product_id: str) -> uuid.UUID:
 def _product_detail(p: Product, tags: list) -> dict[str, object]:
     category_tags = [t for t in tags if t.tag_type == "CATEGORY"]
     allergen_tags = [t for t in tags if t.tag_type == "ALLERGEN"]
+    serving = None
+    if p.serving_value is not None and p.serving_unit:
+        serving = f"{float(p.serving_value):g}{p.serving_unit}"
     return {
         # PR-0201
         "name": p.product_name,
         "brand": p.brand_name,
         "category": category_tags[0].tag_name if category_tags else None,
+        # search.py의 검색 결과 카드엔 있지만 여기(상세)엔 빠져 있었다 - 프론트가
+        # 이 값이 없으면 하드코딩된 "100g"으로 표시해, 음료처럼 g이 아닌 상품도
+        # 전부 "100g"으로 잘못 보였다(2026-07-31 리포트).
+        "serving": serving,
         # PR-0202
         "cal": float(p.calories) if p.calories is not None else None,
         "dang": float(p.sugars) if p.sugars is not None else None,
