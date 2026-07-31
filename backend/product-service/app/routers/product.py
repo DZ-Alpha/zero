@@ -1,5 +1,7 @@
 import logging
 import uuid
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -30,6 +32,12 @@ from app.services.product_store import (
 logger = logging.getLogger("product_service.product")
 
 router = APIRouter(prefix="/product")
+
+_KST = ZoneInfo("Asia/Seoul")
+# 이 시각 이전에 캐싱된 AI 요약(한줄요약/감미료 설명)은 소급 재생성한다 - 이후
+# 요청부터 upsert_ai_summary_cache가 updated_at을 갱신하므로 한 번만 다시
+# 생성되면 이 컷오프는 더 이상 걸리지 않는다.
+_AI_SUMMARY_REGEN_CUTOFF = datetime(2026, 7, 29, 15, 0, tzinfo=_KST)
 
 
 def _to_uuid(product_id: str) -> uuid.UUID:
@@ -92,7 +100,7 @@ async def get_ai_summary(
         raise HTTPException(status_code=404, detail=str(e))
 
     cached = await get_ai_summary_cache(db, pid)
-    if cached and cached.ai_oneline:
+    if cached and cached.ai_oneline and cached.updated_at >= _AI_SUMMARY_REGEN_CUTOFF:
         # 서식 규칙(2026-07-30) 이전에 캐싱된 응답에도 소급 적용 - 저장값은
         # 안 고치고 읽을 때만 정리한다.
         return {"ai-oneline": sanitize_summary(cached.ai_oneline)}
@@ -124,7 +132,7 @@ async def get_sweetener_info(
         return {"gammi-info": "이 제품에는 대체 당이 포함되어 있지 않습니다."}
 
     cached = await get_ai_summary_cache(db, pid)
-    if cached and cached.gammi_info:
+    if cached and cached.gammi_info and cached.updated_at >= _AI_SUMMARY_REGEN_CUTOFF:
         # 서식 규칙(2026-07-30) 이전에 캐싱된 응답에도 소급 적용.
         return {"gammi-info": sanitize_summary(cached.gammi_info)}
 
