@@ -153,24 +153,10 @@ pipeline {
             }
         }
 
-        stage('Wait Event Pipeline') {
-            when { expression { env.EVENT_PIPELINE_CHANGED == 'true' } }
-            steps {
-                script {
-                    withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
-                        sh '''
-                            argocd app get dang-pipeline \
-                                --server 192.168.0.68:30080 \
-                                --auth-token "$ARGOCD_TOKEN" --plaintext --refresh >/dev/null
-                            argocd app wait dang-pipeline \
-                                --server 192.168.0.68:30080 \
-                                --auth-token "$ARGOCD_TOKEN" --plaintext \
-                                --sync --health --timeout 300
-                        '''
-                    }
-                }
-            }
-        }
+        // event-pipeline은 staging 없이 manifest 태그 갱신 = production 배포.
+        // 따라서 별도 배포 게이트(argocd app wait) 불필요 — manifest 갱신까지 성공하면
+        // 배포 지시가 나간 것이고, 실제 sync는 ArgoCD가 담당한다. (백엔드/프론트는
+        // staging→wait 게이트→prod 승격 2단계라 wait이 필요하지만 event-pipeline은 1단계.)
     }
     post {
         always {
