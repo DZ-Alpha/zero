@@ -184,6 +184,12 @@ pipeline {
                     // 타임아웃(exit20)이 for 루프를 깨고 뒤 서비스 승격을 통째로 건너뛰었음.)
                     def promotedSvcs = []
                     def failedPromoteSvcs = []
+                    // ★ OK_SVCS 즉시 비움: Build 단계가 "빌드 성공" 목록으로 세팅해 둔 값이
+                    //   남아있으면, Promote가 끝까지 못 돌 때(예: catchError로도 못 잡는 예외로
+                    //   아래 갱신 라인 전에 죽을 때) Slack이 "배포 완료: (빌드된 전부)"로 오보한다
+                    //   (실제 승격 0건인데 FAILURE 알림에 8개 전부 배포완료로 뜬 #90 사례).
+                    //   승격 성공한 것만 아래에서 다시 채운다.
+                    env.OK_SVCS = ''
                     withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN'),
                                      string(credentialsId: 'staging-jwt-secret', variable: 'STG_JWT_SECRET')]) {
                         for (svc in env.CHANGED.split(' ')) {
