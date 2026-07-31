@@ -71,6 +71,7 @@ export type ProductDetailResponse = {
   name?: string | null;
   brand?: string | null;
   category?: string | null;
+  serving?: string | null;
   cal?: number | null;
   dang?: number | null;
   natu?: number | null;
