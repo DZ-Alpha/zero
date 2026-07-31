@@ -1,6 +1,6 @@
 import logging
 import time
-# rebuild trigger — Harbor image re-push
+# rebuild trigger — Harbor image re-push (2026-07-31 재배포)
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
