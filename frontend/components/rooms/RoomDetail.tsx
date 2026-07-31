@@ -3,7 +3,10 @@
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { RecordMealModal } from "@/components/RecordMealModal";
 import { SafeImage } from "@/components/SafeImage";
+import { suppressScrollTopGuard } from "@/components/ScrollToTop";
+import type { MealType as DietMealType } from "@/hooks/useDietRecords";
 import { ConfirmDialog } from "@/components/SystemFeedback";
 import styles from "@/components/rooms/Rooms.module.css";
 import { useAuthSession } from "@/hooks/useAuthSession";
@@ -44,7 +47,7 @@ const mealSlots: { label: MealType; symbol: string; name: string }[] = [
   { label: "snack", symbol: "●", name: "간식" },
 ];
 
-const MEAL_LABELS: Record<MealType, string> = { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" };
+const MEAL_LABELS: Record<MealType, DietMealType> = { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" };
 
 const todayViews: TodayView[] = ["전체", "breakfast", "lunch", "dinner", "snack"];
 
@@ -113,6 +116,10 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     return { year: now.getFullYear(), month: now.getMonth() + 1 };
   });
   const [roomCalendars, setRoomCalendars] = useState<Record<string, RoomCalendarDay[]>>({});
+  // 방 안에서 바로 업로드(2026-07-31 요청) - 이전엔 "내 아침 올리기"류 버튼이
+  // 홈으로 이동시켰는데, 그 자리에서 팝업으로 올리고 방 화면에 바로 반영되게.
+  const [uploadMeal, setUploadMeal] = useState<MealType | null>(null);
+  const [roomRefreshTick, setRoomRefreshTick] = useState(0);
 
   const tabsRef = useRef<HTMLElement>(null);
   const didInitialScroll = useRef(false);
@@ -144,7 +151,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     return () => {
       active = false;
     };
-  }, [token, roomId, selectedDate]);
+  }, [token, roomId, selectedDate, roomRefreshTick]);
 
   // 캘린더가 열려 있는 동안 보고 있는 달의 기록 현황을 불러온다(월 단위 캐시).
   const calMonthKey = `${calMonth.year}-${String(calMonth.month).padStart(2, "0")}`;
@@ -186,6 +193,10 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     const el = tabsRef.current;
     if (!el) return;
     didInitialScroll.current = true;
+    // ScrollToTop.tsx가 네비게이션 직후 잠깐 스크롤을 0으로 계속 되돌리는
+    // 가드를 켜두는데, 여긴 그 직후 의도적으로 아래로 스크롤해야 하므로
+    // 먼저 꺼준다 - 안 그러면 가드가 다음 프레임에 이 스크롤을 취소해버린다.
+    suppressScrollTopGuard();
     const stickyNavOffset = window.matchMedia("(max-width: 700px)").matches ? 62 : 72;
     const top = el.getBoundingClientRect().top + window.scrollY - stickyNavOffset;
     window.scrollTo({ top: Math.max(0, top), behavior: "auto" });
@@ -572,7 +583,11 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                       <p className={styles.eyebrow}>{isToday ? "오늘" : dateLabel}의 {MEAL_LABELS[todayView]}</p>
                       <h2 id="today-room-title">{MEAL_LABELS[todayView]} 식탁</h2>
                     </div>
-                    {isToday && <Link href="/" className={styles.mealUploadButton}>＋ 내 {MEAL_LABELS[todayView]} 올리기</Link>}
+                    {isToday && (
+                      <button type="button" className={styles.mealUploadButton} onClick={() => setUploadMeal(todayView)}>
+                        ＋ 내 {MEAL_LABELS[todayView]} 올리기
+                      </button>
+                    )}
                   </header>
 
                   <div
@@ -896,6 +911,18 @@ export function RoomDetail({ roomId }: { roomId: string }) {
           busy={nudgeSending}
           onConfirm={confirmSendNudge}
           onClose={() => setPendingNudge(null)}
+        />
+      )}
+      {uploadMeal && (
+        <RecordMealModal
+          meal={MEAL_LABELS[uploadMeal]}
+          initialDate={selectedDate}
+          onClose={() => setUploadMeal(null)}
+          onSaved={() => {
+            setUploadMeal(null);
+            setRoomRefreshTick((tick) => tick + 1);
+            setToast("저장했어요.");
+          }}
         />
       )}
       {toast && <div className={styles.toast} role="status">{toast}</div>}
