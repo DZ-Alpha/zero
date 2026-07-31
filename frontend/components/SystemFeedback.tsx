@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useDelayedClose } from "@/hooks/useDelayedClose";
 import { AUTH_EXPIRED_EVENT } from "@/lib/api/client";
 
 export function ConfirmDialog({
@@ -25,15 +26,17 @@ export function ConfirmDialog({
   onClose: () => void;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const { closing, requestClose } = useDelayedClose(onClose);
 
   useEffect(() => {
     cancelRef.current?.focus();
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) onClose();
+      if (event.key === "Escape" && !busy) requestClose();
     }
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [busy, onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
 
   // site-header가 backdrop-filter(blur)를 쓰는데, backdrop-filter/filter가 걸린
   // 조상은 자손 position:fixed의 containing block이 된다(스펙) - 이 다이얼로그가
@@ -42,13 +45,13 @@ export function ConfirmDialog({
   // 안에만 걸려서 나머지 페이지는 그대로 보이는 버그가 생긴다. document.body에
   // 바로 포탈해서 조상 stacking context에 영향받지 않게 한다.
   return createPortal(
-    <div className="system-dialog-backdrop" role="presentation" onMouseDown={() => !busy && onClose()}>
-      <section className="system-dialog" role="alertdialog" aria-modal="true" aria-labelledby="system-dialog-title" aria-describedby="system-dialog-description" onMouseDown={(event) => event.stopPropagation()}>
+    <div className={`system-dialog-backdrop${closing ? " is-closing" : ""}`} role="presentation" onMouseDown={() => !busy && requestClose()}>
+      <section className={`system-dialog${closing ? " is-closing" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby="system-dialog-title" aria-describedby="system-dialog-description" onMouseDown={(event) => event.stopPropagation()}>
         <span className="system-dialog-mark" aria-hidden="true" />
         <h2 id="system-dialog-title">{title}</h2>
         <p id="system-dialog-description">{description}</p>
         <div>
-          <button ref={cancelRef} type="button" onClick={onClose} disabled={busy}>{cancelLabel}</button>
+          <button ref={cancelRef} type="button" onClick={requestClose} disabled={busy}>{cancelLabel}</button>
           <button type="button" className={destructive ? "is-destructive" : "is-primary"} onClick={onConfirm} disabled={busy}>{busy ? "처리하고 있어요" : confirmLabel}</button>
         </div>
       </section>
@@ -59,22 +62,24 @@ export function ConfirmDialog({
 
 export function LoginPromptDialog({ onClose }: { onClose: () => void }) {
   const loginRef = useRef<HTMLAnchorElement>(null);
+  const { closing, requestClose } = useDelayedClose(onClose);
   useEffect(() => {
     loginRef.current?.focus();
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") requestClose();
     }
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return createPortal(
-    <div className="system-dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="system-dialog auth-required-dialog" role="dialog" aria-modal="true" aria-labelledby="login-required-title" onMouseDown={(event) => event.stopPropagation()}>
+    <div className={`system-dialog-backdrop${closing ? " is-closing" : ""}`} role="presentation" onMouseDown={requestClose}>
+      <section className={`system-dialog auth-required-dialog${closing ? " is-closing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="login-required-title" onMouseDown={(event) => event.stopPropagation()}>
         <span className="system-dialog-mark" aria-hidden="true" />
         <h2 id="login-required-title">로그인하면 이어서 저장할 수 있어요.</h2>
         <p>즐겨찾기와 식단 기록을 계정에 남기려면 먼저 로그인해 주세요.</p>
-        <div><button type="button" onClick={onClose}>다음에</button><Link ref={loginRef} href="/login" className="is-primary">로그인하기</Link></div>
+        <div><button type="button" onClick={requestClose}>다음에</button><Link ref={loginRef} href="/login" className="is-primary">로그인하기</Link></div>
       </section>
     </div>,
     document.body,

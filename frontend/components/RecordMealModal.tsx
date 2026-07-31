@@ -7,6 +7,7 @@ import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
 import { recipes } from "@/data/catalog";
 import { PRODUCT_CATEGORIES } from "@/data/taxonomy";
+import { useDelayedClose } from "@/hooks/useDelayedClose";
 import { DietRecord, DietRecordsByDate, getTodayKey, MealType, useDietRecords } from "@/hooks/useDietRecords";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
 import { useRecipeCatalog } from "@/hooks/useRecipeCatalog";
@@ -132,6 +133,7 @@ export function RecordMealModal({
   const [favoriteProductIds, setFavoriteProductIds] = useState<Set<string>>(new Set());
   const photoInput = useRef<HTMLInputElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const { closing, requestClose } = useDelayedClose(onClose);
   const recipeCatalog = useRecipeCatalog(recipes);
   const productCategoryCode = PRODUCT_CATEGORIES.find((item) => item.label === category)?.code;
   const productCatalog = useProductCatalog({
@@ -203,11 +205,12 @@ export function RecordMealModal({
   useEffect(() => {
     closeButton.current?.focus();
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape" && saveState !== "saving") onClose();
+      if (event.key === "Escape" && saveState !== "saving") requestClose();
     }
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose, saveState]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saveState]);
 
   useEffect(() => () => {
     if (photoPreview) URL.revokeObjectURL(photoPreview);
@@ -528,7 +531,7 @@ export function RecordMealModal({
         });
         onSaved?.(recordDate, record);
         setSaveState("saved");
-        window.setTimeout(onClose, 720);
+        window.setTimeout(requestClose, 720);
       } catch {
         setSaveState("error");
       }
@@ -552,7 +555,7 @@ export function RecordMealModal({
       addRecord(recordDate, record);
       onSaved?.(recordDate, record);
       setSaveState("saved");
-      window.setTimeout(onClose, 720);
+      window.setTimeout(requestClose, 720);
     } catch {
       setSaveState("error");
     }
@@ -562,15 +565,15 @@ export function RecordMealModal({
 
   return (
     <>
-    <div className="meal-panel-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="meal-entry-panel" role="dialog" aria-modal="true" aria-label={`${meal} 기록 추가`} onMouseDown={(event) => event.stopPropagation()}>
+    <div className={`meal-panel-backdrop${closing ? " is-closing" : ""}`} role="presentation" onMouseDown={requestClose}>
+      <section className={`meal-entry-panel${closing ? " is-closing" : ""}`} role="dialog" aria-modal="true" aria-label={`${meal} 기록 추가`} onMouseDown={(event) => event.stopPropagation()}>
         <header className="meal-entry-head">
           <div>
             {selected && <button type="button" className="panel-back" onClick={() => setSelected(null)}>← 이전</button>}
             <p className="eyebrow">{meal}에 담기</p>
             <h2>{selected ? selected.name : "어떤 방식으로 기록할까요?"}</h2>
           </div>
-          <button ref={closeButton} type="button" className="panel-close" onClick={onClose} aria-label="닫기">×</button>
+          <button ref={closeButton} type="button" className="panel-close" onClick={requestClose} aria-label="닫기">×</button>
         </header>
 
         <RecordDateNavigator value={recordDate} onChange={(date) => { setRecordDate(date); setSelected(null); }} min={minDate} max={maxDate} />

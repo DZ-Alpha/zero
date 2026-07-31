@@ -1,5 +1,11 @@
+import type { Metadata } from "next";
 import { AuthFrame } from "@/components/AuthFrame";
 import { SignupTargetForm } from "@/components/SignupTargetForm";
+
+export const metadata: Metadata = {
+  title: "회원가입 - 하루 목표 설정",
+  robots: { index: false, follow: false },
+};
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ provider?: string }> }) {
   const { provider = "google" } = await searchParams;

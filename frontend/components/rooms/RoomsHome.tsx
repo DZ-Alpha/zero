@@ -2,17 +2,28 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SafeImage } from "@/components/SafeImage";
 import styles from "@/components/rooms/Rooms.module.css";
 import { useAuthSession } from "@/hooks/useAuthSession";
+import { useExitPresence } from "@/hooks/useDelayedClose";
 import { ApiError } from "@/lib/api/client";
 import { createRoom as createRoomApi, getRoomsHome } from "@/lib/api/rooms";
-import { CreateRoomResponse, MAX_ROOM_COUNT, RoomsHomeResponse } from "@/lib/rooms/contracts";
+import { CreateRoomResponse, MAX_ROOM_COUNT, RoomsHomeResponse, TeamRankingItem } from "@/lib/rooms/contracts";
 
 const emojiOptions = ["🌿", "🍚", "🥗", "🏃", "🌙"];
 
 const MEAL_LABELS: Record<string, string> = { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" };
+
+// 2026-07-31 요청 - 아직 랭킹에 들어갈 팀(멤버 3명 이상·개설 7일 이상·랭킹
+// 참여 동의)이 없으면 섹션이 통째로 텅 비어 보인다. 실제 데이터가 하나도
+// 없을 때만 이 목업으로 대체하고, 예시 배지로 실데이터가 아님을 표시한다.
+const MOCK_TEAM_RANKING: TeamRankingItem[] = [
+  { id: "mock-1", name: "아침빛 식탁", emoji: "🌅", memberCount: 4, recordRate: 92, averageSugar: 8, rankMovement: 1, isMine: false },
+  { id: "mock-2", name: "저당 챌린저스", emoji: "🥗", memberCount: 5, recordRate: 88, averageSugar: 10, rankMovement: 0, isMine: false },
+  { id: "mock-3", name: "산책하는 사람들", emoji: "🚶", memberCount: 3, recordRate: 81, averageSugar: 12, rankMovement: -1, isMine: false },
+  { id: "mock-4", name: "밤샘 금지단", emoji: "🌙", memberCount: 6, recordRate: 76, averageSugar: 14, rankMovement: 2, isMine: false },
+];
 
 export function RoomsHome() {
   const router = useRouter();
@@ -21,7 +32,9 @@ export function RoomsHome() {
   const [loading, setLoading] = useState(true);
   const myRooms = home?.rooms ?? [];
   const roomActivity = home?.recentActivities ?? [];
-  const teamRanking = home?.weeklyRanking ?? [];
+  const realTeamRanking = home?.weeklyRanking ?? [];
+  const isMockRanking = realTeamRanking.length === 0;
+  const teamRanking = isMockRanking ? MOCK_TEAM_RANKING : realTeamRanking;
   const roomLimitReached = myRooms.length >= MAX_ROOM_COUNT;
   const [showAllRanking, setShowAllRanking] = useState(false);
   const [modal, setModal] = useState<"create" | "join" | null>(null);
@@ -30,6 +43,11 @@ export function RoomsHome() {
   const [joinCode, setJoinCode] = useState("");
   const [rankingOptIn, setRankingOptIn] = useState(true);
   const [created, setCreated] = useState<CreateRoomResponse | null>(null);
+  // closeModal이 modal/created를 같은 틱에 둘 다 null로 만드는데, 닫히는
+  // 애니메이션이 재생되는 동안에도 직전 내용(어느 모달인지, 생성 성공
+  // 화면이었는지)이 그대로 보여야 한다 - 둘을 한 스냅샷으로 묶어서 붙든다.
+  const modalSnapshot = useMemo(() => (modal ? { modal, created } : null), [modal, created]);
+  const { rendered: modalView, closing: modalClosing } = useExitPresence(modalSnapshot);
   const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -272,7 +290,7 @@ export function RoomsHome() {
               <p className={styles.eyebrow}>이번 주 기록</p>
               <h2 id="team-ranking-title">이번 주 팀 랭킹</h2>
             </div>
-            <p>평균 당류와 기록률만 공개돼요.</p>
+            {isMockRanking ? <span className={styles.rankingPreviewBadge}>예시</span> : <p>평균 당류와 기록률만 공개돼요.</p>}
           </header>
 
           <ol className={styles.rankList}>
@@ -300,21 +318,21 @@ export function RoomsHome() {
         </section>
       </div>
 
-      {modal && (
-        <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => {
+      {modalView && (
+        <div className={`${styles.modalBackdrop}${modalClosing ? ` ${styles.isClosing}` : ""}`} role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) closeModal();
         }}>
-          <section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="room-modal-title">
+          <section className={`${styles.modal}${modalClosing ? ` ${styles.isClosing}` : ""}`} role="dialog" aria-modal="true" aria-labelledby="room-modal-title">
             <header className={styles.modalHeader}>
               <div>
-                <h2 id="room-modal-title">{modal === "create" ? "새 모임 만들기" : "초대 코드로 참여"}</h2>
-                <p>{modal === "create" ? "가볍게 시작하고, 공개 범위는 나중에도 바꿀 수 있어요." : "6자리 코드를 입력하면 참여 전에 모임을 미리 볼 수 있어요."}</p>
+                <h2 id="room-modal-title">{modalView.modal === "create" ? "새 모임 만들기" : "초대 코드로 참여"}</h2>
+                <p>{modalView.modal === "create" ? "가볍게 시작하고, 공개 범위는 나중에도 바꿀 수 있어요." : "6자리 코드를 입력하면 참여 전에 모임을 미리 볼 수 있어요."}</p>
               </div>
               <button type="button" className={styles.closeButton} onClick={closeModal} aria-label="닫기">×</button>
             </header>
 
             <div className={styles.modalBody}>
-              {modal === "join" ? (
+              {modalView.modal === "join" ? (
                 <form onSubmit={(event) => {
                   event.preventDefault();
                   previewJoin();
@@ -341,15 +359,15 @@ export function RoomsHome() {
                     <button className={styles.primaryButton} type="submit" disabled={joinCode.length !== 6}>모임 미리보기</button>
                   </div>
                 </form>
-              ) : created ? (
+              ) : modalView.created ? (
                 <div className={styles.codeResult}>
-                  <span className={styles.codeEmoji} aria-hidden="true">{created.room.emoji}</span>
-                  <h3>{created.room.name}을 만들었어요</h3>
+                  <span className={styles.codeEmoji} aria-hidden="true">{modalView.created.room.emoji}</span>
+                  <h3>{modalView.created.room.name}을 만들었어요</h3>
                   <p>초대 코드는 7일 동안 사용할 수 있어요.</p>
-                  <div className={styles.inviteCode}>{created.invite.code}</div>
+                  <div className={styles.inviteCode}>{modalView.created.invite.code}</div>
                   <div className={styles.modalActions}>
                     <button type="button" className={styles.secondaryButton} onClick={copyInvite}>링크 복사</button>
-                    <Link className={styles.primaryButton} href={`/rooms/${created.room.id}`}>모임으로 가기</Link>
+                    <Link className={styles.primaryButton} href={`/rooms/${modalView.created.room.id}`}>모임으로 가기</Link>
                   </div>
                 </div>
               ) : (

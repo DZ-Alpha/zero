@@ -310,6 +310,17 @@
   line-height: 1.7;
 }
 
+.rankingPreviewBadge {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid #d7dfd3;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--room-green);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .roomGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -730,6 +741,7 @@
 }
 
 .activityPhoto {
+  position: relative;
   width: 64px;
   height: 64px;
   overflow: hidden;
@@ -802,6 +814,24 @@
 @keyframes modal-panel-in {
   from { opacity: 0; transform: translateY(10px) scale(.985); }
   to { opacity: 1; transform: none; }
+}
+
+/* 2026-07-31 요청 - 닫을 때도 애니메이션(useExitPresence가 실제 언마운트 전에
+   이 클래스를 붙여서 exit 애니메이션이 다 재생될 시간을 준다). */
+.modalBackdrop.isClosing {
+  animation: modal-backdrop-out 180ms linear both;
+}
+
+.modal.isClosing {
+  animation: modal-panel-out 180ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+@keyframes modal-backdrop-out {
+  to { opacity: 0; }
+}
+
+@keyframes modal-panel-out {
+  to { opacity: 0; transform: translateY(10px) scale(.985); }
 }
 
 .modalHeader {
@@ -1163,6 +1193,14 @@
 @keyframes room-calendar-in {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+.roomCalendar.isClosing {
+  animation: room-calendar-out 180ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+@keyframes room-calendar-out {
+  to { opacity: 0; transform: translateY(-6px); }
 }
 
 .roomCalendar > header {
