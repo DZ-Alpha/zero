@@ -82,7 +82,17 @@ def build_retriever() -> Retriever:
 
     from app.rag.ingest.cohere_embedder import CohereEmbedder
     from app.rag.retriever import PgvectorRetriever
-    engine = create_async_engine(settings.database_url)
+    # 이 Postgres 인스턴스는 다른 백엔드 서비스들과 공유한다 - 기본 풀 크기로
+    # 여러 서비스가 동시에 접속하면 max_connections를 넘기기 쉽다
+    # (2026-07-31 TooManyConnectionsError 재현). 접속 상한을 보수적으로 고정.
+    engine = create_async_engine(
+        settings.database_url,
+        pool_size=5,
+        max_overflow=3,
+        pool_timeout=10,
+        pool_recycle=1800,
+        pool_pre_ping=True,
+    )
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     embedder = CohereEmbedder(region=settings.embed_region)
     return PgvectorRetriever(
