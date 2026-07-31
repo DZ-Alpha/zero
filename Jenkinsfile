@@ -24,26 +24,22 @@ pipeline {
                     // 실제 바뀐 서비스"만 처리한다(여러 push가 한 빌드에 묶여도 그 범위는 다 봄).
                     def prev = env.GIT_PREVIOUS_COMMIT
                     def changed
-                    def eventPipelineChanged = false
 
                     if (!prev) {
                         echo "직전 빌드 커밋 없음(첫 빌드) — 전체 빌드"
                         changed = all
-                        eventPipelineChanged = true
                     } else {
                         def prevExists = sh(script: "git cat-file -e ${prev}^{commit} 2>/dev/null && echo yes || echo no",
                                             returnStdout: true).trim()
                         if (prevExists != 'yes') {
                             echo "이전 커밋(${prev})이 히스토리에 없음 — 안전하게 전체 빌드"
                             changed = all
-                            eventPipelineChanged = true
                         } else {
                             def status = sh(script: "git diff --name-only ${prev} HEAD > /tmp/diff.txt; echo \$?",
                                             returnStdout: true).trim()
                             if (status != '0') {
                                 echo "git diff 실패(exit ${status}) — 안전하게 전체 빌드"
                                 changed = all
-                                eventPipelineChanged = true
                             } else {
                                 def raw = readFile('/tmp/diff.txt').trim()
                                 def rawFiles = raw ? raw.split('\n') : []
@@ -58,28 +54,20 @@ pipeline {
                                 def skipped = rawFiles.findAll { isDoc(it) }
                                 if (skipped) { echo "문서·비코드 변경 무시: ${skipped.join(', ')}" }
                                 changed = all.findAll { svc -> files.any { it.startsWith("backend/${svc}/") } }
-                                // event-pipeline은 자기 폴더가 바뀔 때만 빌드한다. Jenkinsfile만
-                                // 바꿔도 딸려오면(옛 '|| Jenkinsfile' 조건) event-pipeline CVE 등이
-                                // 무관한 백엔드 빌드까지 막았다 → 트리거를 폴더 변경으로 한정.
-                                eventPipelineChanged = files.any {
-                                    it.startsWith('event-pipeline/')
-                                }
                             }
                         }
                     }
 
                     env.CHANGED = changed.join(' ')
-                    env.EVENT_PIPELINE_CHANGED = eventPipelineChanged ? 'true' : 'false'
                     echo "빌드 대상: ${env.CHANGED ?: '(없음 — 서비스 변경 없음)'}"
-                    echo "event-pipeline 빌드: ${env.EVENT_PIPELINE_CHANGED}"
-                    // 이 job 소관(백엔드/event-pipeline) 변경이 하나도 없으면 = 프론트만 바뀐 커밋.
+                    // 이 job 소관(백엔드 서비스) 변경이 하나도 없으면 = 다른 커밋에 딸려 뜬 빌드.
                     // Poll SCM은 경로 필터가 없어 job은 뜨지만, 여기서 NOT_BUILT로 조용히 끝내고
                     // Slack 알림도 스킵한다(post에서 NOOP 플래그 확인). 빌드 correctness는 이미
                     // when 가드로 보장됨 — 이건 노이즈 제거용 표시일 뿐(변경감지 로직은 그대로).
-                    if (!env.CHANGED?.trim() && env.EVENT_PIPELINE_CHANGED != 'true') {
+                    if (!env.CHANGED?.trim()) {
                         env.PIPELINE_NOOP = 'true'
                         currentBuild.result = 'NOT_BUILT'
-                        echo "백엔드/event-pipeline 변경 없음 — NOT_BUILT로 종료(알림 스킵)"
+                        echo "백엔드 변경 없음 — NOT_BUILT로 종료(알림 스킵)"
                     }
                 }
             }
@@ -176,129 +164,6 @@ pipeline {
                     env.FAILED_SVCS = failedSvcs.join(', ')
                     echo "빌드 성공(승격 대상): ${okSvcs.join(', ') ?: '(없음)'}"
                     if (failedSvcs) { echo "빌드 실패(승격 제외): ${failedSvcs.join(', ')}" }
-                }
-            }
-        }
-
-        stage('Build Event Pipeline') {
-            when { expression { env.EVENT_PIPELINE_CHANGED == 'true' } }
-            steps {
-                script {
-                  // event-pipeline 격리: 이 스테이지가 실패해도 뒤 스테이지(백엔드 Wait Staging&
-                  // active scan 게이트)로 넘어가게 catchError로 감싼다. event-pipeline 실패는
-                  // event-pipeline 배포만 막고, 백엔드 서비스 승격은 막지 않는다(독립).
-                  catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: 'event-pipeline 빌드 실패') {
-                    def scannerHome = tool 'sonar-scanner'
-                    withSonarQubeEnv('sonarqube') {
-                        sh '''
-                            "''' + scannerHome + '''/bin/sonar-scanner" \
-                                -Dsonar.projectKey=zero-event-pipeline \
-                                -Dsonar.projectName=zero-event-pipeline \
-                                -Dsonar.sources=event-pipeline/app \
-                                -Dsonar.tests=event-pipeline/tests
-                        '''
-                    }
-                    // 품질 게이트: abortPipeline:false로 결과만 받아, ERROR면 이 스테이지만 실패.
-                    def qg
-                    timeout(time: 5, unit: 'MINUTES') {
-                        qg = waitForQualityGate abortPipeline: false
-                    }
-                    if (qg.status != 'OK') {
-                        error("event-pipeline SonarQube 품질 게이트 실패(${qg.status})")
-                    }
-
-                    sh '''
-                        set -e
-                        SHA=$(git rev-parse --short HEAD)
-                        LOCAL_IMAGE=event-pipeline-local:${SHA}
-                        docker build -t ${LOCAL_IMAGE} event-pipeline
-                        docker run --rm \
-                            -v "$WORKSPACE/event-pipeline/tests:/app/tests:ro" \
-                            ${LOCAL_IMAGE} python -m unittest discover -s tests -v
-                        trivy image --severity CRITICAL,HIGH --exit-code 1 \
-                            --ignorefile .trivyignore --scanners vuln --quiet ${LOCAL_IMAGE}
-                    '''
-
-                    withCredentials([usernamePassword(credentialsId: 'harbor-cred',
-                            usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_TOKEN')]) {
-                        sh '''
-                            set -e
-                            SHA=$(git rev-parse --short HEAD)
-                            LOCAL_IMAGE=event-pipeline-local:${SHA}
-                            IMAGE=${REGISTRY}/dangdang/event-pipeline
-                            echo "${HARBOR_TOKEN}" | docker login ${REGISTRY} \
-                                -u "${HARBOR_USER}" --password-stdin
-                            docker tag ${LOCAL_IMAGE} ${IMAGE}:${SHA}
-                            docker push ${IMAGE}:${SHA}
-                            docker logout ${REGISTRY}
-                            echo "push 완료: ${IMAGE}:${SHA}"
-                        '''
-                    }
-
-                    withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
-                            usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
-                        sh '''
-                            set -e
-                            SHA=$(git rev-parse --short HEAD)
-                            WORK=$(mktemp -d)
-                            git clone --depth 1 \
-                                "https://${GIT_USER}:${GIT_PAT}@github.com/DZ-Alpha/zero-manifests.git" "$WORK"
-                            cd "$WORK"
-                            git config user.name "jenkins-ci"
-                            git config user.email "ci@hizero.local"
-                            sed -i -E \
-                                "s#harbor\\.hizero\\.local/dangdang/event-pipeline:[^[:space:]]+#harbor.hizero.local/dangdang/event-pipeline:${SHA}#g" \
-                                pipeline/production/event-pipeline.yaml
-                            sed -i -E \
-                                -e 's#^  PROCESSOR_VERSION:.*#  PROCESSOR_VERSION: gemini-3.5-flash-lite-v2#' \
-                                -e 's#^  GEMINI_MODEL:.*#  GEMINI_MODEL: gemini-3.5-flash-lite#' \
-                                -e 's#^  VISION_TIMEOUT_SECONDS:.*#  VISION_TIMEOUT_SECONDS: "15"#' \
-                                pipeline/production/base.yaml
-                            if grep -q '^  GEMINI_THINKING_LEVEL:' pipeline/production/base.yaml; then
-                                sed -i -E \
-                                    's#^  GEMINI_THINKING_LEVEL:.*#  GEMINI_THINKING_LEVEL: minimal#' \
-                                    pipeline/production/base.yaml
-                            else
-                                sed -i \
-                                    '/^  GEMINI_MODEL:/a\\  GEMINI_THINKING_LEVEL: minimal' \
-                                    pipeline/production/base.yaml
-                            fi
-                            if git diff --quiet; then
-                                echo "event-pipeline manifest 변경 없음 (${SHA}) — skip"
-                            else
-                                git add pipeline/production/base.yaml pipeline/production/event-pipeline.yaml
-                                git commit -m "chore(pipeline): deploy event-pipeline ${SHA} [skip ci]"
-                                git push origin main
-                                echo "event-pipeline manifest 갱신: tag=${SHA}"
-                            fi
-                            cd /
-                            rm -rf "$WORK"
-                        '''
-                    }
-                  }  // catchError (event-pipeline 격리)
-                }
-            }
-        }
-
-        stage('Wait Event Pipeline') {
-            when { expression { env.EVENT_PIPELINE_CHANGED == 'true' } }
-            steps {
-                script {
-                  // 격리: event-pipeline staging wait이 실패(타임아웃 등)해도 뒤 백엔드 승격
-                  // 스테이지로 넘어가게 catchError. event-pipeline 배포 실패가 백엔드를 막지 않음.
-                  catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: 'event-pipeline wait 실패') {
-                    withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
-                        sh '''
-                            argocd app get dang-pipeline \
-                                --server 192.168.0.68:30080 \
-                                --auth-token "$ARGOCD_TOKEN" --plaintext --refresh >/dev/null
-                            argocd app wait dang-pipeline \
-                                --server 192.168.0.68:30080 \
-                                --auth-token "$ARGOCD_TOKEN" --plaintext \
-                                --sync --health --timeout 300
-                        '''
-                    }
-                  }  // catchError (event-pipeline wait 격리)
                 }
             }
         }

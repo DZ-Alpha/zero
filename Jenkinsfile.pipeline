@@ -1,0 +1,198 @@
+pipeline {
+    agent any
+    environment {
+        REGISTRY = 'harbor.hizero.local'
+    }
+    stages {
+        // Checkout stage 없음 — Pipeline from SCM이 zero repo 자동 체크아웃(GIT_PREVIOUS_COMMIT 채움).
+
+        stage('Detect Changes') {
+            steps {
+                script {
+                    // event-pipeline 전용 변경감지. 백엔드 Jenkinsfile과 동일한 GIT_PREVIOUS_COMMIT 기준·
+                    // "확신 없으면 빌드" 폴백. 감지 대상은 event-pipeline/ 폴더 하나.
+                    def prev = env.GIT_PREVIOUS_COMMIT
+                    def changed = false
+                    if (!prev) {
+                        echo "직전 빌드 커밋 없음(첫 빌드) — 빌드"
+                        changed = true
+                    } else {
+                        def prevExists = sh(script: "git cat-file -e ${prev}^{commit} 2>/dev/null && echo yes || echo no",
+                                            returnStdout: true).trim()
+                        if (prevExists != 'yes') {
+                            echo "이전 커밋(${prev})이 히스토리에 없음 — 안전하게 빌드"
+                            changed = true
+                        } else {
+                            def status = sh(script: "git diff --name-only ${prev} HEAD > /tmp/pldiff.txt; echo \$?",
+                                            returnStdout: true).trim()
+                            if (status != '0') {
+                                echo "git diff 실패(exit ${status}) — 안전하게 빌드"
+                                changed = true
+                            } else {
+                                def raw = readFile('/tmp/pldiff.txt').trim()
+                                def rawFiles = raw ? raw.split('\n') : []
+                                def isDoc = { String f ->
+                                    def lower = f.toLowerCase()
+                                    lower.endsWith('.md') || lower.endsWith('.txt') ||
+                                    lower.endsWith('license') || lower.endsWith('.gitignore')
+                                }
+                                def files = rawFiles.findAll { !isDoc(it) }
+                                def skipped = rawFiles.findAll { isDoc(it) }
+                                if (skipped) { echo "문서·비코드 변경 무시: ${skipped.join(', ')}" }
+                                changed = files.any { it.startsWith('event-pipeline/') }
+                            }
+                        }
+                    }
+                    env.EVENT_PIPELINE_CHANGED = changed ? 'true' : 'false'
+                    echo "event-pipeline 빌드: ${env.EVENT_PIPELINE_CHANGED}"
+                    // 소관(event-pipeline/) 변경 없으면 = 다른 커밋에 딸려 뜬 빌드. NOT_BUILT로 조용히
+                    // 종료 + Slack 스킵(Poll SCM은 경로 필터 없어 job은 뜸).
+                    if (env.EVENT_PIPELINE_CHANGED != 'true') {
+                        env.PIPELINE_NOOP = 'true'
+                        currentBuild.result = 'NOT_BUILT'
+                        echo "event-pipeline 변경 없음 — NOT_BUILT로 종료(알림 스킵)"
+                    }
+                }
+            }
+        }
+
+        stage('Build Event Pipeline') {
+            when { expression { env.EVENT_PIPELINE_CHANGED == 'true' } }
+            steps {
+                script {
+                    def scannerHome = tool 'sonar-scanner'
+                    withSonarQubeEnv('sonarqube') {
+                        sh '''
+                            "''' + scannerHome + '''/bin/sonar-scanner" \
+                                -Dsonar.projectKey=zero-event-pipeline \
+                                -Dsonar.projectName=zero-event-pipeline \
+                                -Dsonar.sources=event-pipeline/app \
+                                -Dsonar.tests=event-pipeline/tests
+                        '''
+                    }
+                    def qg
+                    timeout(time: 5, unit: 'MINUTES') {
+                        qg = waitForQualityGate abortPipeline: false
+                    }
+                    if (qg.status != 'OK') {
+                        error("event-pipeline SonarQube 품질 게이트 실패(${qg.status})")
+                    }
+
+                    sh '''
+                        set -e
+                        SHA=$(git rev-parse --short HEAD)
+                        LOCAL_IMAGE=event-pipeline-local:${SHA}
+                        docker build -t ${LOCAL_IMAGE} event-pipeline
+                        docker run --rm \
+                            -v "$WORKSPACE/event-pipeline/tests:/app/tests:ro" \
+                            ${LOCAL_IMAGE} python -m unittest discover -s tests -v
+                        trivy image --severity CRITICAL,HIGH --exit-code 1 \
+                            --ignorefile .trivyignore --scanners vuln --quiet ${LOCAL_IMAGE}
+                    '''
+
+                    withCredentials([usernamePassword(credentialsId: 'harbor-cred',
+                            usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_TOKEN')]) {
+                        sh '''
+                            set -e
+                            SHA=$(git rev-parse --short HEAD)
+                            LOCAL_IMAGE=event-pipeline-local:${SHA}
+                            IMAGE=${REGISTRY}/dangdang/event-pipeline
+                            echo "${HARBOR_TOKEN}" | docker login ${REGISTRY} \
+                                -u "${HARBOR_USER}" --password-stdin
+                            docker tag ${LOCAL_IMAGE} ${IMAGE}:${SHA}
+                            docker push ${IMAGE}:${SHA}
+                            docker logout ${REGISTRY}
+                            echo "push 완료: ${IMAGE}:${SHA}"
+                        '''
+                    }
+
+                    withCredentials([usernamePassword(credentialsId: 'manifest-git-pat',
+                            usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
+                        sh '''
+                            set -e
+                            SHA=$(git rev-parse --short HEAD)
+                            WORK=$(mktemp -d)
+                            git clone --depth 1 \
+                                "https://${GIT_USER}:${GIT_PAT}@github.com/DZ-Alpha/zero-manifests.git" "$WORK"
+                            cd "$WORK"
+                            git config user.name "jenkins-ci"
+                            git config user.email "ci@hizero.local"
+                            sed -i -E \
+                                "s#harbor\\.hizero\\.local/dangdang/event-pipeline:[^[:space:]]+#harbor.hizero.local/dangdang/event-pipeline:${SHA}#g" \
+                                pipeline/production/event-pipeline.yaml
+                            sed -i -E \
+                                -e 's#^  PROCESSOR_VERSION:.*#  PROCESSOR_VERSION: gemini-3.5-flash-lite-v2#' \
+                                -e 's#^  GEMINI_MODEL:.*#  GEMINI_MODEL: gemini-3.5-flash-lite#' \
+                                -e 's#^  VISION_TIMEOUT_SECONDS:.*#  VISION_TIMEOUT_SECONDS: "15"#' \
+                                pipeline/production/base.yaml
+                            if grep -q '^  GEMINI_THINKING_LEVEL:' pipeline/production/base.yaml; then
+                                sed -i -E \
+                                    's#^  GEMINI_THINKING_LEVEL:.*#  GEMINI_THINKING_LEVEL: minimal#' \
+                                    pipeline/production/base.yaml
+                            else
+                                sed -i \
+                                    '/^  GEMINI_MODEL:/a\\  GEMINI_THINKING_LEVEL: minimal' \
+                                    pipeline/production/base.yaml
+                            fi
+                            if git diff --quiet; then
+                                echo "event-pipeline manifest 변경 없음 (${SHA}) — skip"
+                            else
+                                git add pipeline/production/base.yaml pipeline/production/event-pipeline.yaml
+                                git commit -m "chore(pipeline): deploy event-pipeline ${SHA} [skip ci]"
+                                git push origin main
+                                echo "event-pipeline manifest 갱신: tag=${SHA}"
+                            fi
+                            cd /
+                            rm -rf "$WORK"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Wait Event Pipeline') {
+            when { expression { env.EVENT_PIPELINE_CHANGED == 'true' } }
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
+                        sh '''
+                            argocd app get dang-pipeline \
+                                --server 192.168.0.68:30080 \
+                                --auth-token "$ARGOCD_TOKEN" --plaintext --refresh >/dev/null
+                            argocd app wait dang-pipeline \
+                                --server 192.168.0.68:30080 \
+                                --auth-token "$ARGOCD_TOKEN" --plaintext \
+                                --sync --health --timeout 300
+                        '''
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            // Slack 배포 알림. NOOP(event-pipeline 변경 없이 딸려 뜬 빌드)이면 스킵.
+            script {
+                if (env.PIPELINE_NOOP == 'true') {
+                    echo 'Slack 알림 스킵: event-pipeline 변경 없는 NOOP 빌드'
+                    return
+                }
+                def result = currentBuild.result ?: 'SUCCESS'
+                def color = (result == 'SUCCESS') ? 'good' : (result == 'UNSTABLE') ? 'warning' : 'danger'
+                def emoji = (result == 'SUCCESS') ? '✅' : (result == 'UNSTABLE') ? '⚠️' : '❌'
+                def text = "${emoji} event-pipeline 파이프라인 ${result} (#${env.BUILD_NUMBER})\\n${env.BUILD_URL}"
+                try {
+                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_HOOK')]) {
+                        sh """
+                            curl -s -X POST -H 'Content-type: application/json' \
+                              --data '{"attachments":[{"color":"${color}","text":"${text}"}]}' \
+                              "\$SLACK_HOOK" || echo 'Slack 알림 전송 실패(무시)'
+                        """
+                    }
+                } catch (err) {
+                    echo "Slack 알림 스킵: credential 'slack-webhook' 없음 또는 오류(${err.message})"
+                }
+            }
+        }
+    }
+}
