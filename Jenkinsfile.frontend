@@ -160,6 +160,9 @@ pipeline {
                             // ★ DAST 게이트: staging 뜬 것에 ZAP baseline. FAIL(High)이면 prod 승격 차단.
                             def PORT = (fe == 'frontend') ? '30000' : '30001'
                             sh """
+                                # 이전 빌드 잔재 제거(zap-out은 workspace라 빌드 간 남음 → 옛 report/log가
+                                # 이번 아티팩트로 섞여 진단을 오도한 사례. 매 빌드 깨끗이 시작).
+                                rm -rf \$WORKSPACE/zap-out
                                 mkdir -p \$WORKSPACE/zap-out && chmod 777 \$WORKSPACE/zap-out
                                 # NodePort는 모든 노드에 열리므로, 살아있는(도달되는) 첫 노드를 골라 스캔.
                                 # 노드 1개 장애 시 다음 노드로 폴백. 전부 불통이면 서비스 자체 장애로 보고 실패.
@@ -179,7 +182,17 @@ pipeline {
                                 #   특정 요청(SSE 등)에 물려 무한 hang된 사례(2026-07-30, 30분+) 방지.
                                 #   timeout 초과 시 exit 124 → High(1) 아니므로 통과(그때까지 결과 기준,
                                 #   hang이 배포를 막지 않게 함). 차단은 오직 High(1)일 때만.
-                                timeout 360 docker run --rm -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
+                                # ★ 좀비 방지(2026-07-31): timeout은 docker CLI만 죽이고 dockerd의
+                                #   ZAP 컨테이너는 살아남아(--rm도 CLI 정상종료 때만 작동) 14분+ 좀비로
+                                #   생존한 사례 실증. --name으로 이름 붙이고 trap EXIT으로 shell이
+                                #   어떤 경로(124/set -e/abort)로 끝나도 반드시 kill.
+                                # ★ 진단성(2026-07-31): 지난 hang 때 zap-${fe}.log가 0 B였음 — docker run
+                                #   stdout 리다이렉트(>)는 kill 시 통째 소실돼 hang 원인을 못 잡았음.
+                                #   trap에서 kill '전에' docker logs로 컨테이너 내부 stdout을 별도 파일
+                                #   (zap-${fe}.container.log)로 건져, 다음 hang 원인을 반드시 남긴다.
+                                ZAP_NAME=zap-base-${fe}-${BUILD_NUMBER}
+                                trap 'if [ "\$(docker inspect -f "{{.State.Running}}" "\$ZAP_NAME" 2>/dev/null)" = "true" ]; then docker logs "\$ZAP_NAME" > \$WORKSPACE/zap-out/zap-${fe}.container.log 2>&1 || true; docker kill "\$ZAP_NAME" 2>/dev/null || true; fi' EXIT
+                                timeout 360 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                     ghcr.io/zaproxy/zaproxy:stable \
                                     zap-baseline.py -t http://\$TARGET_IP:${PORT} -m 3 \
                                     -r zap-${fe}-report.html > \$WORKSPACE/zap-out/zap-${fe}.log 2>&1 || ZAP_RC=\$?
