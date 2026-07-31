@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { SafeImage } from "@/components/SafeImage";
 import { FavoriteIconButton } from "@/components/FavoriteButton";
 import { products as mockProducts } from "@/data/catalog";
@@ -25,6 +25,8 @@ export function ProductFeed() {
   const [sweetener, setSweetener] = useState("전체");
   const [sort, setSort] = useState("추천순");
   const [personalOnly, setPersonalOnly] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterPanelId = useId();
   const [suggestions, setSuggestions] = useState<Array<{ id: string; name: string }>>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -123,10 +125,25 @@ export function ProductFeed() {
 
       <section className="product-results-band">
         <div className="product-filter-section wrap">
-          <div className="filter-row"><span>카테고리</span><div>{categories.map((item) => <button type="button" className={category === item ? "is-active" : ""} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div></div>
-          <div className="filter-row"><span>영양 기준</span><div>{["전체", "당류 0g", "당류 3g 이하", "100kcal 이하"].map((item) => <button type="button" className={sugarFilter === item ? "is-active" : ""} onClick={() => setSugarFilter(item)} key={item}>{item}</button>)}</div></div>
-          <div className="filter-row"><span>감미료</span><div>{sweeteners.map((item) => <button type="button" className={sweetener === item ? "is-active" : ""} onClick={() => setSweetener(item)} key={item}>{item}</button>)}</div></div>
-          {activeFilters.length > 0 && <button type="button" className="filter-reset-compact" onClick={resetFilters}>조건 지우기</button>}
+          <button
+            type="button"
+            className="filter-toggle"
+            aria-expanded={filtersOpen}
+            aria-controls={filterPanelId}
+            onClick={() => setFiltersOpen((current) => !current)}
+          >
+            <span>필터</span>
+            {activeFilters.length > 0 && <b>{activeFilters.length}</b>}
+            <i aria-hidden="true" data-open={filtersOpen}>⌄</i>
+          </button>
+          <div className={`filter-collapse ${filtersOpen ? "is-open" : ""}`} id={filterPanelId}>
+            <div>
+              <div className="filter-row"><span>카테고리</span><div>{categories.map((item) => <button type="button" className={category === item ? "is-active" : ""} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div></div>
+              <div className="filter-row"><span>영양 기준</span><div>{["전체", "당류 0g", "당류 3g 이하", "100kcal 이하"].map((item) => <button type="button" className={sugarFilter === item ? "is-active" : ""} onClick={() => setSugarFilter(item)} key={item}>{item}</button>)}</div></div>
+              <div className="filter-row"><span>감미료</span><div>{sweeteners.map((item) => <button type="button" className={sweetener === item ? "is-active" : ""} onClick={() => setSweetener(item)} key={item}>{item}</button>)}</div></div>
+              {activeFilters.length > 0 && <button type="button" className="filter-reset-compact" onClick={resetFilters}>조건 지우기</button>}
+            </div>
+          </div>
         </div>
 
         <section className="catalog-list wrap">
