@@ -128,34 +128,43 @@ def avatar_text(display_name: str) -> str:
 async def get_member_invite_enabled(db: AsyncSession, room_id: uuid.UUID) -> bool:
     """member_invite_enabled는 Room에 매핑 안 된 컬럼이라(app/models/room.py
     주석 참고) 여기서 raw SQL로만 읽는다. 배포 전 ALTER TABLE을 아직 안
-    돌렸으면(컬럼 없음) DBAPIError를 잡아 "꺼짐"으로 폴백한다 - 실패한 문장
-    뒤엔 세션이 아무 쓰기도 안 했어도 트랜잭션이 aborted 상태가 되므로,
-    이후 같은 세션의 쿼리가 계속 실패하지 않도록 rollback이 필수다."""
+    돌렸으면(컬럼 없음) DBAPIError를 잡아 "꺼짐"으로 폴백한다.
+
+    2026-07-31 프로덕션 장애 - 원래 여기서 실패 시 db.rollback()(세션 전체
+    롤백)을 불렀는데, 그러면 세션에 이미 로드돼있던 다른 ORM 객체(호출부의
+    room/membership 등)까지 전부 expire된다. 이 함수 호출 직후 그 객체들의
+    속성(room.id 등)에 동기 접근하면 만료된 속성을 다시 로드하려다
+    MissingGreenlet으로 죽는다(/rooms 홈이 도는 방마다 이 함수를 호출하므로
+    방 1개만 걸려도 전체 500). SAVEPOINT(nested transaction)로 격리해서
+    이 문장의 실패가 세션 나머지에 번지지 않게 한다."""
     try:
-        result = await db.execute(
-            text("SELECT member_invite_enabled FROM community.rooms WHERE id = :room_id"),
-            {"room_id": room_id},
-        )
-        value = result.scalar_one_or_none()
+        async with db.begin_nested():
+            result = await db.execute(
+                text("SELECT member_invite_enabled FROM community.rooms WHERE id = :room_id"),
+                {"room_id": room_id},
+            )
+            value = result.scalar_one_or_none()
         return bool(value) if value is not None else False
     except DBAPIError:
-        await db.rollback()
         return False
 
 
 async def set_member_invite_enabled(db: AsyncSession, room_id: uuid.UUID, value: bool) -> bool:
     """반환값은 실제로 반영됐는지 여부. 컬럼이 아직 없으면(배포 전 ALTER TABLE
     미실행) False를 반환하고 아무것도 바꾸지 않는다 - 호출부가 조용히
-    무시하거나 안내만 하면 된다(요청: "일단은 옵션을 비활성화 처리")."""
+    무시하거나 안내만 하면 된다(요청: "일단은 옵션을 비활성화 처리").
+    get_member_invite_enabled와 같은 이유로 SAVEPOINT로 격리 - 실패해도
+    세션 전체를 롤백하지 않는다(호출부 update_room이 이미 커밋한 앞선
+    변경까지 되돌아가면 안 됨)."""
     try:
-        await db.execute(
-            text("UPDATE community.rooms SET member_invite_enabled = :value WHERE id = :room_id"),
-            {"value": value, "room_id": room_id},
-        )
+        async with db.begin_nested():
+            await db.execute(
+                text("UPDATE community.rooms SET member_invite_enabled = :value WHERE id = :room_id"),
+                {"value": value, "room_id": room_id},
+            )
         await db.commit()
         return True
     except DBAPIError:
-        await db.rollback()
         return False
 
 
