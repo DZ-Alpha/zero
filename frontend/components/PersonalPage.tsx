@@ -6,6 +6,7 @@ import { OAUTH_PROVIDERS } from "@/components/OAuthButtons";
 import { ConfirmDialog } from "@/components/SystemFeedback";
 import { ALLERGEN_OPTIONS } from "@/data/taxonomy";
 import { useAuthSession } from "@/hooks/useAuthSession";
+import { useExitPresence } from "@/hooks/useDelayedClose";
 import { AUTH_CHANGE_EVENT, AUTH_KEY, LEGACY_AUTH_KEY } from "@/hooks/useAuthSession";
 import { saveUserSettingsToServer, UserGoals, UserProfile, useUserSettings } from "@/hooks/useUserSettings";
 import { ApiError, clearAccessToken } from "@/lib/api/client";
@@ -56,6 +57,7 @@ export function PersonalPage() {
   const { ready: authReady, signedIn, token } = useAuthSession();
   const { ready: settingsReady, profile, goals, updateProfile, updateGoals } = useUserSettings();
   const [editor, setEditor] = useState<Editor | null>(null);
+  const { rendered: editorView, closing: editorClosing } = useExitPresence(editor);
   const [profileDraft, setProfileDraft] = useState<UserProfile>({});
   const [goalsDraft, setGoalsDraft] = useState<UserGoals>(goals);
   const [selectionDraft, setSelectionDraft] = useState<string[]>([]);
@@ -254,12 +256,12 @@ export function PersonalPage() {
       <section className="profile-links wrap"><Link href="/diet"><span>내 월간 리포트</span><b>캘린더에서 보기 →</b></Link><Link href="/recipes"><span>저장한 레시피와 저당픽</span><b>즐겨찾기 보기 →</b></Link></section>
       <section className="account-danger-zone wrap"><div><h2>계정 관리</h2><p>탈퇴하면 연결된 계정과 저장한 사용자 정보를 되돌릴 수 없어요.</p></div><button type="button" onClick={() => setConfirmingWithdrawal(true)}>회원 탈퇴</button></section>
 
-      {editor && (
-        <div className="settings-editor-backdrop" role="presentation" onMouseDown={() => setEditor(null)}>
-          <section className="settings-editor" role="dialog" aria-modal="true" aria-label="마이페이지 설정 바꾸기" onMouseDown={(event) => event.stopPropagation()}>
-            <header><div><p className="eyebrow">마이페이지 설정</p><h2>{editor === "profile" ? "기본 정보 바꾸기" : editor === "goals" ? "하루 목표 바꾸기" : editor === "interests" ? "관심 기준 바꾸기" : editor === "allergens" ? "주의할 성분 바꾸기" : "알림 바꾸기"}</h2></div><button type="button" onClick={() => setEditor(null)} aria-label="닫기">×</button></header>
+      {editorView && (
+        <div className={`settings-editor-backdrop${editorClosing ? " is-closing" : ""}`} role="presentation" onMouseDown={() => setEditor(null)}>
+          <section className={`settings-editor${editorClosing ? " is-closing" : ""}`} role="dialog" aria-modal="true" aria-label="마이페이지 설정 바꾸기" onMouseDown={(event) => event.stopPropagation()}>
+            <header><div><p className="eyebrow">마이페이지 설정</p><h2>{editorView === "profile" ? "기본 정보 바꾸기" : editorView === "goals" ? "하루 목표 바꾸기" : editorView === "interests" ? "관심 기준 바꾸기" : editorView === "allergens" ? "주의할 성분 바꾸기" : "알림 바꾸기"}</h2></div><button type="button" onClick={() => setEditor(null)} aria-label="닫기">×</button></header>
 
-            {editor === "profile" && (
+            {editorView === "profile" && (
               <div className="settings-editor-fields">
                 <label><span>이름 또는 닉네임</span><input value={profileDraft.name ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, name: event.target.value }))} /><small>마이페이지에서 언제든 바꿀 수 있어요.</small></label>
                 <label className="full"><span>이메일</span><input type="email" value={profileDraft.email ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, email: event.target.value }))} /><small>중요한 안내를 받을 이메일이에요.</small></label>
@@ -271,7 +273,7 @@ export function PersonalPage() {
               </div>
             )}
 
-            {editor === "goals" && (
+            {editorView === "goals" && (
               <div className="settings-goal-editor">
                 <label><span>하루 당류</span><div><input type="number" min="1" max="150" value={goalsDraft.sugar} onChange={(event) => setGoalsDraft((current) => ({ ...current, sugar: Number(event.target.value) }))} /><b>g</b></div></label>
                 <label><span>하루 칼로리</span><div><input type="number" min="500" max="5000" step="10" value={goalsDraft.calories} onChange={(event) => setGoalsDraft((current) => ({ ...current, calories: Number(event.target.value) }))} /><b>kcal</b></div></label>
@@ -279,13 +281,13 @@ export function PersonalPage() {
               </div>
             )}
 
-            {(editor === "interests" || editor === "allergens") && (
-              <div className={`settings-choice-grid ${editor === "allergens" ? "is-warning" : ""}`}>
-                {(editor === "interests" ? interestOptions : allergenOptions).map((item) => <button type="button" className={selectionDraft.includes(item) ? "is-selected" : ""} onClick={() => toggleSelection(item)} key={item}>{item}</button>)}
+            {(editorView === "interests" || editorView === "allergens") && (
+              <div className={`settings-choice-grid ${editorView === "allergens" ? "is-warning" : ""}`}>
+                {(editorView === "interests" ? interestOptions : allergenOptions).map((item) => <button type="button" className={selectionDraft.includes(item) ? "is-selected" : ""} onClick={() => toggleSelection(item)} key={item}>{item}</button>)}
               </div>
             )}
 
-            {editor === "notifications" && (
+            {editorView === "notifications" && (
               <div className="settings-notification-list">
                 <label><span><b>관심 카테고리 신제품</b><small>새 제품이 등록되면 알려드려요.</small></span><input type="checkbox" checked={notificationDraft.newProducts} onChange={(event) => setNotificationDraft((current) => ({ ...current, newProducts: event.target.checked }))} /></label>
                 <label><span><b>주간 식단 리포트</b><small>일주일의 기록을 일요일에 정리해드려요.</small></span><input type="checkbox" checked={notificationDraft.weeklyReport} onChange={(event) => setNotificationDraft((current) => ({ ...current, weeklyReport: event.target.checked }))} /></label>

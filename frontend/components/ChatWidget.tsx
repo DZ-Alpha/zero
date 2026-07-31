@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { ChatPanel } from "@/components/ChatPanel";
+import { useExitPresence } from "@/hooks/useDelayedClose";
 
 // 2026-07-31 - 우하단 고정 위치를 롤백하면서, 대신 유저가 겹치는 화면에서
 // 직접 아이콘을 끌어다 피할 수 있게 자유 드래그를 추가한다. 위치는 DB가
@@ -40,6 +41,7 @@ function clampPos(x: number, y: number, width: number, height: number): Pos {
 
 export function ChatWidget() {
   const [open, setOpen] = useState(false);
+  const { rendered: popupView, closing: popupClosing } = useExitPresence(open ? true : null);
   const [canDrag, setCanDrag] = useState(false);
   const [dragPos, setDragPos] = useState<Pos | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -160,8 +162,8 @@ export function ChatWidget() {
 
   return (
     <>
-      {open && (
-        <div className="chat-widget-popup" style={popupStyle} role="dialog" aria-label="당당 상담">
+      {popupView && (
+        <div className={`chat-widget-popup${popupClosing ? " is-closing" : ""}`} style={popupStyle} role="dialog" aria-label="당당 상담">
           <button className="chat-widget-close" onClick={() => setOpen(false)} aria-label="상담 닫기">✕</button>
           <ChatPanel />
         </div>
