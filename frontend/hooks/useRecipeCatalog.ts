@@ -19,12 +19,18 @@ function normalizeSteps(value: unknown) {
   });
 }
 
+// service.recipes 테이블에 category 컬럼이 없어(데이터팀 스키마 추가 필요) 이름
+// 키워드로 추정한다 - 카테고리가 너무 적어 대부분이 "한 끼"로 몰린다는 리포트
+// (2026-07-31)에 맞춰 패턴을 세분화했다. 판정 순서가 중요 - 더 구체적인
+// 카테고리를 먼저 검사해 애매한 단어(예: "볶음")가 "한 끼" 뒤로 밀리지 않게 한다.
 function inferCategory(name: string): RecipeData["category"] {
-  if (/소스|고추장|드레싱|잼/.test(name)) return "소스";
-  if (/면|국수|파스타/.test(name)) return "면";
-  if (/떡볶이|김밥/.test(name)) return "분식";
-  if (/케이크|쿠키|아이스|디저트|간식/.test(name)) return "간식";
-  if (/무침|볶음|조림|반찬/.test(name)) return "반찬";
+  if (/소스|고추장|드레싱|잼|양념장|다시다|육수|시럽/.test(name)) return "소스";
+  if (/면|국수|파스타|우동|라면|냉면|스파게티/.test(name)) return "면";
+  if (/떡볶이|김밥|순대|튀김|호떡|핫도그|어묵/.test(name)) return "분식";
+  if (/케이크|쿠키|아이스|디저트|간식|빵|머핀|타르트|마카롱|파이|초코|젤리/.test(name)) return "간식";
+  if (/국|찌개|탕|전골|스프|수프|육개장|미역국/.test(name)) return "국·찌개";
+  if (/샐러드|브런치|포케|리소토/.test(name)) return "샐러드";
+  if (/무침|볶음|조림|나물|장아찌|김치|반찬/.test(name)) return "반찬";
   return "한 끼";
 }
 
