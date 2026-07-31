@@ -86,12 +86,16 @@ function toRoomRanking(weeklyRanking: RoomsHomeResponse["weeklyRanking"]): Ranki
 
 function toRankingItems(items: HomeProductItem[], personalized: boolean): RankingItem[] {
   return items.map((item, index) => {
+    // item.id(실제 상품 ID)가 있으면 그걸로 바로 상세 페이지로 보낸다 - 예전엔
+    // 이름으로 로컬 목업 카탈로그를 매칭해야만 상세로 갔고, 실서버 상품 대부분은
+    // 매칭이 안 돼 검색 페이지로만 보내졌다(2026-07-31 리포트 - 상세로 가야 함).
     const catalogItem = products.find((product) => product.title.trim() === item.name.trim());
+    const productKey = item.id ?? catalogItem?.slug;
     return {
       name: item.name,
       meta: [item.brand, personalized ? "관심 기준에 맞춘 추천" : "많이 찾는 저당픽"].filter(Boolean).join(" · "),
       saved: item.rank ?? index + 1,
-      href: catalogItem ? `/product/${catalogItem.slug}` : `/search?query=${encodeURIComponent(item.name)}`,
+      href: productKey ? `/product/${productKey}` : `/search?query=${encodeURIComponent(item.name)}`,
     };
   });
 }
