@@ -8,11 +8,21 @@ import styles from "@/components/rooms/Rooms.module.css";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { ApiError } from "@/lib/api/client";
 import { createRoom as createRoomApi, getRoomsHome } from "@/lib/api/rooms";
-import { CreateRoomResponse, MAX_ROOM_COUNT, RoomsHomeResponse } from "@/lib/rooms/contracts";
+import { CreateRoomResponse, MAX_ROOM_COUNT, RoomsHomeResponse, TeamRankingItem } from "@/lib/rooms/contracts";
 
 const emojiOptions = ["🌿", "🍚", "🥗", "🏃", "🌙"];
 
 const MEAL_LABELS: Record<string, string> = { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" };
+
+// 2026-07-31 요청 - 아직 랭킹에 들어갈 팀(멤버 3명 이상·개설 7일 이상·랭킹
+// 참여 동의)이 없으면 섹션이 통째로 텅 비어 보인다. 실제 데이터가 하나도
+// 없을 때만 이 목업으로 대체하고, 예시 배지로 실데이터가 아님을 표시한다.
+const MOCK_TEAM_RANKING: TeamRankingItem[] = [
+  { id: "mock-1", name: "아침빛 식탁", emoji: "🌅", memberCount: 4, recordRate: 92, averageSugar: 8, rankMovement: 1, isMine: false },
+  { id: "mock-2", name: "저당 챌린저스", emoji: "🥗", memberCount: 5, recordRate: 88, averageSugar: 10, rankMovement: 0, isMine: false },
+  { id: "mock-3", name: "산책하는 사람들", emoji: "🚶", memberCount: 3, recordRate: 81, averageSugar: 12, rankMovement: -1, isMine: false },
+  { id: "mock-4", name: "밤샘 금지단", emoji: "🌙", memberCount: 6, recordRate: 76, averageSugar: 14, rankMovement: 2, isMine: false },
+];
 
 export function RoomsHome() {
   const router = useRouter();
@@ -21,7 +31,9 @@ export function RoomsHome() {
   const [loading, setLoading] = useState(true);
   const myRooms = home?.rooms ?? [];
   const roomActivity = home?.recentActivities ?? [];
-  const teamRanking = home?.weeklyRanking ?? [];
+  const realTeamRanking = home?.weeklyRanking ?? [];
+  const isMockRanking = realTeamRanking.length === 0;
+  const teamRanking = isMockRanking ? MOCK_TEAM_RANKING : realTeamRanking;
   const roomLimitReached = myRooms.length >= MAX_ROOM_COUNT;
   const [showAllRanking, setShowAllRanking] = useState(false);
   const [modal, setModal] = useState<"create" | "join" | null>(null);
@@ -272,7 +284,7 @@ export function RoomsHome() {
               <p className={styles.eyebrow}>이번 주 기록</p>
               <h2 id="team-ranking-title">이번 주 팀 랭킹</h2>
             </div>
-            <p>평균 당류와 기록률만 공개돼요.</p>
+            {isMockRanking ? <span className={styles.rankingPreviewBadge}>예시</span> : <p>평균 당류와 기록률만 공개돼요.</p>}
           </header>
 
           <ol className={styles.rankList}>
