@@ -195,25 +195,27 @@ img{max-width:100%}
 .sub-main{min-height:calc(100vh - 56px)}.sub-hero{padding:58px 0 35px;border-bottom:1px solid var(--line)}.sub-hero h1{margin:0;font-size:35px}.sub-hero p:last-child{color:var(--muted);font-size:12px}.sub-content{padding:35px 0 75px}.chat-panel{max-width:720px;margin:auto;border:1px solid var(--line);border-radius:12px;overflow:hidden}.chat-head{display:flex;align-items:center;gap:10px;padding:15px;border-bottom:1px solid var(--line)}.chat-head>div{display:flex;flex-direction:column}.chat-head small{font-size:11px;color:var(--muted)}.chat-log{min-height:330px;padding:20px;background:var(--soft)}.chat-log p{width:max-content;max-width:75%;padding:10px 13px;border-radius:14px;background:#fff;font-size:12px;line-height:1.6;white-space:pre-wrap}.chat-log .question{margin-left:auto;background:var(--lime)}.chat-log-image{display:block;max-width:100%;border-radius:10px;margin-bottom:6px}.chat-empty-hint{width:100%;max-width:none;background:transparent;text-align:center;color:var(--muted);padding:40px 10px}.chat-compose{display:flex;align-items:center;gap:8px;padding:10px}.chat-compose input{flex:1;min-width:0;border:0;outline:0;padding:10px;background:#fff;color:var(--ink);font-size:12px}.chat-compose input::placeholder{color:var(--muted)}.chat-send-button{flex:none;border:0;border-radius:99px;padding:0 17px;background:var(--ink);color:#fff;font-size:11px}.chat-attach-button{flex:none;width:34px;height:34px;padding:0;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;background:#fff;color:var(--muted);transition:background 150ms ease,color 150ms ease,border-color 150ms ease}.chat-attach-button svg{display:block;width:17px;height:17px}.chat-attach-button:hover{background:var(--lime-soft);color:var(--ink);border-color:var(--green)}.chat-attach-button:disabled{opacity:.55;cursor:wait}.chat-attach-spinner{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:chat-attach-spin 700ms linear infinite}@keyframes chat-attach-spin{to{transform:rotate(360deg)}}.chat-attach-preview{display:flex;align-items:center;gap:8px;padding:0 10px 8px;font-size:11px;color:var(--muted)}.chat-attach-preview img{width:40px;height:40px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}.chat-attach-remove{border:0;background:transparent;color:var(--danger);font-size:11px;padding:2px 6px}.login-box{width:min(390px,calc(100% - 40px));margin:75px auto;text-align:center}.login-box h1{font-size:25px}.lead{color:var(--muted);font-size:12px;line-height:1.7}.social-button{width:100%;padding:13px;margin:8px 0;border:1px solid var(--line);background:#fff;font-weight:700}
 
 /* Chat widget (floating launcher + popup) */
-/* 2026-07-30 QA 리포트 - 우측 하단 고정이라 방/카드 하단의 "오늘 기록
-   보러가기" 같은 우하단 CTA와 자주 겹쳤다. 이 앱의 하단 고정 CTA는 거의
-   다 우측 정렬이라(화살표 "→"가 오른쪽 끝), 좌측 하단은 비어 있어 그쪽으로
-   옮긴다(토스트류는 가운데 정렬이라 충돌 없음 - action-toast/home-toast). */
-.chat-widget-fab{position:fixed;z-index:230;left:18px;bottom:14px;width:87px;height:78px;padding:0;display:grid;place-items:center;border:0;background:transparent;font-size:0;line-height:0;filter:drop-shadow(0 4px 5px rgba(20,38,26,.32));transition:transform 180ms var(--ease),filter 180ms ease}
+/* 2026-07-31 - 우하단 고정으로 롤백(2026-07-30 좌측 이동은 되돌림). 대신
+   데스크톱에서는 아이콘을 자유롭게 드래그해 옮길 수 있게 하고(쿠키로
+   위치 기억, ChatWidget.tsx), 겹침이 있으면 유저가 직접 피하면 된다.
+   모바일은 터치 스크롤과 충돌해서 드래그 비활성화 - 항상 기본 위치. */
+.chat-widget-fab{position:fixed;z-index:230;right:18px;bottom:14px;width:87px;height:78px;padding:0;display:grid;place-items:center;border:0;background:transparent;font-size:0;line-height:0;filter:drop-shadow(0 4px 5px rgba(20,38,26,.32));transition:filter 180ms ease;touch-action:none}
+.chat-widget-fab:not(.is-dragging){transition:transform 180ms var(--ease),filter 180ms ease}
 .chat-widget-character{width:100%;height:100%;display:block;object-fit:contain;pointer-events:none;user-select:none}
 .chat-widget-fab:hover{background:transparent;filter:drop-shadow(0 6px 7px rgba(20,38,26,.34));transform:translateY(-3px) scale(1.025)}
 .chat-widget-fab.is-open{filter:drop-shadow(0 5px 6px rgba(20,38,26,.3));transform:translateY(-1px)}
+.chat-widget-fab.is-dragging{filter:drop-shadow(0 7px 9px rgba(20,38,26,.38));transform:scale(1.05);cursor:grabbing}
 .chat-widget-fab:focus-visible{outline:0}
 .chat-widget-fab:focus-visible .chat-widget-character{filter:drop-shadow(0 0 2px var(--lime)) drop-shadow(0 0 5px rgba(184,238,54,.55))}
 .chat-widget-fab:active{transform:scale(.94)}
-.chat-widget-popup{position:fixed;z-index:229;left:18px;bottom:102px;width:min(380px,calc(100vw - 32px));height:min(540px,calc(100dvh - 124px));display:flex;flex-direction:column;border:1px solid #d7ded3;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(15,28,19,.24);overflow:hidden;transform-origin:bottom left;animation:chat-widget-in 220ms var(--ease) both}
+.chat-widget-popup{position:fixed;z-index:229;right:18px;bottom:102px;width:min(380px,calc(100vw - 32px));height:min(540px,calc(100dvh - 124px));display:flex;flex-direction:column;border:1px solid #d7ded3;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(15,28,19,.24);overflow:hidden;transform-origin:bottom right;animation:chat-widget-in 220ms var(--ease) both}
 .chat-widget-popup .chat-panel{flex:1;min-height:0;max-width:none;margin:0;border:0;border-radius:0;display:flex;flex-direction:column}
 .chat-widget-popup .chat-log{flex:1;min-height:0;overflow-y:auto}
 .chat-widget-close{position:absolute;z-index:2;right:12px;top:12px;width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;background:#fff;font-size:14px;color:var(--muted)}
 @keyframes chat-widget-in{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
 @media(max-width:700px){
-  .chat-widget-popup{left:12px;bottom:90px;width:calc(100vw - 24px);height:min(520px,calc(100dvh - 112px));border-radius:18px}
-  .chat-widget-fab{left:10px;bottom:10px;width:78px;height:70px}
+  .chat-widget-popup{right:12px;bottom:90px;width:calc(100vw - 24px);height:min(520px,calc(100dvh - 112px));border-radius:18px}
+  .chat-widget-fab{right:10px;bottom:10px;width:78px;height:70px}
 }
 
 @media(max-width:1120px) and (min-width:951px){
