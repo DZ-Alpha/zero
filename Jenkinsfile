@@ -178,11 +178,19 @@ pipeline {
                     def SERVER = '192.168.0.68:30080'   // ArgoCD NodePort (HTTP, insecure)
                     // active scan은 staging JWT_SECRET으로 유저 토큰을 직접 서명(pyjwt).
                     // Jenkins는 클러스터 밖이라 kubectl exec 불가 → credential로 secret 주입.
+                    // 서비스별 독립 승격: 한 서비스의 승격 실패(staging wait 타임아웃/DAST High/
+                    // 매니페스트 push 실패)가 다른 서비스 승격을 막지 않게 catchError로 격리한다.
+                    // (Build 스테이지와 동일 패턴. 이전엔 격리가 없어 앞 서비스의 argocd wait
+                    // 타임아웃(exit20)이 for 루프를 깨고 뒤 서비스 승격을 통째로 건너뛰었음.)
+                    def promotedSvcs = []
+                    def failedPromoteSvcs = []
                     withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN'),
                                      string(credentialsId: 'staging-jwt-secret', variable: 'STG_JWT_SECRET')]) {
                         for (svc in env.CHANGED.split(' ')) {
                             env.SVC = svc
                             echo "========== [${svc}] staging 대기 후 prod 승격 =========="
+                            // catchError: 이 서비스 승격이 실패해도 파이프라인은 계속(빌드는 UNSTABLE 표시).
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: "${svc} 승격 실패") {
                             // 1) staging App(login-service 등) Synced+Healthy 대기 (게이트)
                             sh """
                                 argocd app wait ${svc} \
@@ -317,8 +325,21 @@ pipeline {
                                 '''
                             }
                             echo "========== [${svc}] prod 승격 완료 =========="
+                            promotedSvcs << svc   // 여기 도달 = 이 서비스 승격 성공
+                            } // catchError
+                            // catchError 블록 밖: 실패해도 여기 도달. 성공목록에 없으면 실패로 기록.
+                            if (!promotedSvcs.contains(svc)) { failedPromoteSvcs << svc }
                         }
                     }
+                    // Slack 알림(post{})이 실제 prod 승격된 서비스만 표기하도록 갱신.
+                    // 빌드는 됐으나 승격 실패한 서비스는 OK에서 빼고 FAILED에 합친다.
+                    env.OK_SVCS = promotedSvcs.join(', ')
+                    def allFailed = []
+                    if (env.FAILED_SVCS?.trim()) { allFailed.addAll(env.FAILED_SVCS.split(', ') as List) }
+                    allFailed.addAll(failedPromoteSvcs)
+                    env.FAILED_SVCS = allFailed.unique().join(', ')
+                    echo "prod 승격 성공: ${promotedSvcs.join(', ') ?: '(없음)'}"
+                    if (failedPromoteSvcs) { echo "prod 승격 실패: ${failedPromoteSvcs.join(', ')}" }
                 }
             }
         }
