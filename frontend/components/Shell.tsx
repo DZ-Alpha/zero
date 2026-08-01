@@ -13,7 +13,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <header className="site-header">
         <Link href="/" className="brand" aria-label="당당 홈">
-          <span className="brand-mark"><i /></span>
+          <span className="brand-mark">
+            <img src="/dangdang.svg" alt="" width={25} height={25} />
+          </span>
           <span className="brand-copy"><b>당당</b></span>
         </Link>
         <SiteNav />
