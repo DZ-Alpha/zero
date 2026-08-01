@@ -23,16 +23,42 @@ _ALLOWED_CONTENT_TYPES = {
 }
 
 
+# boto3 Client는(Session과 달리) 스레드 세이프해서 재사용해도 된다 - AWS 공식
+# 권장 패턴. 2차 부하테스트(2026-07-31)에서 diet-svc가 VUS 40에서 4분 만에
+# CPU 32m→3438m로 치솟은 원인이 이거였다: 매 업로드/서명 URL 요청마다 여기서
+# boto3 client를 새로 만들었는데(botocore가 서비스 모델 JSON을 매번 파싱하는
+# CPU 작업), 그 호출 자체도 uploads.py/diet.py에서 asyncio.to_thread 없이
+# 동기로 불려서 이벤트 루프를 막고 있었다 - VUS가 고정인데도 요청이 못
+# 빠지고 계속 쌓이면서(latency↑) 쌓인 만큼 client 재생성이 반복돼 CPU가
+# 시간이 지날수록 더 치솟는 패턴과 정확히 일치한다.
+_cached_client = None
+
+
 def _client(endpoint_url: str | None = None):
     if not (settings.minio_endpoint and settings.minio_access_key and settings.minio_secret_key):
         raise StorageNotConfiguredError("MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY가 설정되지 않았습니다.")
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint_url or settings.minio_endpoint,
-        aws_access_key_id=settings.minio_access_key,
-        aws_secret_access_key=settings.minio_secret_key,
-        config=Config(signature_version="s3v4"),
-    )
+
+    global _cached_client
+    if endpoint_url is not None:
+        # 지금은 아무 호출부도 endpoint_url을 넘기지 않지만(전부 기본 엔드포인트),
+        # 넘기는 경우는 캐시를 우회해 매번 새로 만든다 - 캐시가 엉뚱한 엔드포인트로
+        # 고정되는 걸 막기 위함.
+        return boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=settings.minio_access_key,
+            aws_secret_access_key=settings.minio_secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+    if _cached_client is None:
+        _cached_client = boto3.client(
+            "s3",
+            endpoint_url=settings.minio_endpoint,
+            aws_access_key_id=settings.minio_access_key,
+            aws_secret_access_key=settings.minio_secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+    return _cached_client
 
 
 def upload_diet_photo(user_id: int, content_type: str, data: bytes) -> str:

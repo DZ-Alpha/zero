@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from decimal import Decimal
@@ -167,7 +168,10 @@ async def _handle_create_product(body: dict, db: AsyncSession) -> dict[str, obje
 
     # 외부 이미지를 우리 MinIO로 옮긴다(공개 버킷). 실패하면 원본 URL을 그대로
     # 쓴다 — 등록 자체는 막지 않는다(나중에 백필로 재시도 가능).
-    stored = store_external_image(body["image_url"])
+    # store_external_image는 blocking(httpx 다운로드 + boto3 업로드) - scripts/
+    # backfill_product_images.py와 같은 이유로 to_thread에 위임한다(diet-svc가
+    # 이걸 안 해서 2026-07-31 부하테스트에서 이벤트 루프가 막힌 사고 참고).
+    stored = await asyncio.to_thread(store_external_image, body["image_url"])
     if stored:
         body = {**body, "image_url": stored}
 
@@ -216,7 +220,7 @@ async def _handle_update_product(body: dict, db: AsyncSession) -> dict[str, obje
     """AD-0102: 상품 수정."""
     pid = _parse_uuid(body["id"], "상품 ID")
     if body.get("image_url"):
-        stored = store_external_image(body["image_url"])
+        stored = await asyncio.to_thread(store_external_image, body["image_url"])
         if stored:
             body = {**body, "image_url": stored}
     fields = {k: v for k, v in {
