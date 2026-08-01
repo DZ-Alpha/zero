@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_admin
 from app.core.database import get_db
+from app.services.image_storage import store_external_image
 from app.services.product_store import (
     ProductNotFoundError,
     TagNotFoundError,
@@ -164,6 +165,12 @@ async def _handle_create_product(body: dict, db: AsyncSession) -> dict[str, obje
         if body.get(field) is None:
             raise HTTPException(status_code=422, detail=f"필수 필드 누락: {field}")
 
+    # 외부 이미지를 우리 MinIO로 옮긴다(공개 버킷). 실패하면 원본 URL을 그대로
+    # 쓴다 — 등록 자체는 막지 않는다(나중에 백필로 재시도 가능).
+    stored = store_external_image(body["image_url"])
+    if stored:
+        body = {**body, "image_url": stored}
+
     category_tag_id = _parse_uuid(body["category_tag_id"], "category_tag_id")
 
     try:
@@ -208,6 +215,10 @@ async def _handle_create_product(body: dict, db: AsyncSession) -> dict[str, obje
 async def _handle_update_product(body: dict, db: AsyncSession) -> dict[str, object]:
     """AD-0102: 상품 수정."""
     pid = _parse_uuid(body["id"], "상품 ID")
+    if body.get("image_url"):
+        stored = store_external_image(body["image_url"])
+        if stored:
+            body = {**body, "image_url": stored}
     fields = {k: v for k, v in {
         "product_name": body.get("name"),
         "brand_name": body.get("brand"),
