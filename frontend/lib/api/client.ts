@@ -7,11 +7,23 @@ export const AUTH_EXPIRED_EVENT = "dangdang-auth-expired";
 // {code, detail} 중첩 객체다 - 이 경우를 String()으로 바로 감싸면 JS가
 // "[object Object]"로 stringify해서 그대로 토스트에 떠버린다. 두 형태 모두
 // 안에 있는 실제 메시지 문자열과 code를 찾아서 쓴다.
+//
+// 세 번째 형태 - pydantic이 요청 바디를 검증하다 실패하면(422) FastAPI가
+// detail을 문자열이 아니라 [{type, loc, msg, ...}] 배열로 준다. field_validator가
+// 던진 ValueError("몸무게는 20~300kg 사이여야 해요.") 같은 메시지는 pydantic이
+// msg 앞에 "Value error, "를 붙인다 - 그대로 보여주면 실제 검증 실패 이유가
+// "요청을 처리하지 못했어요"로 뭉개져서 사용자가 뭘 고쳐야 하는지 알 수 없다
+// (main-service/app/routers/health_profile.py의 2026-07-30 주석과 동일한 문제).
 function extractDetail(payload: unknown): { message: string; code?: string } {
   if (typeof payload !== "object" || payload === null || !("detail" in payload)) {
     return { message: "요청을 처리하지 못했어요." };
   }
   const detail = (payload as { detail: unknown }).detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { msg?: unknown };
+    const msg = typeof first?.msg === "string" ? first.msg : null;
+    return { message: msg ? msg.replace(/^Value error,\s*/, "") : "입력값을 확인해 주세요." };
+  }
   if (typeof detail === "object" && detail !== null && "detail" in detail) {
     const nested = detail as { detail: unknown; code?: unknown };
     return {
