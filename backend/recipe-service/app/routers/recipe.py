@@ -126,6 +126,10 @@ async def get_recipe_detail(recipe_id: int, db: AsyncSession = Depends(get_db)) 
     return {
         "id": recipe.id,
         "name": recipe.name,
+        # 유튜브 수집 레시피만 값이 있고 만개의레시피는 None — 프론트가 이 값으로
+        # 상세 페이지 썸네일에 인라인 재생 버튼을 조건부 노출한다(video_id는 이미
+        # 모델에 매핑돼 있고 _thumbnail_url에서도 쓰던 값).
+        "videoId": recipe.video_id,
         "thumbnailUrl": _thumbnail_url(recipe),
         "steps": recipe.steps,
         "source": recipe.source,

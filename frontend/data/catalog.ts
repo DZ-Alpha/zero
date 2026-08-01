@@ -28,6 +28,9 @@ export type RecipeData = {
   nutritionCoverage?: number;
   publishedAt?: string;
   thumbnail?: string;
+  // 유튜브 수집 레시피만 값이 있고 만개의레시피는 없음 — 상세 페이지 썸네일의
+  // 인라인 재생 버튼 노출 여부를 이 값으로 판단한다.
+  videoId?: string | null;
 };
 
 const fallbackRecipes: RecipeData[] = [

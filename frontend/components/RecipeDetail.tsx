@@ -89,6 +89,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
       title: live.name || fallbackDetail.title,
       author: live.source || fallbackDetail.author,
       thumbnail: live.thumbnailUrl || fallbackDetail.thumbnail,
+      videoId: live.videoId ?? fallbackDetail.videoId,
       publishedAt: live.publishedAt || fallbackDetail.publishedAt,
       estimatedSugar: nutrition?.totalSugarG ?? fallbackDetail.estimatedSugar,
       estimatedCalories: nutrition?.totalKcal ?? fallbackDetail.estimatedCalories,

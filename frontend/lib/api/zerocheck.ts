@@ -18,6 +18,8 @@ export type RecipeListItem = {
 };
 
 export type RecipeDetailResponse = RecipeListItem & {
+  // 유튜브 수집 레시피만 값이 있고 만개의레시피는 null — 상세 페이지 인라인 재생용.
+  videoId?: string | null;
   steps?: unknown;
   source?: string | null;
   publishedAt?: string | null;
