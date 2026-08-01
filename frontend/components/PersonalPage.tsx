@@ -132,14 +132,32 @@ export function PersonalPage() {
 
     try {
       if (editor === "profile") {
+        const height = Number(profileDraft.height) || undefined;
+        const weight = Number(profileDraft.weight) || undefined;
+        // main-service/app/routers/health_profile.py의 검증 범위와 맞춘다 -
+        // 저장 버튼을 눌러야만(서버 왕복 후) 알 수 있던 걸 그 전에 바로
+        // 알려준다(2026-08-01 피드백: 몸무게 500kg처럼 말이 안 되는 값이
+        // 입력창엔 아무 제지 없이 들어갔었음).
+        if (height !== undefined && !(50 <= height && height <= 250)) {
+          setMessage("키는 50~250cm 사이여야 해요.");
+          setSaveFailed(true);
+          setSaving(false);
+          return;
+        }
+        if (weight !== undefined && !(20 <= weight && weight <= 300)) {
+          setMessage("몸무게는 20~300kg 사이여야 해요.");
+          setSaveFailed(true);
+          setSaving(false);
+          return;
+        }
         const patch: Partial<UserProfile> = {
         name: profileDraft.name?.trim() || profile.name,
         email: profileDraft.email?.trim() || profile.email,
         birthDate: digits(profileDraft.birthDate),
         birthYear: digits(profileDraft.birthDate || profileDraft.birthYear).slice(0, 4),
         gender: profileDraft.gender,
-        height: Number(profileDraft.height) || undefined,
-        weight: Number(profileDraft.weight) || undefined,
+        height,
+        weight,
         activity: profileDraft.activity,
         };
         const nextProfile = { ...profile, ...patch };
@@ -172,9 +190,14 @@ export function PersonalPage() {
       }
       setEditor(null);
     } catch (error) {
+      // 409(이메일 중복)는 기존처럼 고정 문구. 422(값 검증 실패, 예: 몸무게
+      // 범위 초과)는 실제 이유를 보여줘야 사용자가 뭘 고칠지 안다 - 그 전엔
+      // 전부 "연결을 확인하라"는 문구로 뭉개져서 검증 오류인지도 몰랐다.
       setMessage(error instanceof ApiError && error.status === 409
         ? "이미 다른 계정에서 쓰고 있는 이메일이에요. 다른 이메일을 입력해 주세요."
-        : "서버에 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요.");
+        : error instanceof ApiError && error.status === 422
+          ? error.message
+          : "서버에 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요.");
       setSaveFailed(true);
     } finally {
       setSaving(false);

@@ -633,9 +633,19 @@ export function RecordMealModal({
                 <div className="vision-loading" role="status" aria-live="polite">
                   <div className="vision-spinner" aria-hidden="true"><i /></div>
                   <h3>{uploadProgress < 55 ? "사진을 안전하게 올리고 있어요" : analysisDelayed ? "분석이 조금 오래 걸리고 있어요" : "사진에서 음식을 찾고 있어요"}</h3>
-                  <p>{uploadProgress < 55 ? "창을 닫지 않고 잠시만 기다려 주세요." : analysisDelayed ? "자동으로 다시 확인하고 있어요. 결과가 도착하면 바로 보여드릴게요." : "음식의 종류와 양을 확인한 뒤 당류와 칼로리를 계산할게요."}</p>
+                  {/* 업로드/분석은 서버에서 비동기로 진행돼 창을 닫아도 중단되지 않는다
+                      (실제로 완료되면 오늘 기록에 자동 반영됨 - GET /diet/records가
+                      analysis_status와 무관하게 조회한다). "닫지 마세요"처럼 들리는
+                      문구는 실제 동작과 반대라 오해를 준다(2026-08-01 피드백). */}
+                  <p>창을 닫아도 분석은 계속 진행돼요. 완료되면 오늘 기록에 자동으로 반영돼요.</p>
                   <div className="upload-progress" aria-label={`업로드 ${uploadProgress}%`}><i style={{ transform: `scaleX(${uploadProgress / 100})` }} /></div>
-                  <ol><li className="is-done">사진을 확인했어요</li><li className="is-active">음식과 양을 찾고 있어요</li><li>영양 수치를 계산할게요</li></ol>
+                  {/* 예전엔 3단계를 항상 고정으로 보여줘서(실제 진행과 무관) 진행률
+                      표시가 사실상 허구였다 - 실제로 구분 가능한 두 단계(업로드/분석)만
+                      uploadProgress에 맞춰 보여준다. */}
+                  <ol>
+                    <li className={uploadProgress >= 55 ? "is-done" : "is-active"}>사진을 서버에 올리고 있어요</li>
+                    <li className={uploadProgress >= 55 ? "is-active" : ""}>음식과 양을 분석하고 있어요</li>
+                  </ol>
                 </div>
               ) : analysisError ? (
                 <div className="vision-error" role="alert"><span aria-hidden="true" /><h3>사진을 분석하지 못했어요.</h3><p>{analysisError}</p><div><button type="button" onClick={resetPhoto}>다른 사진 고르기</button><button type="button" className="solid-button" onClick={analyzePhoto}>다시 분석하기</button></div></div>

@@ -286,7 +286,16 @@ export function RoomsHome() {
                 <span className={styles.activityPhoto}><SafeImage src={activity.imageUrl} alt="" fallbackLabel={MEAL_LABELS[activity.mealType]} /></span>
                 <span className={styles.activityCopy}>
                   <small>{activity.roomEmoji} {activity.roomName}</small>
-                  <strong>{activity.memberName}님이 {MEAL_LABELS[activity.mealType]}을 기록했어요 · {activity.message}</strong>
+                  {/* 메뉴명이 뭔지가 가장 궁금한 정보라 먼저 오게 한다(2026-08-01 피드백) -
+                      message가 실제 음식 이름이 아니라 백엔드 폴백 문장(연결된 레시피/저당픽이
+                      없을 때)이면 그대로 하나의 문장으로 보여준다. 동적인 음식 이름 뒤에
+                      "을/를" 조사를 붙이면 받침 유무에 따라 틀릴 수 있어(예: "라면을" vs
+                      "파스타를") 조사가 필요 없는 "에" 구조로만 이어붙인다. */}
+                  <strong>
+                    {activity.message === "식사를 기록했어요"
+                      ? `${activity.memberName}님이 ${MEAL_LABELS[activity.mealType]}을 기록했어요`
+                      : `${activity.message} · ${activity.memberName}님이 ${MEAL_LABELS[activity.mealType]}에 기록했어요`}
+                  </strong>
                 </span>
                 <span aria-hidden="true">→</span>
               </Link>

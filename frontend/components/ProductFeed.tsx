@@ -32,6 +32,7 @@ function ProductFeedContent() {
   const [suggestions, setSuggestions] = useState<Array<{ id: string; name: string }>>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const sentinel = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   const { ready: authReady, signedIn, token } = useAuthSession();
   const [favoriteProductIds, setFavoriteProductIds] = useState<Set<string>>(new Set());
 
@@ -108,6 +109,13 @@ function ProductFeedContent() {
       : mockProducts.filter((product) => personalSlugs.has(product.slug)).slice(0, 3);
   const activeFilters = [category !== "전체" ? category : "", sugarFilter !== "전체" ? sugarFilter : "", sweetener !== "전체" ? sweetener : "", personalOnly ? "추천 제품" : ""].filter(Boolean);
 
+  // 검색은 이미 query state로 실시간 반영되지만, 카테고리 필터 영역이 화면
+  // 위쪽을 차지해서 결과가 스크롤해야 보이는 위치에 있다(2026-08-01 피드백) -
+  // 엔터/돋보기 클릭 시 결과 시작점으로 스크롤해 바로 보이게 한다.
+  function scrollToResults() {
+    resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function resetFilters() {
     setQuery("");
     setCategory("전체");
@@ -122,7 +130,7 @@ function ProductFeedContent() {
       <section className="catalog-intro wrap">
         <div><p className="eyebrow">당당 저당픽</p><h1>제품 사진과 성분을<br />같이 보고 골라요.</h1></div>
         <div className="catalog-search-wrap">
-          <div className="catalog-search"><input value={query} onChange={(event) => { setQuery(event.target.value); setShowSuggestions(true); }} onFocus={() => setShowSuggestions(true)} onBlur={() => window.setTimeout(() => setShowSuggestions(false), 120)} autoComplete="off" aria-autocomplete="list" aria-expanded={showSuggestions && suggestions.length > 0} placeholder="제품명, 브랜드, 원재료를 검색해보세요" /><span>⌕</span></div>
+          <div className="catalog-search"><input value={query} onChange={(event) => { setQuery(event.target.value); setShowSuggestions(true); }} onFocus={() => setShowSuggestions(true)} onBlur={() => window.setTimeout(() => setShowSuggestions(false), 120)} onKeyDown={(event) => { if (event.key === "Enter") { setShowSuggestions(false); scrollToResults(); } }} autoComplete="off" aria-autocomplete="list" aria-expanded={showSuggestions && suggestions.length > 0} placeholder="제품명, 브랜드, 원재료를 검색해보세요" /><button type="button" onClick={scrollToResults} aria-label="검색 결과로 이동">⌕</button></div>
           {showSuggestions && suggestions.length > 0 && <div className="search-suggestions" role="listbox">{suggestions.map((item) => <button type="button" role="option" key={item.id} onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(item.name); setShowSuggestions(false); }}>{item.name}</button>)}</div>}
         </div>
       </section>
@@ -155,7 +163,7 @@ function ProductFeedContent() {
           </div>
         </div>
 
-        <section className="catalog-list wrap">
+        <section className="catalog-list wrap" ref={resultsRef}>
           <header className="catalog-tools"><p>{status === "loading" ? "저당픽을 불러오는 중" : <><b>{filtered.length}</b>개의 저당픽</>}</p><div className="catalog-sort"><label><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} />추천 저당픽만</label><select value={sort} onChange={(event) => setSort(event.target.value)}><option>추천순</option><option>인기순</option><option>당류 낮은순</option><option>열량 낮은순</option></select></div></header>
           {activeFilters.length > 0 && <div className="active-filter-summary" aria-label="적용된 필터"><span>적용한 조건</span>{activeFilters.map((item) => <b key={item}>{item}</b>)}<button type="button" onClick={resetFilters}>모두 지우기</button></div>}
           {status === "mock" && <div className="inline-service-notice" role="status"><div><b>서버에서 제품을 불러오지 못했어요.</b><span>지금은 준비된 제품 목록을 보여드려요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
