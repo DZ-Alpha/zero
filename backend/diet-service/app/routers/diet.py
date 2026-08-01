@@ -1,3 +1,4 @@
+import asyncio
 import calendar
 import json
 import logging
@@ -58,6 +59,15 @@ def _recipe_thumbnail_url(recipe) -> str | None:
     if recipe.video_id:
         return f"https://img.youtube.com/vi/{recipe.video_id}/hqdefault.jpg"
     return recipe.thumbnail_url
+
+
+async def _photo_entry(log_id: uuid.UUID, object_key: str, photo_item_names: dict[uuid.UUID, list[str]]) -> dict[str, str]:
+    # presign_diet_photo_url도 boto3(동기)라 event loop를 막는다 - 이 함수를
+    # 부르는 internal_meal_records는 여러 유저의 사진을 한 번에 묶어 내려주므로
+    # (얌로그 방 하나 조회에 사진이 여러 장) 순서대로 막혀서 부르면 사진 수만큼
+    # 지연이 그대로 쌓인다. to_thread + gather로 병렬로 스레드에 위임한다.
+    image_url = await asyncio.to_thread(presign_diet_photo_url, object_key)
+    return {"imageUrl": image_url, "name": ", ".join(photo_item_names.get(log_id, [])) or "사진으로 기록한 식사"}
 
 
 def _to_uuid(value: str, label: str) -> uuid.UUID:
@@ -665,13 +675,10 @@ async def internal_meal_records(
         # 사진 넘겨보기 캐러셀이 사진마다 맞는 이름을 보여줄 수 있게, 사진
         # 하나하나에 그 사진에서 인식된 음식 이름을 같이 실어 보낸다(이전엔
         # imageUrl만 있어서 프론트가 전부 같은 이름 하나로만 보여줬다).
-        photo_entries = [
-            {
-                "imageUrl": presign_diet_photo_url(object_key),
-                "name": ", ".join(photo_item_names.get(log_id, [])) or "사진으로 기록한 식사",
-            }
+        photo_entries = await asyncio.gather(*(
+            _photo_entry(log_id, object_key, photo_item_names)
             for log_id, object_key in photo_object_keys.items()
-        ]
+        ))
         photo_urls = [entry["imageUrl"] for entry in photo_entries]
         ordered_photos: list[dict[str, object]] = (
             [{"source": "photo", "imageUrl": entry["imageUrl"], "name": entry["name"]} for entry in photo_entries]

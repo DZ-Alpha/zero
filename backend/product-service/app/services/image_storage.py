@@ -54,14 +54,24 @@ def _is_configured() -> bool:
     return bool(settings.minio_endpoint and settings.minio_access_key and settings.minio_secret_key)
 
 
+# boto3 Client는(Session과 달리) 스레드 세이프해서 재사용해도 된다 - AWS 공식
+# 권장 패턴. diet-service/app/services/storage.py와 같은 이유로 캐시한다:
+# 매 호출마다 새로 만들면 botocore가 서비스 모델을 다시 파싱하는 CPU 낭비가
+# 반복된다(2026-07-31 diet-svc 부하테스트 사고 원인 중 하나).
+_cached_s3_client = None
+
+
 def _s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.minio_endpoint,
-        aws_access_key_id=settings.minio_access_key,
-        aws_secret_access_key=settings.minio_secret_key,
-        config=Config(signature_version="s3v4"),
-    )
+    global _cached_s3_client
+    if _cached_s3_client is None:
+        _cached_s3_client = boto3.client(
+            "s3",
+            endpoint_url=settings.minio_endpoint,
+            aws_access_key_id=settings.minio_access_key,
+            aws_secret_access_key=settings.minio_secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+    return _cached_s3_client
 
 
 def _download(image_url: str) -> tuple[str, bytes]:
