@@ -3191,9 +3191,12 @@ body{font-size:17px}
 .auth-content{background:#fffdf9}
 
 @media(max-width:700px){
-  .saved-menu-drawer{top:64px;width:min(300px,calc(100vw - 52px))}
-  .saved-menu-panel{max-height:calc(100dvh - 82px);border-radius:0 18px 18px 0}
-  .saved-menu-toggle{top:14px;width:44px;height:62px;border-radius:0 16px 16px 0}
+  /* 모바일에선 좌측 "하단"에 붙인다(챗 마스코트 우하단과 대칭) - 상단(top:64px)에
+     두면 얌로그 상세의 sticky 탭(오늘/현황/멤버)처럼 페이지 상단에 붙는 UI와
+     겹쳤다(2026-08-01 리포트). 패널은 아래에서 위로 열린다. */
+  .saved-menu-drawer{top:auto;bottom:24px;width:min(300px,calc(100vw - 52px))}
+  .saved-menu-panel{max-height:calc(100dvh - 120px);border-radius:0 18px 18px 0}
+  .saved-menu-toggle{top:auto;bottom:0;width:44px;height:62px;border-radius:0 16px 16px 0}
   .calendar-page .page-intro,
   .personal-page .page-intro,
   .catalog-page .catalog-intro{
