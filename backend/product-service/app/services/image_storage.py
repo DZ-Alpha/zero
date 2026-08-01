@@ -10,7 +10,6 @@ import uuid
 import httpx
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.config import settings
 
@@ -68,14 +67,22 @@ def _s3_client():
 def _download(image_url: str) -> tuple[str, bytes]:
     """외부 이미지 다운로드 → (content_type, data). 실패 시 예외를 올린다.
     10MB를 넘으면 예외(대용량/오응답 방지)."""
-    with httpx.Client(timeout=15.0, follow_redirects=True) as client:
-        resp = client.get(image_url)
-        resp.raise_for_status()
-        data = resp.content
-        if len(data) > MAX_IMAGE_BYTES:
-            raise ValueError(f"이미지가 너무 큽니다: {len(data)} bytes")
-        content_type = resp.headers.get("content-type", "")
-        return content_type, data
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; ZeroBot/1.0; +https://zerodang.org)"}
+    with httpx.Client(timeout=15.0, follow_redirects=True, headers=headers) as client:
+        with client.stream("GET", image_url) as resp:
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "")
+            declared = resp.headers.get("content-length")
+            if declared is not None and declared.isdigit() and int(declared) > MAX_IMAGE_BYTES:
+                raise ValueError(f"이미지가 너무 큽니다(Content-Length): {declared} bytes")
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in resp.iter_bytes():
+                total += len(chunk)
+                if total > MAX_IMAGE_BYTES:
+                    raise ValueError(f"이미지가 너무 큽니다: {total}+ bytes")
+                chunks.append(chunk)
+            return content_type, b"".join(chunks)
 
 
 def store_external_image(image_url: str | None) -> str | None:
@@ -109,7 +116,7 @@ def store_external_image(image_url: str | None) -> str | None:
             Body=data,
             ContentType=f"image/{'jpeg' if extension == 'jpg' else extension}",
         )
-    except (BotoCoreError, ClientError) as error:
+    except Exception as error:  # noqa: BLE001 — 업로드/클라이언트 생성의 어떤 예외든 원본 유지로 흡수
         logger.warning("MinIO 업로드 실패(%s): %s", image_url, error)
         return None
 
