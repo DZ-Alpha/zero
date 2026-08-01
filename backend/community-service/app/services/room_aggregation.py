@@ -140,26 +140,39 @@ def _color_for(user_id: int) -> str:
     return _MEMBER_COLORS[user_id % len(_MEMBER_COLORS)]
 
 
-async def _streak_days(db: AsyncSession, room_id: uuid.UUID, user_id: int, today: date) -> int:
-    """오늘부터 거슬러 올라가며 이 방에서 기록이 있었던 연속 일수.
+async def _streak_days_bulk(db: AsyncSession, room_id: uuid.UUID, user_ids: list[int], today: date) -> dict[int, int]:
+    """오늘부터 거슬러 올라가며 이 방에서 기록이 있었던 연속 일수 - 멤버별로.
 
     room_meal_threads는 그 (user, date, mealType) 조합이 방 화면에서 한 번이라도
     조회돼 get_or_create_thread를 거쳤을 때만 생긴다 - 즉 이 스트릭은 "얌로그
     화면에서 확인된 기록" 기준의 근사치다. 정확한 스트릭이 필요해지면
     diet-service 원본을 기간 조회해야 한다(§8 재집계 정책 확정 후 개선 대상).
+
+    예전엔 멤버마다 이 쿼리를 따로 불러(N+1) 방 상세를 열 때마다 멤버 수만큼
+    왕복이 났다(2026-08-01 부하테스트 - community-svc 새 최대 병목 원인 중
+    하나) - 방 전체를 한 번에 읽어 유저별로 묶은 뒤 스트릭은 파이썬에서 계산한다.
     """
+    if not user_ids:
+        return {}
     result = await db.execute(
-        select(RoomMealThread.record_date)
-        .where(RoomMealThread.room_id == room_id, RoomMealThread.user_id == user_id)
+        select(RoomMealThread.user_id, RoomMealThread.record_date)
+        .where(RoomMealThread.room_id == room_id, RoomMealThread.user_id.in_(user_ids))
         .distinct()
     )
-    recorded_days = {row.record_date for row in result.all()}
-    streak = 0
-    cursor = today
-    while cursor in recorded_days:
-        streak += 1
-        cursor -= timedelta(days=1)
-    return streak
+    recorded_days_by_user: dict[int, set[date]] = {}
+    for row in result.all():
+        recorded_days_by_user.setdefault(row.user_id, set()).add(row.record_date)
+
+    streaks: dict[int, int] = {}
+    for uid in user_ids:
+        recorded_days = recorded_days_by_user.get(uid, set())
+        streak = 0
+        cursor = today
+        while cursor in recorded_days:
+            streak += 1
+            cursor -= timedelta(days=1)
+        streaks[uid] = streak
+    return streaks
 
 
 async def build_room_members(db: AsyncSession, room: Room, members: list[RoomMember], viewer_id: int) -> list[dict[str, object]]:
@@ -175,6 +188,7 @@ async def build_room_members(db: AsyncSession, room: Room, members: list[RoomMem
     for record in records_today:
         uid = record["userId"]
         sugar_today_by_user[uid] = sugar_today_by_user.get(uid, 0.0) + float(record.get("sugar", 0.0))
+    streaks = await _streak_days_bulk(db, room.id, user_ids, today)
 
     result = []
     for member in members:
@@ -191,7 +205,7 @@ async def build_room_members(db: AsyncSession, room: Room, members: list[RoomMem
             "recordCount": week_record_count,
             "recordRate": record_rate,
             "averageSugar": round(sugar_today_by_user.get(member.user_id, 0.0), 1),
-            "streakDays": await _streak_days(db, room.id, member.user_id, today),
+            "streakDays": streaks.get(member.user_id, 0),
             "color": _color_for(member.user_id),
         })
     return result
@@ -498,10 +512,35 @@ async def build_room_badges(
 async def build_meal_slots(
     db: AsyncSession, room_id: uuid.UUID, members: list[RoomMember], record_date: date, viewer_id: int
 ) -> list[dict[str, object]]:
+    # 예전엔 (멤버 × mealType) 슬롯마다 get_or_create_thread/count_comments/
+    # count_reactions/has_reacted/get_last_nudge를 각각 따로 불러 방 상세를
+    # 열 때마다 최대 멤버수×4×5번의 DB 왕복이 났다(2026-08-01 부하테스트에서
+    # diet-svc 이벤트 루프 고정 이후 community-svc가 새 최대 병목으로 드러난
+    # 가장 큰 원인). 슬롯을 "기록 있음/없음"으로 먼저 나눈 뒤 각각 한 번씩만
+    # 벌크로 조회·생성하고, 실제 슬롯 조립은 미리 받아온 dict 조회만으로 한다.
     user_ids = [m.user_id for m in members]
     records = await get_meal_records(user_ids, record_date)
     records_by_key = {(r["userId"], r["mealType"]): r for r in records}
     display_names = await room_store.get_display_names_bulk(db, user_ids)
+
+    has_record_keys: list[tuple[int, str]] = []
+    no_record_keys: list[tuple[int, str]] = []
+    for member in members:
+        for meal_type_db in MEAL_TYPES_UPPER:
+            key = (member.user_id, meal_type_db)
+            (has_record_keys if key in records_by_key else no_record_keys).append(key)
+
+    threads = await room_store.get_or_create_threads_bulk(db, room_id, record_date, has_record_keys)
+    thread_ids = [t.id for t in threads.values()]
+    comment_counts = await room_store.count_comments_bulk(db, thread_ids)
+    reaction_counts = await room_store.count_reactions_bulk(db, thread_ids)
+    reacted_thread_ids = await room_store.reacted_thread_ids_bulk(db, thread_ids, viewer_id)
+
+    no_record_target_ids = {uid for uid, _mt in no_record_keys}
+    no_record_meal_types = {mt for _uid, mt in no_record_keys}
+    last_nudges = await room_store.get_last_nudges_bulk(
+        db, room_id, viewer_id, no_record_target_ids, record_date, no_record_meal_types
+    )
 
     slots: list[dict[str, object]] = []
     for member in members:
@@ -510,9 +549,7 @@ async def build_meal_slots(
             meal_type_fe = to_frontend_meal_type(meal_type_db)
 
             if record_data is None:
-                last_nudge = await room_store.get_last_nudge(
-                    db, room_id, viewer_id, member.user_id, record_date, meal_type_db
-                )
+                last_nudge = last_nudges.get((member.user_id, meal_type_db))
                 retry_after = None
                 # 본인 카드엔 버튼 자체가 없고(canSend/refused 모두 False),
                 # 콕 찌르기를 거부한 멤버(nudge_notifications off)는 버튼을
@@ -540,14 +577,14 @@ async def build_meal_slots(
                 })
                 continue
 
-            thread = await room_store.get_or_create_thread(db, room_id, member.user_id, record_date, meal_type_db)
+            thread = threads[(member.user_id, meal_type_db)]
             connected_items = [
                 {"id": item["id"], "source": item["source"], "name": item["name"], "imageUrl": item.get("imageUrl")}
                 for item in record_data.get("connectedItems", [])
             ]
-            comment_count = await room_store.count_comments(db, thread.id)
-            reaction_count = await room_store.count_reactions(db, thread.id)
-            reacted_by_me = await room_store.has_reacted(db, thread.id, viewer_id)
+            comment_count = comment_counts.get(thread.id, 0)
+            reaction_count = reaction_counts.get(thread.id, 0)
+            reacted_by_me = thread.id in reacted_thread_ids
 
             ordered_photos = record_data.get("orderedPhotos", [])
             # 기본 표시 이름 - 처음 보이는 사진(비전 → 레시피 → 저당픽 순 첫 장)
