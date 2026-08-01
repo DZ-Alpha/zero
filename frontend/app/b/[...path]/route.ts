@@ -111,6 +111,13 @@ function buildUpstream(parts: string[], serviceBase: string | null) {
     return new URL(`/${encodedPath}`, minioUrl);
   }
 
+  // 상품 이미지는 공개 버킷(product-images)이라 서명 없이 그대로 MinIO로 중계한다
+  // (diet-photos는 비공개+presigned지만 이건 공개 read). image_url이
+  // /b/product-images/{key}로 저장돼 있어 이 경로로 들어온다.
+  if (parts[0] === "product-images" && minioUrl) {
+    return new URL(`/${encodedPath}`, minioUrl);
+  }
+
   if (!gatewayUrl) {
     return new URL(`/${encodedPath}`, serviceBase ?? serviceUrls.main);
   }
