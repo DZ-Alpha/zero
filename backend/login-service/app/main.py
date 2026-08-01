@@ -11,6 +11,7 @@ logging.Formatter.converter = time.gmtime
 logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s")
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import settings
 from app.core.database import Base, engine
 from app.models import AdminAccount, SocialAccount, User  # noqa: F401
 from app.routers import admin_auth, auth, health, items, user, webhooks
@@ -45,7 +46,15 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Final Team Alpha API", lifespan=lifespan)
+# /docs, /redoc, /openapi.json은 settings.enable_api_docs(기본 False)로 게이트한다
+# - 자세한 이유는 app/core/config.py 주석 참고.
+app = FastAPI(
+    title="Final Team Alpha API",
+    lifespan=lifespan,
+    docs_url="/docs" if settings.enable_api_docs else None,
+    redoc_url="/redoc" if settings.enable_api_docs else None,
+    openapi_url="/openapi.json" if settings.enable_api_docs else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
