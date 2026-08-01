@@ -22,15 +22,14 @@ router = APIRouter(prefix="/recipes")
 
 
 def _thumbnail_url(recipe: Recipe) -> str | None:
-    # 2026-07-20 실측 — source="유튜브" 레시피는 thumbnail_url이
-    # "/data/thumbnails/{id}.jpg" 같은 상대경로인데, 이 경로를 서빙하는 곳이
-    # 어디에도 없어(gateway/frontend 다 확인함) 항상 404가 난다. source="만개의레시피"는
-    # 절대 URL(recipe1.ezmember.co.kr)이라 정상 로드됨. YouTube는 video_id로
-    # 썸네일을 공개 제공하므로(API 키 불필요) 상대경로일 땐 그쪽을 대신 쓴다.
-    if recipe.thumbnail_url and not recipe.thumbnail_url.startswith("/"):
-        return recipe.thumbnail_url
-    if recipe.video_id:
-        return f"https://img.youtube.com/vi/{recipe.video_id}/hqdefault.jpg"
+    # thumbnail_url은 이제 백필·thumbnail-worker가 우리 MinIO 경로
+    # (/b/recipe-images/{recipe_id}.jpg)로 채운다(2026-08-01 레시피 이미지 자체
+    # 호스팅). DB 값을 그대로 서빙한다 — Istio가 /b/recipe-images/를 MinIO로 라우팅.
+    #
+    # (과거: 유튜브 완성샷이 /data/thumbnails 로컬 파일이라 서빙 불가 → video_id로
+    #  img.youtube.com 핫링크를 대신 쓰던 우회 로직이 있었으나, MinIO 전환으로 제거.
+    #  이 우회가 남아 있으면 /b/recipe-images/ 경로가 /로 시작한다는 이유로 유튜브
+    #  핫링크를 반환해 우리 이미지를 무시하는 버그가 됐다.)
     return recipe.thumbnail_url
 
 
