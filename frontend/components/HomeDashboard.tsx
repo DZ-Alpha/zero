@@ -169,7 +169,9 @@ export function HomeDashboard() {
   const [productPanelTitle, setProductPanelTitle] = useState("저당픽 TOP");
   const [roomsHome, setRoomsHome] = useState<RoomsHomeResponse>(emptyRoomsHome);
   const [nudgeToast, setNudgeToast] = useState("");
-  const [seenActivityId, setSeenActivityId] = useState<string | null>(null);
+  const [seenActivityMap, setSeenActivityMap] = useState<Record<string, string | null>>({});
+  const [dismissedNudgeKey, setDismissedNudgeKey] = useState<string | null>(null);
+  const [dismissedEmptyKey, setDismissedEmptyKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!nudgeToast) return;
@@ -300,15 +302,32 @@ export function HomeDashboard() {
   const myRoomTodayPhotos = myRoomTodayActivities.filter((activity) => activity.imageUrl);
   const roomRanking = roomsHome.weeklyRanking.length > 0 ? toRoomRanking(roomsHome.weeklyRanking) : fallbackRoomRanking;
 
+  const myRooms = roomsHome.rooms;
+  const myRoomIdsKey = myRooms.map((room) => room.id).join(",");
   useEffect(() => {
-    setSeenActivityId(myRoom ? getSeenActivityId(myRoom.id) : null);
-  }, [myRoom?.id]);
+    const map: Record<string, string | null> = {};
+    myRooms.forEach((room) => { map[room.id] = getSeenActivityId(room.id); });
+    setSeenActivityMap(map);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myRoomIdsKey]);
 
-  // recentActivities는 서버가 이미 created_at desc로 정렬해서 준다 - 배열의
-  // 첫 항목이 가장 최근 활동.
-  const latestRoomActivityId = myRoomActivities[0]?.id ?? null;
-  const showRoomPhotoNudge = Boolean(myRoom && latestRoomActivityId && latestRoomActivityId !== seenActivityId);
-  const showNoRoomActivityNotice = Boolean(myRoom && myRoomTodayActivities.length === 0);
+  // 방이 여러 개면 "새 사진" 알림도 방마다 따로 확인해야 한다 - 첫 방만 보던
+  // 이전 로직은 두 번째 방부터 새 사진이 와도 알림이 안 떴다. recentActivities는
+  // 서버가 이미 created_at desc로 정렬해서 주므로 방별 첫 항목이 최신 활동.
+  const roomsWithNewActivity = myRooms.flatMap((room) => {
+    const activities = roomsHome.recentActivities.filter((activity) => activity.roomId === room.id).slice(0, 4);
+    const latest = activities[0];
+    if (!latest || latest.id === seenActivityMap[room.id]) return [];
+    return [{ room, activities, latestId: latest.id }];
+  });
+  const nudgeKey = roomsWithNewActivity.length > 0 ? roomsWithNewActivity.map((entry) => entry.latestId).sort().join(",") : null;
+  const showRoomPhotoNudge = Boolean(nudgeKey && nudgeKey !== dismissedNudgeKey);
+
+  // 등록한 방이 하나라도 오늘 기록이 있으면 "아무도 등록하지 않았어요"는 안
+  // 띄운다 - "새 사진" 알림과 동시에 뜨면 서로 모순돼 보인다.
+  const allRoomsEmptyToday = myRooms.length > 0 && myRooms.every((room) => !roomsHome.todayActivities.some((activity) => activity.roomId === room.id));
+  const emptyKey = allRoomsEmptyToday ? myRooms.map((room) => room.id).sort().join(",") : null;
+  const showNoRoomActivityNotice = Boolean(!showRoomPhotoNudge && emptyKey && emptyKey !== dismissedEmptyKey);
 
   return (
     <main className="home-dashboard">
@@ -324,27 +343,45 @@ export function HomeDashboard() {
         <div className="today-character-copy">
           <p className="day-label">{todayLabel} · {signedIn ? "나의 오늘" : "오늘의 미리보기"}</p>
           <h1>{stateCopy}</h1>
-          {showRoomPhotoNudge && myRoom && (
-            <Link
-              className="today-room-nudge"
-              href={`/rooms/${myRoom.id}`}
-              onClick={() => {
-                if (!latestRoomActivityId) return;
-                markActivitySeen(myRoom.id, latestRoomActivityId);
-                setSeenActivityId(latestRoomActivityId);
-              }}
-            >
-              <span className="today-room-nudge-avatars" aria-hidden="true">
-                {myRoomActivities.slice(0, 3).map((activity) => <i key={activity.id}>{activity.memberAvatar}</i>)}
-              </span>
-              <span><strong>{myRoom.name}에 새 사진이 올라왔어요</strong><small>멤버들의 오늘 식탁 보러가기</small></span>
-              <b aria-hidden="true">→</b>
-            </Link>
+          {showRoomPhotoNudge && (
+            <div className="today-room-nudge-wrap">
+              <Link
+                className="today-room-nudge"
+                href={roomsWithNewActivity.length > 1 ? "/rooms" : `/rooms/${roomsWithNewActivity[0].room.id}`}
+                onClick={() => {
+                  const nextSeen: Record<string, string> = {};
+                  roomsWithNewActivity.forEach(({ room, latestId }) => {
+                    markActivitySeen(room.id, latestId);
+                    nextSeen[room.id] = latestId;
+                  });
+                  setSeenActivityMap((prev) => ({ ...prev, ...nextSeen }));
+                }}
+              >
+                <span className="today-room-nudge-avatars" aria-hidden="true">
+                  {roomsWithNewActivity.length > 1
+                    ? roomsWithNewActivity.slice(0, 3).map(({ room }) => <i key={room.id}>{room.emoji}</i>)
+                    : roomsWithNewActivity[0].activities.slice(0, 3).map((activity) => <i key={activity.id}>{activity.memberAvatar}</i>)}
+                </span>
+                <span>
+                  <strong>
+                    {roomsWithNewActivity.length > 1
+                      ? `${roomsWithNewActivity.map(({ room }) => room.name).join(", ")}에 새 사진이 올라왔어요`
+                      : `${roomsWithNewActivity[0].room.name}에 새 사진이 올라왔어요`}
+                  </strong>
+                  <small>{roomsWithNewActivity.length > 1 ? "얌로그 모임 목록에서 확인해보세요" : "멤버들의 오늘 식탁 보러가기"}</small>
+                </span>
+                <b aria-hidden="true">→</b>
+              </Link>
+              <button type="button" className="today-room-nudge-close" onClick={() => nudgeKey && setDismissedNudgeKey(nudgeKey)} aria-label="닫기">×</button>
+            </div>
           )}
-          {showNoRoomActivityNotice && myRoom && (
-            <div className="today-room-nudge today-room-nudge-static">
-              <span className="today-room-nudge-avatars" aria-hidden="true" />
-              <span><strong>오늘은 아무도 등록하지 않았어요</strong><small>{myRoom.name}에서 가장 먼저 기록해보세요</small></span>
+          {showNoRoomActivityNotice && (
+            <div className="today-room-nudge-wrap">
+              <div className="today-room-nudge today-room-nudge-static">
+                <span className="today-room-nudge-avatars" aria-hidden="true" />
+                <span><strong>오늘은 아무도 등록하지 않았어요</strong><small>{myRooms.length === 1 ? `${myRooms[0].name}에서 가장 먼저 기록해보세요` : "먼저 기록해서 모임에 알려보세요"}</small></span>
+              </div>
+              <button type="button" className="today-room-nudge-close" onClick={() => emptyKey && setDismissedEmptyKey(emptyKey)} aria-label="닫기">×</button>
             </div>
           )}
         </div>
