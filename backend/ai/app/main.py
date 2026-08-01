@@ -30,7 +30,14 @@ from app.services.vision_analyzer import build_analyzer  # noqa: E402
 
 logger = logging.getLogger("ai_service")
 
-app = FastAPI(title="AI Service")
+# /docs, /redoc, /openapi.json은 settings.enable_api_docs(기본 False)로 게이트한다
+# - 자세한 이유는 app/core/config.py 주석 참고.
+app = FastAPI(
+    title="AI Service",
+    docs_url="/docs" if settings.enable_api_docs else None,
+    redoc_url="/redoc" if settings.enable_api_docs else None,
+    openapi_url="/openapi.json" if settings.enable_api_docs else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
