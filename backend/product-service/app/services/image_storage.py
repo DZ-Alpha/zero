@@ -37,14 +37,19 @@ def extension_for_content_type(content_type: str) -> str | None:
 
 
 def build_object_key(extension: str, *, key_uuid: str | None = None) -> str:
-    """product-images/{uuid}.{ext} object key 생성."""
+    """object key = {uuid}.{ext}. 버킷명(product-images)은 여기에 넣지 않는다 —
+    put_object의 Bucket 인자와 public_path_for_key의 /b/product-images/ prefix가
+    이미 버킷을 가리키므로, 여기서 product-images/를 붙이면 실제 저장 위치가
+    product-images/product-images/{uuid} 로 이중이 돼 서빙 경로와 안 맞는다(404)."""
     key_uuid = key_uuid or str(uuid.uuid4())
-    return f"product-images/{key_uuid}.{extension}"
+    return f"{key_uuid}.{extension}"
 
 
 def public_path_for_key(object_key: str) -> str:
-    """object key → 브라우저가 쓸 경로(/b 프록시 경유, 공개 버킷)."""
-    return f"/b/{object_key}"
+    """object key({uuid}.{ext}) → 브라우저가 쓸 경로. 버킷명(product-images)은
+    여기서 붙인다 — SELF_HOSTED_PREFIX(/b/product-images/)가 곧 버킷 경로이고,
+    Istio가 이 prefix를 보고 MinIO product-images 버킷으로 라우팅한다."""
+    return f"{SELF_HOSTED_PREFIX}{object_key}"
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10MB — diet 업로드 상한과 동일
