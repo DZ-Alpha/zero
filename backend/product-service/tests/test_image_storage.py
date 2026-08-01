@@ -31,11 +31,12 @@ def test_extension_for_content_type_unknown_returns_none():
 
 
 def test_build_object_key():
-    assert st.build_object_key("jpg", key_uuid="1234") == "product-images/1234.jpg"
+    assert st.build_object_key("jpg", key_uuid="1234") == "1234.jpg"
 
 
 def test_public_path_for_key():
-    assert st.public_path_for_key("product-images/1234.jpg") == "/b/product-images/1234.jpg"
+    # object_key는 버킷명 없이 {uuid}.{ext}; public 경로에서 /b/product-images/ 를 붙인다
+    assert st.public_path_for_key("1234.jpg") == "/b/product-images/1234.jpg"
 
 
 def test_store_external_image_returns_input_when_already_self_hosted():
@@ -68,7 +69,7 @@ def test_store_external_image_happy_path_uploads_and_returns_path():
     fake_s3.put_object.assert_called_once()
     kwargs = fake_s3.put_object.call_args.kwargs
     assert kwargs["Bucket"] == "product-images"
-    assert kwargs["Key"] == "product-images/fixed-uuid.jpg"
+    assert kwargs["Key"] == "fixed-uuid.jpg"
     assert kwargs["ContentType"] == "image/jpeg"
 
 
