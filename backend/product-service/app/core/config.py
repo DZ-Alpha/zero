@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     bedrock_model_id: str = "anthropic.claude-haiku-4-5-20251001-v1:0"
     bedrock_region: str = "us-east-1"
 
+    # 상품 이미지 자체 호스팅(MinIO). diet-service와 같은 MinIO를 쓰되 버킷만
+    # 다르다(product-images, 공개 read). 비어있으면 이미지 저장을 시도하지 않고
+    # 원본 URL을 그대로 둔다 — 잘못된 설정으로 조용히 실패하지 않도록.
+    minio_endpoint: str = ""
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_product_bucket: str = "product-images"
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)
