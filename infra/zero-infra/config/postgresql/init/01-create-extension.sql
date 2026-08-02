@@ -1,4 +1,6 @@
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
 
 CREATE TABLE IF NOT EXISTS service.product_embeddings (
     product_id  UUID PRIMARY KEY REFERENCES service.products(product_id) ON DELETE CASCADE,
