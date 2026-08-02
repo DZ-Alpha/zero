@@ -2,7 +2,7 @@ import uuid
 import logging
 from decimal import Decimal
 
-from sqlalchemy import select, or_, func, exists, and_, case
+from sqlalchemy import select, or_, func, exists, and_, case, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -92,18 +92,24 @@ async def search_products(
     sort: str | None,
     page: int,
 ) -> list[Product]:
-    stmt = _apply_search_filters(select(Product), query, category_codes, warning_codes)
+    # 검색어가 없으면 기존 ORM 경로(카테고리 필터 등). 검색어가 있으면 키워드로
+    # products를 부분검색해 관련도 순으로 반환한다.
+    if not query:
+        stmt = _apply_search_filters(select(Product), None, category_codes, warning_codes)
+        stmt = stmt.order_by(Product.product_name).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
 
-    # created_at 컬럼이 데이터팀 재설계로 삭제돼 "최신순" 정렬은 불가능하다.
-    # sort="abc"거나 검색어가 없으면(카테고리만 탐색) 이름순, 검색어가 있으면
-    # 기본(rank)으로 관련도순 정렬.
-    if query and sort != "abc":
-        stmt = stmt.order_by(_relevance_rank(query), Product.product_name)
-    else:
-        stmt = stmt.order_by(Product.product_name)
-
-    stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
-    result = await db.execute(stmt)
+    sql = (
+        "SELECT product_id, report_no, product_name, brand_name, manufacturer_name, "
+        "food_type, serving_value, serving_unit, calories, carbohydrate, sugars, "
+        "protein, fat, sodium, ingredient_text, image_url, purchase_url "
+        "FROM service.products "
+        "WHERE product_name ILIKE '%" + query + "%' OR brand_name ILIKE '%" + query + "%' "
+        "ORDER BY product_name "
+        "LIMIT " + str(PAGE_SIZE) + " OFFSET " + str((page - 1) * PAGE_SIZE)
+    )
+    result = await db.execute(select(Product).from_statement(text(sql)))
     return list(result.scalars().all())
 
 
