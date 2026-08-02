@@ -511,6 +511,58 @@ async def get_or_create_thread(
     return thread
 
 
+async def get_or_create_threads_bulk(
+    db: AsyncSession, room_id: uuid.UUID, record_date: date, keys: list[tuple[int, str]]
+) -> dict[tuple[int, str], RoomMealThread]:
+    """get_or_create_thread를 (member, mealType) 슬롯 수만큼(최대 멤버수×4)
+    반복 호출하면 방 상세를 열 때마다 그만큼 쿼리가 나간다(2026-08-01
+    부하테스트에서 community-svc가 diet-svc 이벤트 루프 고정 이후 새 최대
+    병목으로 드러난 원인 중 가장 컸다) - 있는 스레드를 한 번에 읽고, 없는
+    것만 모아서 한 번에 만든다. id는 default=uuid.uuid4라 flush 없이도
+    db.add() 시점에 이미 채워져 있어 재조회가 필요 없다. 동시성 처리(rollback
+    후 재조회)는 get_or_create_thread와 같은 이유·같은 방식."""
+    if not keys:
+        return {}
+    user_ids = {uid for uid, _mt in keys}
+    meal_types = {mt for _uid, mt in keys}
+
+    async def _select_existing() -> dict[tuple[int, str], RoomMealThread]:
+        result = await db.execute(
+            select(RoomMealThread).where(
+                RoomMealThread.room_id == room_id,
+                RoomMealThread.user_id.in_(user_ids),
+                RoomMealThread.record_date == record_date,
+                RoomMealThread.meal_type.in_(meal_types),
+            )
+        )
+        return {(t.user_id, t.meal_type): t for t in result.scalars().all()}
+
+    threads = await _select_existing()
+    missing = [key for key in keys if key not in threads]
+    if not missing:
+        return threads
+
+    new_threads = [
+        RoomMealThread(room_id=room_id, user_id=uid, record_date=record_date, meal_type=mt)
+        for uid, mt in missing
+    ]
+    for thread in new_threads:
+        db.add(thread)
+    try:
+        await db.flush()
+        await db.commit()
+        for thread in new_threads:
+            threads[(thread.user_id, thread.meal_type)] = thread
+    except Exception:
+        # 동시에 같은 조합을 만들려던 다른 요청과 unique 제약이 부딪히면,
+        # get_or_create_thread와 같은 방식으로 롤백 후 다시 읽어온다.
+        await db.rollback()
+        threads = await _select_existing()
+        if any(key not in threads for key in keys):
+            raise
+    return threads
+
+
 async def get_thread(db: AsyncSession, room_id: uuid.UUID, thread_id: uuid.UUID) -> RoomMealThread:
     thread = await db.get(RoomMealThread, thread_id)
     if thread is None or thread.room_id != room_id:
@@ -570,6 +622,20 @@ async def count_comments(db: AsyncSession, thread_id: uuid.UUID) -> int:
     return result.scalar_one()
 
 
+async def count_comments_bulk(db: AsyncSession, thread_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """count_comments를 스레드 수만큼 반복 호출하면(build_meal_slots가 방
+    상세를 열 때마다 그렇게 했다) N+1이 된다(2026-08-01 부하테스트에서
+    community-svc가 새 최대 병목으로 드러난 원인 중 하나) - group by로 한 번에."""
+    if not thread_ids:
+        return {}
+    result = await db.execute(
+        select(RoomMealComment.thread_id, func.count())
+        .where(RoomMealComment.thread_id.in_(thread_ids), RoomMealComment.deleted_at.is_(None))
+        .group_by(RoomMealComment.thread_id)
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
 async def toggle_reaction(db: AsyncSession, thread_id: uuid.UUID, user_id: int) -> tuple[bool, int]:
     existing = await db.get(RoomMealReaction, {"thread_id": thread_id, "user_id": user_id})
     if existing is not None:
@@ -593,9 +659,32 @@ async def count_reactions(db: AsyncSession, thread_id: uuid.UUID) -> int:
     return result.scalar_one()
 
 
+async def count_reactions_bulk(db: AsyncSession, thread_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """count_comments_bulk와 같은 이유 - 반응 수도 group by 한 번으로."""
+    if not thread_ids:
+        return {}
+    result = await db.execute(
+        select(RoomMealReaction.thread_id, func.count())
+        .where(RoomMealReaction.thread_id.in_(thread_ids))
+        .group_by(RoomMealReaction.thread_id)
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
 async def has_reacted(db: AsyncSession, thread_id: uuid.UUID, user_id: int) -> bool:
     existing = await db.get(RoomMealReaction, {"thread_id": thread_id, "user_id": user_id})
     return existing is not None
+
+
+async def reacted_thread_ids_bulk(db: AsyncSession, thread_ids: list[uuid.UUID], user_id: int) -> set[uuid.UUID]:
+    """has_reacted를 스레드 수만큼 반복 호출하던 것을 한 번의 IN 쿼리로."""
+    if not thread_ids:
+        return set()
+    result = await db.execute(
+        select(RoomMealReaction.thread_id)
+        .where(RoomMealReaction.thread_id.in_(thread_ids), RoomMealReaction.user_id == user_id)
+    )
+    return {row[0] for row in result.all()}
 
 
 # ── 콕 찌르기 ────────────────────────────────────────────────────────────────
@@ -659,6 +748,38 @@ async def get_last_nudge(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def get_last_nudges_bulk(
+    db: AsyncSession,
+    room_id: uuid.UUID,
+    sender_id: int,
+    target_user_ids: set[int],
+    record_date: date,
+    meal_types: set[str],
+) -> dict[tuple[int, str], RoomNudge]:
+    """get_last_nudge를 (대상 멤버, mealType) 슬롯 수만큼 반복 호출하면
+    build_meal_slots가 방 상세를 열 때마다 그만큼 쿼리가 나간다(2026-08-01
+    부하테스트 - community-svc 새 최대 병목 원인 중 하나). 조건에 맞는
+    콕찌르기를 created_at desc로 한 번에 읽어서, (대상, mealType)별로 처음
+    보이는(=가장 최신) 것만 취한다."""
+    if not target_user_ids or not meal_types:
+        return {}
+    result = await db.execute(
+        select(RoomNudge)
+        .where(
+            RoomNudge.room_id == room_id,
+            RoomNudge.sender_id == sender_id,
+            RoomNudge.target_user_id.in_(target_user_ids),
+            RoomNudge.record_date == record_date,
+            RoomNudge.meal_type.in_(meal_types),
+        )
+        .order_by(RoomNudge.created_at.desc())
+    )
+    latest: dict[tuple[int, str], RoomNudge] = {}
+    for nudge in result.scalars().all():
+        latest.setdefault((nudge.target_user_id, nudge.meal_type), nudge)
+    return latest
 
 
 async def list_incoming_nudges(
