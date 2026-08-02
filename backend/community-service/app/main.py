@@ -12,7 +12,7 @@ logging.Formatter.converter = time.gmtime
 logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s")
 
 from app.core.config import settings  # noqa: E402
-from app.core.database import Base, engine  # noqa: E402
+from app.core.database import Base, run_with_retry  # noqa: E402
 from app.models import OWNED_TABLES  # noqa: E402, F401 (import registers Notice/NoticeLike/Tag on Base.metadata)
 from app.routers import health, notice, rooms, sweetener  # noqa: E402
 
@@ -27,16 +27,19 @@ _ROOM_NUDGE_COLUMN_MIGRATIONS = [
 ]
 
 
+async def _migrate(conn) -> None:
+    # `community` is this service's own schema — created/migrated here.
+    # `service` (where Tag/tags lives) is data-team managed and never
+    # touched: create_all(tables=...) is scoped to OWNED_TABLES only.
+    await conn.execute(text("CREATE SCHEMA IF NOT EXISTS community"))
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
+    for statement in _ROOM_NUDGE_COLUMN_MIGRATIONS:
+        await conn.execute(text(statement))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        # `community` is this service's own schema — created/migrated here.
-        # `service` (where Tag/tags lives) is data-team managed and never
-        # touched: create_all(tables=...) is scoped to OWNED_TABLES only.
-        await conn.execute(text("CREATE SCHEMA IF NOT EXISTS community"))
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
-        for statement in _ROOM_NUDGE_COLUMN_MIGRATIONS:
-            await conn.execute(text(statement))
+    await run_with_retry(_migrate)
     yield
 
 

@@ -12,9 +12,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(nam
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.database import Base, engine
+from app.core.database import Base, engine, run_with_retry
 from app.models import AdminAccount, SocialAccount, User  # noqa: F401
-from app.routers import admin_auth, auth, health, items, user, webhooks
+from app.routers import admin_auth, auth, health, items, test_login, user, webhooks
 
 logger = logging.getLogger("app.main")
 
@@ -32,8 +32,7 @@ _USER_COLUMN_MIGRATIONS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await run_with_retry(lambda conn: conn.run_sync(Base.metadata.create_all))
     # 컬럼 마이그레이션은 create_all과 별도 트랜잭션으로 분리 — 여기서 하나라도 실패해도
     # 로그인 자체(가장 중요한 기능)는 계속 뜨게 한다. 2026-07-21 장애: 스키마 접두사
     # 오류로 이 블록이 죽으면서 로그인 서비스 전체가 기동 불가 상태가 됐었다.
@@ -77,3 +76,9 @@ app.include_router(auth.router)
 app.include_router(admin_auth.router)
 app.include_router(user.router)
 app.include_router(webhooks.router)
+
+# 부하테스트 전용 — settings.enable_test_login(기본 False)로 게이트한다.
+# 운영에 켜지면 user_id만 알면 누구든 그 계정으로 로그인할 수 있으므로
+# 스테이징에서만 켠다 - 자세한 이유는 app/core/config.py 주석 참고.
+if settings.enable_test_login:
+    app.include_router(test_login.router)

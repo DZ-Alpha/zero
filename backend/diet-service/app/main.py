@@ -10,7 +10,7 @@ logging.Formatter.converter = time.gmtime
 logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s")
 
 from app.core.config import settings  # noqa: E402
-from app.core.database import Base, engine  # noqa: E402
+from app.core.database import Base, run_with_retry  # noqa: E402
 from app.models.meal_item import MealItem  # noqa: F401, E402
 from app.models.meal_log import MealLog  # noqa: F401, E402
 from app.routers import diet, health, home, uploads  # noqa: E402
@@ -49,18 +49,21 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-async def on_startup() -> None:
+async def _migrate(conn) -> None:
     # diet-service 소유 테이블만 CREATE TABLE IF NOT EXISTS.
     # ProductRef(Product 소유) / UserHealthProfileRef(Main 소유)는 DDL 대상 아님.
     # v_meal_totals 뷰는 DB 팀이 관리 — DDL 금지.
     OWNED_TABLES = [MealLog.__table__, MealItem.__table__]
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES)
-        )
-        for statement in _MEAL_LOG_COLUMN_MIGRATIONS:
-            await conn.execute(text(statement))
+    await conn.run_sync(
+        lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES)
+    )
+    for statement in _MEAL_LOG_COLUMN_MIGRATIONS:
+        await conn.execute(text(statement))
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    await run_with_retry(_migrate)
     logger.info("diet-service started, owned tables ensured")
     await start_consumer()
 

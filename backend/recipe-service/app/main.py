@@ -14,20 +14,23 @@ logging.Formatter.converter = time.gmtime
 logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s")
 
 from app.core.config import settings  # noqa: E402
-from app.core.database import Base, engine  # noqa: E402
+from app.core.database import Base, run_with_retry  # noqa: E402
 from app.models import OWNED_TABLES  # noqa: E402, F401 (import registers RecipeFavorite on Base.metadata)
 from app.routers import health, recipe, substitute  # noqa: E402
 
 logger = logging.getLogger("recipe_service")
 
 
+async def _migrate(conn) -> None:
+    # `recipe`는 이 서비스 전용 신규 스키마(RC-0111/0112 찜 기능) — `service`
+    # 스키마(레시피 데이터팀 소유)는 여기서 절대 건드리지 않는다.
+    await conn.execute(text("CREATE SCHEMA IF NOT EXISTS recipe"))
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        # `recipe`는 이 서비스 전용 신규 스키마(RC-0111/0112 찜 기능) — `service`
-        # 스키마(레시피 데이터팀 소유)는 여기서 절대 건드리지 않는다.
-        await conn.execute(text("CREATE SCHEMA IF NOT EXISTS recipe"))
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
+    await run_with_retry(_migrate)
     logger.info("recipe-service started, owned tables ensured")
     yield
 
