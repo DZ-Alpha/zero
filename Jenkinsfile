@@ -283,8 +283,15 @@ pipeline {
                                         # staging 유저(user_id=1) 토큰을 pyjwt로 직접 서명. exp 짧게(1h), 매 스캔 새로 발급.
                                         TOKEN=\$(python3 -c "import jwt,time,os;s=os.environ['STG_JWT_SECRET'];n=int(time.time());print(jwt.encode({'sub':'1','user_id':1,'provider':'dast-ci','nickname':'ci','role':'user','iat':n,'exp':n+3600},s,algorithm='HS256'))")
                                         # openapi import + active scan + Bearer replacer.
-                                        # -I: 경고(WARN,exit2)는 통과 처리 — 보안헤더 등 Medium 이하는 승격 막지 않음.
-                                        #    High(exit1)만 차단. (baseline과 동일 기준: High면 실패)
+                                        # -I: 경고(WARN)는 통과 처리 — 보안헤더 등 Medium 이하는 승격 막지 않음.
+                                        # ★ -c zap-api-scan.conf (2026-08-02): zap-api-scan은 기본적으로 "모든
+                                        #   알림을 WARN으로 취급"한다(공식 문서). 그래서 SQL Injection을 High로
+                                        #   탐지해도 WARN이라 -I로 통과돼 버렸다(실증: SQLi 탐지했으나 승격됨).
+                                        #   config로 주입 계열(SQLi/XSS/OS·코드·템플릿·XPath·LDAP 주입)만 FAIL로
+                                        #   승격 → 탐지 시 exit 1로 차단. 나머지는 config에 없으니 기본 WARN 유지
+                                        #   (오탐으로 무관 서비스 배포가 막히지 않음). conf는 zero repo 루트에 있고,
+                                        #   컨테이너의 /zap/wrk(=zap-out 마운트)로 복사해 -c로 전달한다.
+                                        cp "\$WORKSPACE/zap-api-scan.conf" \$WORKSPACE/zap-out/zap-api-scan.conf
                                         # ★ 좀비 방지(2026-07-31): timeout이 죽이는 건 docker CLI뿐이라
                                         #   ZAP 컨테이너가 좀비로 생존. 이 블록은 set -e라 TARGET_IP 미도달/
                                         #   토큰 실패로 중간 exit돼도 trap EXIT이 컨테이너를 반드시 kill.
@@ -295,10 +302,11 @@ pipeline {
                                         timeout 600 docker run --rm --name "\$ZAP_NAME" -v \$WORKSPACE/zap-out:/zap/wrk/:rw \
                                             ghcr.io/zaproxy/zaproxy:stable \
                                             zap-api-scan.py -t "http://\$TARGET_IP:${PORT}/openapi.json" -f openapi -I \
+                                            -c zap-api-scan.conf \
                                             -z "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Authorization -config replacer.full_list(0).replacement=Bearer\\ \$TOKEN" \
                                             -r zap-api-${svc}-report.html > \$WORKSPACE/zap-out/zap-api-${svc}.log 2>&1 || API_RC=\$?
                                         API_RC=\${API_RC:-0}
-                                        echo "ZAP active ${svc} exit=\$API_RC (0=PASS 1=FAIL/High, -I라 WARN은 0)"
+                                        echo "ZAP active ${svc} exit=\$API_RC (0=PASS 1=FAIL/주입계열, WARN은 -I로 통과)"
                                         tail -20 \$WORKSPACE/zap-out/zap-api-${svc}.log
                                         if [ "\$API_RC" = "1" ]; then
                                             echo "active scan FAIL(High) — ${svc} prod 승격 차단"
