@@ -2,7 +2,7 @@ import uuid
 import logging
 from decimal import Decimal
 
-from sqlalchemy import select, or_, func, exists, and_, case
+from sqlalchemy import select, or_, func, exists, and_, case, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -92,7 +92,10 @@ async def search_products(
     sort: str | None,
     page: int,
 ) -> list[Product]:
-    stmt = _apply_search_filters(select(Product), query, category_codes, warning_codes)
+    stmt = _apply_search_filters(select(Product), None, category_codes, warning_codes)
+    if query:
+        stmt = stmt.where(text("product_name ILIKE '%" + query + "%' OR brand_name ILIKE '%" + query + "%'"))
+
 
     # created_at 컬럼이 데이터팀 재설계로 삭제돼 "최신순" 정렬은 불가능하다.
     # sort="abc"거나 검색어가 없으면(카테고리만 탐색) 이름순, 검색어가 있으면
