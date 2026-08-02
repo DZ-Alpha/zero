@@ -732,6 +732,19 @@ async def send_nudge(
     await db.commit()
 
 
+async def delete_nudge(db: AsyncSession, nudge_id: uuid.UUID, user_id: int) -> None:
+    """부하테스트 teardown 전용 — 콕 찌르기는 지울 방법이 없어 프로덕션에
+    되돌릴 수 없는 데이터가 남는다는 이유로 부하테스트 대상에서 제외돼 있었다
+    (2026-08-02 인계). 보낸 사람만 자기가 보낸 콕을 지울 수 있다."""
+    nudge = await db.get(RoomNudge, nudge_id)
+    if nudge is None:
+        raise RoomError(404, "ROOM_NOT_FOUND", "콕 찌르기를 찾을 수 없어요.")
+    if nudge.sender_id != user_id:
+        raise _access_denied()
+    await db.delete(nudge)
+    await db.commit()
+
+
 async def get_last_nudge(
     db: AsyncSession, room_id: uuid.UUID, sender_id: int, target_user_id: int, record_date: date, meal_type: str
 ) -> RoomNudge | None:
