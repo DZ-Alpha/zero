@@ -11,7 +11,7 @@ logging.Formatter.converter = time.gmtime
 logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s")
 
 from app.core.config import settings  # noqa: E402
-from app.core.database import Base, engine  # noqa: E402
+from app.core.database import Base, run_with_retry  # noqa: E402
 from app.models import OWNED_TABLES  # noqa: E402, F401 (import registers all models on Base.metadata)
 from app.routers import gauge, health, health_profile, home, preferences, rank, recommend, search  # noqa: E402
 
@@ -20,11 +20,12 @@ logger = logging.getLogger("main_service")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        # user_health_profiles/user_preferences는 이 서비스가 소유 — 나머지
-        # (Product/Diet/Ingredients 소유 읽기전용 모델)는 OWNED_TABLES에서
-        # 제외돼 있어 여기서 절대 건드리지 않는다.
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
+    # user_health_profiles/user_preferences는 이 서비스가 소유 — 나머지
+    # (Product/Diet/Ingredients 소유 읽기전용 모델)는 OWNED_TABLES에서
+    # 제외돼 있어 여기서 절대 건드리지 않는다.
+    await run_with_retry(
+        lambda conn: conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
+    )
     logger.info("main-service started, owned tables ensured")
     yield
 

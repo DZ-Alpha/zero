@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     # 기본은 꺼둔다 - 로컬 개발은 .env.example의 ENABLE_API_DOCS=true로 켜져 있다.
     enable_api_docs: bool = False
 
+    # 2026-08-02 부하테스트 인계 — 카카오 인가코드가 1회용·단기만료라 k6로
+    # 소셜 로그인 콜백을 재생할 수 없다. 외부 IdP 왕복만 건너뛰고 콜백과 동일한
+    # 내부 처리(사용자 조회 + JWT 발급)를 태우는 테스트 전용 로그인이다.
+    # secure-by-default로 기본은 꺼둔다 - 스테이징에서만 true로 켠다. 운영에
+    # 켜지면 user_id만 알면 누구든 그 계정으로 로그인할 수 있으므로 반드시 false.
+    enable_test_login: bool = False
+
     naver_client_id: str = ""
     naver_client_secret: str = ""
     naver_redirect_uri: str = "http://localhost:8000/social-access/naver/callback"

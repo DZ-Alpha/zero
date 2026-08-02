@@ -2,7 +2,7 @@ import logging
 import time
 
 import jwt
-from fastapi import Header, HTTPException, Query, Response
+from fastapi import Header, HTTPException, Response
 
 from app.core.config import settings
 
@@ -39,16 +39,14 @@ def _decode_and_refresh(token: str, response: Response) -> dict:
 
 def get_current_user(
     response: Response,
-    usr: str | None = Query(None, description="JWT 토큰 (또는 Authorization: Bearer 헤더)"),
     authorization: str | None = Header(None),
 ) -> dict:
-    """PRODUCTION_HANDOFF.md P0-4 — usr 쿼리파라미터와 Authorization: Bearer 헤더를
-    둘 다 받는다(헤더 우선). 기존 usr 방식 호출은 그대로 동작 — 프론트가 자기 페이스로
-    헤더 방식으로 옮겨갈 수 있게 병행 지원한다."""
+    """2026-08-02 QA 리포트 — usr 쿼리파라미터로 JWT를 받으면 Istio 접속 로그·
+    Loki·브라우저 히스토리·Referrer에 토큰이 그대로 남는다(OWASP REST Security
+    Cheat Sheet, RFC 6750 §2.3). 프론트는 이미 Authorization: Bearer 헤더로만
+    호출하므로(PRODUCTION_HANDOFF.md P0-4 대응 완료) 쿼리 폴백을 제거한다."""
     if authorization and authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
-    elif usr:
-        token = usr
     else:
         raise HTTPException(status_code=401, detail="인증 정보가 없습니다.")
     return _decode_and_refresh(token, response)

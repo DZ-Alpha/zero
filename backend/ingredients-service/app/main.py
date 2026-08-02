@@ -10,7 +10,7 @@ logging.Formatter.converter = time.gmtime
 logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s")
 
 from app.core.config import settings  # noqa: E402
-from app.core.database import Base, engine  # noqa: E402
+from app.core.database import Base, run_with_retry  # noqa: E402
 from app.models.tag import Tag  # noqa: F401, E402
 from app.routers import admin, health, tags  # noqa: E402
 
@@ -33,14 +33,17 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-async def on_startup() -> None:
+async def _migrate(conn) -> None:
     # ingredients-service 소유 테이블만 CREATE TABLE IF NOT EXISTS.
     OWNED_TABLES = [Tag.__table__]
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES)
-        )
+    await conn.run_sync(
+        lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES)
+    )
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    await run_with_retry(_migrate)
     logger.info("ingredients-service started, owned tables ensured")
 
 

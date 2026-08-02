@@ -130,11 +130,10 @@ async def first_set(
 @router.get("/mypage")
 async def get_mypage(
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user_id = _decode_user_id_or_401(_resolve_token(usr, authorization), response)
+    user_id = _decode_user_id_or_401(_resolve_token(None, authorization), response)
 
     user = await db.get(User, user_id)
     if user is None:
@@ -168,11 +167,10 @@ async def get_mypage(
 async def unlink_social(
     provider: str,
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user_id = _decode_user_id_or_401(_resolve_token(usr, authorization), response)
+    user_id = _decode_user_id_or_401(_resolve_token(None, authorization), response)
 
     try:
         remaining = await user_store.unlink_social_account(db, user_id=user_id, provider=provider)
@@ -188,7 +186,6 @@ async def unlink_social(
 async def leave(
     exituser: str,
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
@@ -197,7 +194,7 @@ async def leave(
 
     # 탈퇴 처리 자체엔 갱신 토큰이 의미 없지만(계정이 곧 사라짐), 검증 로직은
     # 통일해서 쓴다 — 헤더는 그냥 무시돼도 무해하다.
-    user_id = _decode_user_id_or_401(_resolve_token(usr, authorization), response)
+    user_id = _decode_user_id_or_401(_resolve_token(None, authorization), response)
     await user_store.delete_user(db, user_id)
 
     return {"status": "SUCCESS"}

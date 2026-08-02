@@ -501,6 +501,23 @@ async def post_nudge(
     return await _idempotent(db, user.user_id, idempotency_key, run)
 
 
+@router.delete("/{room_id}/nudges/{nudge_id}")
+async def delete_nudge(
+    room_id: str,
+    nudge_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: UserIdentity = Depends(require_room_user),
+) -> dict[str, str]:
+    """부하테스트 teardown 전용 — 보낸 사람만 자기가 보낸 콕을 지울 수 있다."""
+    _to_uuid(room_id)
+    nid = _to_uuid(nudge_id)
+    try:
+        await room_store.delete_nudge(db, nid, user.user_id)
+    except RoomError as error:
+        raise _err(error)
+    return {"status": "deleted"}
+
+
 # ── 댓글/반응 ────────────────────────────────────────────────────────────────
 
 def _comment_dict(comment, viewer_id: int, display_name: str) -> dict[str, object]:

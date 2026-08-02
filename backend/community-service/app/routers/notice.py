@@ -134,11 +134,10 @@ async def edit_notice(
 async def remove_notice(
     notice_id: uuid.UUID,
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    get_current_admin_from_token(resolve_token(usr, authorization), response)
+    get_current_admin_from_token(resolve_token(None, authorization), response)
     try:
         await delete_notice(db, notice_id)
     except NoticeNotFoundError as error:
@@ -151,11 +150,10 @@ async def remove_notice(
 async def like_notice(
     notice_id: uuid.UUID,
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user = get_current_user_from_token(resolve_token(usr, authorization), response)
+    user = get_current_user_from_token(resolve_token(None, authorization), response)
     try:
         liked, count = await toggle_like(db, notice_id, user.user_id)
     except NoticeNotFoundError as error:

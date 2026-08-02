@@ -454,8 +454,14 @@ export function sendChatbotMessage(msg: string, token?: string | null, template?
 export type ChatHistoryMessage = { role: "user" | "assistant"; text: string; imageUrl?: string };
 
 // conversation-memory-frontend-spec.md §2 — 채팅창을 열 때 이전 대화를 복원한다.
+// 2026-08-02 QA 리포트 — usr(JWT)를 쿼리스트링에 실으면 로그에 토큰이 그대로
+// 남는다. 로그인 사용자는 Authorization 헤더로 보내고, 비로그인 게스트만
+// session_id를 쿼리로 보낸다(토큰이 아니라 식별자라 노출돼도 안전).
 export function getChatHistory(token?: string | null) {
-  return apiRequest<{ messages: ChatHistoryMessage[] }>(query("/ai/chatbot/history", chatSessionParams(token)));
+  return apiRequest<{ messages: ChatHistoryMessage[] }>(
+    query("/ai/chatbot/history", token ? {} : { session_id: getGuestSessionId() }),
+    token ? { headers: authHeader(token) } : undefined,
+  );
 }
 
 export type ChatbotStreamEvent =

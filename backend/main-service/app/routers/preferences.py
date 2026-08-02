@@ -31,11 +31,10 @@ class AddPreferenceRequest(BaseModel):
 @router.get("")
 async def get_preferences(
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user = get_current_user_from_token(resolve_token(usr, authorization), response)
+    user = get_current_user_from_token(resolve_token(None, authorization), response)
     preferences = await list_preferences(db, user.user_id)
     return {
         "preferences": [
@@ -76,11 +75,10 @@ async def create_preference(
 async def delete_preference(
     preference_id: uuid.UUID,
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    user = get_current_user_from_token(resolve_token(usr, authorization), response)
+    user = get_current_user_from_token(resolve_token(None, authorization), response)
     deleted = await remove_preference(db, user.user_id, preference_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="선호 정보를 찾을 수 없습니다.")

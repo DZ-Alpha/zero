@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Header, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -179,14 +179,23 @@ async def chatbot_stream(
 @router.get("/chatbot/history")
 async def chatbot_history(
     response: Response,
+    authorization: str | None = Header(None),
     usr: str | None = Query(default=None),
     session_id: str | None = Query(default=None),
     deps: Dependencies = Depends(get_dependencies),
 ) -> dict:
-    # 로그인이면 usr(JWT)로 user_id, 아니면 session_id로 게스트 키.
+    # 2026-08-02 QA 리포트 — usr을 쿼리스트링으로 받으면 JWT가 Istio/Loki 로그에
+    # 그대로 남는다. Authorization: Bearer 헤더를 우선 사용하고, usr 쿼리는 과거
+    # 프론트 호출과의 호환을 위해서만 폴백으로 남긴다(다음 정리 대상).
+    # 로그인이면 토큰으로 user_id, 아니면 session_id로 게스트 키.
     user_id = None
-    if usr:
-        identity = get_current_user_from_token(usr, response)
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+    elif usr:
+        token = usr
+    if token:
+        identity = get_current_user_from_token(token, response)
         user_id = identity.user_id
     session_key = resolve_session_key(user_id, session_id)
     messages = []
