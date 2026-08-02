@@ -11,11 +11,10 @@ router = APIRouter(prefix="/home")
 @router.get("/user-recommend")
 async def get_user_recommendations(
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user = get_current_user_from_token(resolve_token(usr, authorization), response)
+    user = get_current_user_from_token(resolve_token(None, authorization), response)
     products = await get_recommended_products(db, user.user_id)
 
     return {

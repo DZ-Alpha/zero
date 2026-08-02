@@ -96,11 +96,10 @@ def _serialize(profile: UserHealthProfile | None) -> dict[str, object]:
 @router.get("/health-profile")
 async def read_health_profile(
     response: Response,
-    usr: str | None = None,
     authorization: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    user = get_current_user_from_token(resolve_token(usr, authorization), response)
+    user = get_current_user_from_token(resolve_token(None, authorization), response)
     profile = await get_health_profile(db, user.user_id)
     return _serialize(profile)
 
