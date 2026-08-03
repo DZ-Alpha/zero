@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +23,7 @@ from app.services.product_store import (
     get_ai_summary_cache,
     get_product,
     get_product_tags,
+    get_product_with_tags,
     get_sweetener_tags_for_product,
     list_favorites,
     toggle_favorite,
@@ -32,6 +33,8 @@ from app.services.product_store import (
 logger = logging.getLogger("product_service.product")
 
 router = APIRouter(prefix="/product")
+
+PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300"
 
 _KST = ZoneInfo("Asia/Seoul")
 # 이 시각 이전에 캐싱된 AI 요약(한줄요약/감미료 설명)은 소급 재생성한다 - 이후
@@ -80,16 +83,17 @@ def _product_detail(p: Product, tags: list) -> dict[str, object]:
 
 @router.get("")
 async def get_product_detail(
+    response: Response,
     id: str = Query(..., description="상품 UUID"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     """PR-0201~0203: 상품 기본정보 + 영양성분 + 원재료/알레르기."""
     pid = _to_uuid(id)
     try:
-        product = await get_product(db, pid)
+        product, tags = await get_product_with_tags(db, pid)
     except ProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    tags = await get_product_tags(db, pid)
+    response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return _product_detail(product, tags)
 
 

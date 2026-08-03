@@ -240,12 +240,13 @@ export function getRecipes(page = 1) {
   // 안에서만 더 보여주는 클라이언트 로직이라, 서버에 다음 페이지를 요청하지
   // 않았다). useRecipeCatalog가 hasNext를 보고 다음 page를 이 함수로 다시 부른다.
   return apiRequest<{ recipes: RecipeListItem[]; page: number; pageSize: number; total: number; hasNext: boolean }>(
-    `/recipes?page=${page}`
+    `/recipes?page=${page}`,
+    { cache: "default" },
   );
 }
 
 export function getRecipeDetail(id: number) {
-  return apiRequest<RecipeDetailResponse>(`/recipes/${id}`);
+  return apiRequest<RecipeDetailResponse>(`/recipes/${id}`, { cache: "default" });
 }
 
 export function searchProducts(values: {
@@ -258,6 +259,7 @@ export function searchProducts(values: {
   // 2026-07-19, 백엔드 PRODUCTION_HANDOFF.md P1-1 반영분 — total/pageSize/hasNext 추가.
   return apiRequest<{ items: ProductSearchItem[]; page: number; total?: number; pageSize?: number; hasNext?: boolean }>(
     query("/search", { ...values, page: values.page ?? 1 }),
+    { cache: "default" },
   );
 }
 
@@ -305,7 +307,7 @@ export function getProductFavorites(token: string) {
 }
 
 export function getProductDetail(id: string) {
-  return apiRequest<ProductDetailResponse>(query("/product", { id }));
+  return apiRequest<ProductDetailResponse>(query("/product", { id }), { cache: "default" });
 }
 
 export function getProductAiSummary(id: string) {
@@ -385,7 +387,10 @@ export function deleteDietRecord(token: string, id: string) {
 }
 
 export function getSearchRecommendations(searchQuery: string) {
-  return apiRequest<{ items: Array<{ id: string; name: string }> }>(query("/search/recommend", { query: searchQuery }));
+  return apiRequest<{ items: Array<{ id: string; name: string }> }>(
+    query("/search/recommend", { query: searchQuery }),
+    { cache: "default" },
+  );
 }
 
 export function getRecipeSubstitutes(id: number) {

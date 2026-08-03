@@ -2,7 +2,7 @@ import uuid
 import logging
 from decimal import Decimal
 
-from sqlalchemy import select, or_, func, exists, and_, case
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -24,15 +24,104 @@ class TagNotFoundError(Exception):
     pass
 
 
-def _apply_search_filters(stmt, query: str | None, category_codes: list[str] | None, warning_codes: list[str] | None):
-    if query:
-        pattern = f"%{query}%"
-        stmt = stmt.where(
-            or_(
-                Product.product_name.ilike(pattern),
-                Product.brand_name.ilike(pattern),
-            )
+def _escape_like(value: str) -> str:
+    """Return a literal ILIKE pattern fragment (not a user supplied wildcard)."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _normalized_query(query: str | None) -> str | None:
+    if query is None:
+        return None
+    normalized = query.strip()
+    return normalized or None
+
+
+def _has_hangul(value: str) -> bool:
+    return any("가" <= char <= "힣" for char in value)
+
+
+def _max_edit_distance(query: str) -> int:
+    """Allow a small, predictable number of typos for Korean product names."""
+    length = len(query.replace(" ", ""))
+    if length <= 5:
+        return 1
+    if length <= 12:
+        return 2
+    return 3
+
+
+def _fuzzy_search_text(column):
+    """Ignore a leading marketing label such as ``(저당)`` for typo matching."""
+    return func.btrim(func.regexp_replace(column, r"^\s*\([^)]*\)\s*", ""))
+
+
+def _korean_edit_distance(column, query: str):
+    return func.levenshtein_less_equal(
+        _fuzzy_search_text(column), query, _max_edit_distance(query)
+    )
+
+
+def _name_or_brand_matches(query: str):
+    """Name/brand partial matches plus typo matches.
+
+    The cluster database uses ``C`` locale, where pg_trgm cannot form Korean
+    trigrams. Korean queries therefore use fuzzystrmatch's Levenshtein
+    function, while other queries use pg_trgm's indexed ``%`` operator.
+    """
+    contains_pattern = f"%{_escape_like(query)}%"
+    matches = [
+        Product.product_name.ilike(contains_pattern, escape="\\"),
+        Product.brand_name.ilike(contains_pattern, escape="\\"),
+    ]
+    if _has_hangul(query):
+        max_distance = _max_edit_distance(query)
+        matches.extend((
+            _korean_edit_distance(Product.product_name, query) <= max_distance,
+            _korean_edit_distance(Product.brand_name, query) <= max_distance,
+        ))
+    elif len(query) >= 2:
+        matches.extend((
+            Product.product_name.op("%")(query),
+            Product.brand_name.op("%")(query),
+        ))
+    return or_(*matches)
+
+
+def _apply_search_order(stmt, query: str | None, sort: str | None):
+    """Keep exact/partial results above fuzzy matches, then sort fuzzy by score."""
+    if sort == "abc" or query is None:
+        return stmt.order_by(Product.product_name)
+
+    prefix_pattern = f"{_escape_like(query)}%"
+    contains_pattern = f"%{_escape_like(query)}%"
+    normalized_query = query.lower()
+    match_priority = case(
+        (func.lower(Product.product_name) == normalized_query, 5),
+        (func.lower(Product.brand_name) == normalized_query, 4),
+        (Product.product_name.ilike(prefix_pattern, escape="\\"), 3),
+        (Product.brand_name.ilike(prefix_pattern, escape="\\"), 2),
+        (Product.product_name.ilike(contains_pattern, escape="\\"), 1),
+        else_=0,
+    )
+    if _has_hangul(query):
+        max_distance = _max_edit_distance(query)
+        edit_distance = func.least(
+            _korean_edit_distance(Product.product_name, query),
+            func.coalesce(_korean_edit_distance(Product.brand_name, query), max_distance + 1),
         )
+        return stmt.order_by(match_priority.desc(), edit_distance.asc(), Product.product_name)
+
+    similarity_score = func.greatest(
+        func.similarity(Product.product_name, query),
+        func.coalesce(func.similarity(Product.brand_name, query), 0.0),
+    )
+    return stmt.order_by(match_priority.desc(), similarity_score.desc(), Product.product_name)
+
+
+def _apply_search_filters(stmt, query: str | None, category_codes: list[str] | None, warning_codes: list[str] | None):
+    normalized_query = _normalized_query(query)
+    if normalized_query:
+        stmt = stmt.where(_name_or_brand_matches(normalized_query))
 
     if category_codes:
         # 카테고리 코드 중 하나라도 일치하는 상품 (OR 조건)
@@ -66,24 +155,6 @@ def _apply_search_filters(stmt, query: str | None, category_codes: list[str] | N
     return stmt
 
 
-def _relevance_rank(query: str):
-    """검색어와 얼마나 잘 맞는지를 SQL만으로 점수화한다(낮을수록 우선) - 정식
-    rank(형태소 분석/색인) 구현은 Kafka/MongoDB 파이프라인이 필요해 보류
-    중이지만, 그때까지 "검색하면 정확도 높은 순으로 나와야 한다"는 요청
-    (2026-07-31)에 맞춰 이름 완전일치 > 이름 시작 일치 > 이름 포함 >
-    브랜드 시작 일치 > 브랜드 포함 순으로 최소한의 관련도 정렬을 준다."""
-    prefix = f"{query}%"
-    contains = f"%{query}%"
-    return case(
-        (func.lower(Product.product_name) == query.lower(), 0),
-        (Product.product_name.ilike(prefix), 1),
-        (Product.product_name.ilike(contains), 2),
-        (Product.brand_name.ilike(prefix), 3),
-        (Product.brand_name.ilike(contains), 4),
-        else_=5,
-    )
-
-
 async def search_products(
     db: AsyncSession,
     query: str | None,
@@ -92,19 +163,44 @@ async def search_products(
     sort: str | None,
     page: int,
 ) -> list[Product]:
-    stmt = _apply_search_filters(select(Product), query, category_codes, warning_codes)
-
-    # created_at 컬럼이 데이터팀 재설계로 삭제돼 "최신순" 정렬은 불가능하다.
-    # sort="abc"거나 검색어가 없으면(카테고리만 탐색) 이름순, 검색어가 있으면
-    # 기본(rank)으로 관련도순 정렬.
-    if query and sort != "abc":
-        stmt = stmt.order_by(_relevance_rank(query), Product.product_name)
-    else:
-        stmt = stmt.order_by(Product.product_name)
+    normalized_query = _normalized_query(query)
+    stmt = _apply_search_filters(select(Product), normalized_query, category_codes, warning_codes)
+    stmt = _apply_search_order(stmt, normalized_query, sort)
 
     stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def search_products_with_total(
+    db: AsyncSession,
+    query: str | None,
+    category_codes: list[str] | None,
+    warning_codes: list[str] | None,
+    sort: str | None,
+    page: int,
+) -> tuple[list[Product], int]:
+    """Return one page and its total count with one database round trip.
+
+    An empty page beyond the end needs one fallback count query so callers can
+    still distinguish "no matches" from "page is past the last result".
+    """
+    normalized_query = _normalized_query(query)
+    stmt = _apply_search_filters(
+        select(Product, func.count().over().label("total_count")),
+        normalized_query,
+        category_codes,
+        warning_codes,
+    )
+    stmt = _apply_search_order(stmt, normalized_query, sort)
+    stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+
+    rows = (await db.execute(stmt)).all()
+    if rows:
+        return [row[0] for row in rows], int(rows[0][1])
+    if page > 1:
+        return [], await count_search_products(db, query, category_codes, warning_codes)
+    return [], 0
 
 
 async def count_search_products(
@@ -140,18 +236,12 @@ async def get_product_tags_bulk(db: AsyncSession, product_ids: list[uuid.UUID]) 
 
 
 async def autocomplete_products(db: AsyncSession, query: str) -> list[Product]:
-    pattern = f"{query}%"
-    stmt = (
-        select(Product)
-        .where(
-            or_(
-                Product.product_name.ilike(pattern),
-                Product.brand_name.ilike(pattern),
-            ),
-        )
-        .order_by(Product.product_name)
-        .limit(10)
-    )
+    normalized_query = _normalized_query(query)
+    if normalized_query is None:
+        return []
+
+    stmt = select(Product).where(_name_or_brand_matches(normalized_query))
+    stmt = _apply_search_order(stmt, normalized_query, sort="rank").limit(10)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -174,6 +264,27 @@ async def get_product_tags(db: AsyncSession, product_id: uuid.UUID) -> list[Tag]
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_product_with_tags(
+    db: AsyncSession,
+    product_id: uuid.UUID,
+) -> tuple[Product, list[Tag]]:
+    """Load a product and all active tags in a single database round trip."""
+    stmt = (
+        select(Product, Tag)
+        .outerjoin(ProductTag, ProductTag.product_id == Product.product_id)
+        .outerjoin(
+            Tag,
+            and_(Tag.tag_id == ProductTag.tag_id, Tag.active.is_(True)),
+        )
+        .where(Product.product_id == product_id)
+        .order_by(Tag.tag_type, Tag.tag_name)
+    )
+    rows = (await db.execute(stmt)).all()
+    if not rows:
+        raise ProductNotFoundError(f"상품을 찾을 수 없습니다. id={product_id}")
+    return rows[0][0], [tag for _, tag in rows if tag is not None]
 
 
 async def get_sweetener_tags_for_product(db: AsyncSession, product_id: uuid.UUID) -> list[Tag]:

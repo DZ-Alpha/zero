@@ -54,6 +54,25 @@ WHERE NOT EXISTS (
   );
 ```
 
+## 상품 검색 유사도 배포
+
+`/search`와 `/search/recommend`는 상품명·브랜드의 부분 일치를 먼저 노출하고, 그 뒤에
+오타 검색을 적용한다. DB의 `C` locale에서는 `pg_trgm`이 한글 trigram을 만들 수 없어,
+한글 검색어는 `fuzzystrmatch`의 Levenshtein 거리로 보완한다. 영문·숫자 검색어는 GIN
+인덱스를 사용하는 `pg_trgm` 유사도 검색을 쓴다. 따라서 `에어포수`처럼 철자가 조금
+틀린 검색어도 `에어포스`를 찾을 수 있다. 이미 운영 중인 DB에는 배포 전에 아래
+마이그레이션을 **트랜잭션 없이** 적용한다. 인덱스를 concurrent로 생성하므로 검색/쓰기
+잠금을 길게 잡지 않는다.
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f infra/zero-infra/kafka/migrations/002_product_search_pg_trgm.sql
+```
+
+신규 DB에는 `infra/zero-infra/config/postgresql/init/01-create-extension.sql`가
+`pg_trgm`과 `fuzzystrmatch` 확장을 자동 생성한다. 인덱스는 `service.products`가 생성된
+뒤 위 마이그레이션으로 별도 적용한다.
+
 ## 미해결 항목
 
 - 상품 리뷰(PR-0306)는 스키마에 없다. `service.product_reviews(review_id, product_id, user_id, rating, content, created_at)` 형태의 신규 테이블 설계가 필요하다.
