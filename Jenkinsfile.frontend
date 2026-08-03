@@ -96,7 +96,11 @@ pipeline {
                             #   turnstile-site-key를 Jenkins Credentials(Secret text)로 등록 후
                             #   docker build --build-arg NEXT_PUBLIC_TURNSTILE_SITE_KEY=$KEY -t fe-${FE}:${SHA} ${FE}
                             docker build -t fe-${FE}:${SHA} ${FE}
-                            trivy image --severity CRITICAL,HIGH --exit-code 1 \
+                            # 다른 Jenkins job과 전역 Trivy 캐시 lock을 공유하지 않는다.
+                            TRIVY_CACHE_DIR="${WORKSPACE}@tmp/trivy-cache/${FE}"
+                            mkdir -p "${TRIVY_CACHE_DIR}"
+                            trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
+                                --severity CRITICAL,HIGH --exit-code 1 \
                                 --ignorefile .trivyignore --scanners vuln --quiet fe-${FE}:${SHA}
                         '''
 

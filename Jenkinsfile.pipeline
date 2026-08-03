@@ -89,7 +89,11 @@ pipeline {
                         docker run --rm \
                             -v "$WORKSPACE/event-pipeline/tests:/app/tests:ro" \
                             ${LOCAL_IMAGE} python -m unittest discover -s tests -v
-                        trivy image --severity CRITICAL,HIGH --exit-code 1 \
+                        # 다른 Jenkins job과 전역 Trivy 캐시 lock을 공유하지 않는다.
+                        TRIVY_CACHE_DIR="${WORKSPACE}@tmp/trivy-cache/event-pipeline"
+                        mkdir -p "${TRIVY_CACHE_DIR}"
+                        trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
+                            --severity CRITICAL,HIGH --exit-code 1 \
                             --ignorefile .trivyignore --scanners vuln --quiet ${LOCAL_IMAGE}
                     '''
 

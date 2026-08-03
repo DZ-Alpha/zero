@@ -114,7 +114,13 @@ pipeline {
                             sh '''
                                 SHA=$(git rev-parse --short HEAD)
                                 docker build -t backend-${SVC}:${SHA} backend/${SVC}
-                                trivy image --severity CRITICAL,HIGH --exit-code 1 \
+                                # backend/frontend/pipeline job이 동시에 전역 Trivy 캐시를
+                                # 열면 BoltDB lock timeout이 난다. Jenkins workspace별,
+                                # 서비스별 캐시로 분리해 실제 취약점만 게이트 실패로 본다.
+                                TRIVY_CACHE_DIR="${WORKSPACE}@tmp/trivy-cache/${SVC}"
+                                mkdir -p "${TRIVY_CACHE_DIR}"
+                                trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
+                                    --severity CRITICAL,HIGH --exit-code 1 \
                                     --ignorefile .trivyignore --scanners vuln --quiet backend-${SVC}:${SHA}
                             '''
 

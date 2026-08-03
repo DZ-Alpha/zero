@@ -40,7 +40,10 @@ async def list_recipes_with_total(
     sort: str | None = None,
     page: int = 1,
 ) -> tuple[list[Recipe], int]:
-    """Return one recipe page and total count with one database round trip."""
+    """Return one recipe page and total count with one database round trip.
+
+    The window count replaces the separate count query for non-empty pages.
+    """
     stmt = _apply_recipe_filters(
         select(Recipe, func.count().over().label("total_count")),
         source,
