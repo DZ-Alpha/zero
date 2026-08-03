@@ -203,8 +203,36 @@ pipeline {
                             echo "========== [${svc}] staging 대기 후 prod 승격 =========="
                             // catchError: 이 서비스 승격이 실패해도 파이프라인은 계속(빌드는 UNSTABLE 표시).
                             catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: "${svc} 승격 실패") {
-                            // 1) staging App(login-service 등) Synced+Healthy 대기 (게이트)
+                            // 1) 이번 빌드 SHA 이미지가 staging App에 실제 반영될 때까지 대기.
+                            // 단순 Synced+Healthy만 확인하면 ArgoCD가 새 manifest를 아직 읽기 전인
+                            // 순간에 직전 이미지로 DAST를 실행하고 prod로 승격할 수 있다.
+                            def expectedSha = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                             sh """
+                                set +x
+                                LIVE_MANIFESTS=\$(mktemp)
+                                trap 'rm -f "\$LIVE_MANIFESTS"' EXIT
+                                ATTEMPT=1
+                                IMAGE_OBSERVED=0
+                                while [ "\$ATTEMPT" -le 60 ]; do
+                                    if argocd app manifests ${svc} \
+                                        --server ${SERVER} --auth-token \$ARGOCD_TOKEN --plaintext \
+                                        --source live > "\$LIVE_MANIFESTS"; then
+                                        echo "ArgoCD live images:"
+                                        grep -E '^[[:space:]]*image:' "\$LIVE_MANIFESTS" || true
+                                        if grep -Eq '^[[:space:]]*image:[[:space:]].*:${expectedSha}([^[:alnum:]]|\$)' "\$LIVE_MANIFESTS"; then
+                                            IMAGE_OBSERVED=1
+                                            break
+                                        fi
+                                    fi
+                                    sleep 5
+                                    ATTEMPT=\$((ATTEMPT + 1))
+                                done
+                                if [ "\$IMAGE_OBSERVED" -ne 1 ]; then
+                                    echo "현재 빌드 이미지(${expectedSha})가 ${svc} staging에 300초 내 반영되지 않음 — 승격 차단"
+                                    exit 1
+                                fi
+
+                                # 현재 SHA가 관측된 뒤 해당 rollout의 Sync+Healthy를 확인한다.
                                 argocd app wait ${svc} \
                                     --server ${SERVER} --auth-token \$ARGOCD_TOKEN --plaintext \
                                     --sync --health --timeout 300
