@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,16 +9,16 @@ from app.models.recipe_ingredient import RecipeIngredient
 from app.services.recipe_store import (
     PAGE_SIZE,
     RecipeNotFoundError,
-    count_recipes,
-    get_ingredients,
-    get_recipe,
+    get_recipe_with_ingredients,
     list_favorites,
-    list_recipes,
+    list_recipes_with_total,
     recipe_exists,
     toggle_favorite,
 )
 
 router = APIRouter(prefix="/recipes")
+
+PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300"
 
 
 def _thumbnail_url(recipe: Recipe) -> str | None:
@@ -64,13 +64,14 @@ def _ingredient_item(ingredient: RecipeIngredient) -> dict[str, object]:
 
 @router.get("")
 async def get_recipe_list(
+    response: Response,
     source: str | None = Query(None, description="출처 필터: 10000recipe | youtube (PRODUCTION_HANDOFF.md P1-2)"),
     sort: str | None = Query(None, description="정렬: sugarReduction(저당 비율순) | 기본(최신 적재순)"),
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    recipes = await list_recipes(db, source=source, sort=sort, page=page)
-    total = await count_recipes(db, source=source)
+    recipes, total = await list_recipes_with_total(db, source=source, sort=sort, page=page)
+    response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return {
         "recipes": [_list_item(recipe) for recipe in recipes],
         "page": page,
@@ -114,13 +115,17 @@ async def get_recipe_favorite_list(
 
 
 @router.get("/{recipe_id}")
-async def get_recipe_detail(recipe_id: int, db: AsyncSession = Depends(get_db)) -> dict[str, object]:
+async def get_recipe_detail(
+    recipe_id: int,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
     try:
-        recipe = await get_recipe(db, recipe_id)
+        recipe, ingredients = await get_recipe_with_ingredients(db, recipe_id)
     except RecipeNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
-    ingredients = await get_ingredients(db, recipe_id)
+    response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
 
     return {
         "id": recipe.id,

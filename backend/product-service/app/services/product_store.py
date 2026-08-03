@@ -2,7 +2,7 @@ import uuid
 import logging
 from decimal import Decimal
 
-from sqlalchemy import case, exists, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -172,6 +172,37 @@ async def search_products(
     return list(result.scalars().all())
 
 
+async def search_products_with_total(
+    db: AsyncSession,
+    query: str | None,
+    category_codes: list[str] | None,
+    warning_codes: list[str] | None,
+    sort: str | None,
+    page: int,
+) -> tuple[list[Product], int]:
+    """Return one page and its total count with one database round trip.
+
+    An empty page beyond the end needs one fallback count query so callers can
+    still distinguish "no matches" from "page is past the last result".
+    """
+    normalized_query = _normalized_query(query)
+    stmt = _apply_search_filters(
+        select(Product, func.count().over().label("total_count")),
+        normalized_query,
+        category_codes,
+        warning_codes,
+    )
+    stmt = _apply_search_order(stmt, normalized_query, sort)
+    stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+
+    rows = (await db.execute(stmt)).all()
+    if rows:
+        return [row[0] for row in rows], int(rows[0][1])
+    if page > 1:
+        return [], await count_search_products(db, query, category_codes, warning_codes)
+    return [], 0
+
+
 async def count_search_products(
     db: AsyncSession,
     query: str | None,
@@ -233,6 +264,27 @@ async def get_product_tags(db: AsyncSession, product_id: uuid.UUID) -> list[Tag]
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_product_with_tags(
+    db: AsyncSession,
+    product_id: uuid.UUID,
+) -> tuple[Product, list[Tag]]:
+    """Load a product and all active tags in a single database round trip."""
+    stmt = (
+        select(Product, Tag)
+        .outerjoin(ProductTag, ProductTag.product_id == Product.product_id)
+        .outerjoin(
+            Tag,
+            and_(Tag.tag_id == ProductTag.tag_id, Tag.active.is_(True)),
+        )
+        .where(Product.product_id == product_id)
+        .order_by(Tag.tag_type, Tag.tag_name)
+    )
+    rows = (await db.execute(stmt)).all()
+    if not rows:
+        raise ProductNotFoundError(f"상품을 찾을 수 없습니다. id={product_id}")
+    return rows[0][0], [tag for _, tag in rows if tag is not None]
 
 
 async def get_sweetener_tags_for_product(db: AsyncSession, product_id: uuid.UUID) -> list[Tag]:

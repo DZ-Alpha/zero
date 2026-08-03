@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -9,14 +9,15 @@ from app.models.tag import Tag
 from app.services.product_store import (
     PAGE_SIZE,
     autocomplete_products,
-    count_search_products,
     get_product_tags_bulk,
-    search_products,
+    search_products_with_total,
 )
 
 logger = logging.getLogger("product_service.search")
 
 router = APIRouter()
+
+PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300"
 
 
 def _search_item(p: Product, tags: list[Tag]) -> dict[str, object]:
@@ -47,6 +48,7 @@ def _autocomplete_item(p: Product) -> dict[str, object]:
 
 @router.get("/search")
 async def search(
+    response: Response,
     query: str | None = Query(None, description="검색어 (제품명/브랜드)"),
     category: str | None = Query(None, description="카테고리 코드, 콤마 구분 (PR-0103)"),
     warning: str | None = Query(None, description="주의 성분(알레르기) 코드, 콤마 구분 (PR-0104)"),
@@ -58,7 +60,7 @@ async def search(
     category_codes = [c.strip() for c in category.split(",") if c.strip()] if category else None
     warning_codes = [w.strip() for w in warning.split(",") if w.strip()] if warning else None
 
-    products = await search_products(
+    products, total = await search_products_with_total(
         db,
         query=query,
         category_codes=category_codes,
@@ -66,8 +68,8 @@ async def search(
         sort=sort,
         page=page,
     )
-    total = await count_search_products(db, query=query, category_codes=category_codes, warning_codes=warning_codes)
     tags_by_product = await get_product_tags_bulk(db, [p.product_id for p in products])
+    response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     logger.info(
         "search query=%r category=%r warning=%r sort=%r page=%d results=%d total=%d",
         query, category, warning, sort, page, len(products), total,
@@ -84,9 +86,11 @@ async def search(
 
 @router.get("/search/recommend")
 async def autocomplete(
+    response: Response,
     query: str = Query(..., min_length=1, description="검색어 앞글자"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     """PR-0102: 검색어 자동완성."""
     products = await autocomplete_products(db, query)
+    response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return {"items": [_autocomplete_item(p) for p in products]}

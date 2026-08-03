@@ -34,6 +34,28 @@ async def list_recipes(
     return list((await db.execute(stmt)).scalars().all())
 
 
+async def list_recipes_with_total(
+    db: AsyncSession,
+    source: str | None = None,
+    sort: str | None = None,
+    page: int = 1,
+) -> tuple[list[Recipe], int]:
+    """Return one recipe page and total count with one database round trip."""
+    stmt = _apply_recipe_filters(
+        select(Recipe, func.count().over().label("total_count")),
+        source,
+    )
+    stmt = stmt.order_by(Recipe.sugar_reduction_pct.desc()) if sort == "sugarReduction" else stmt.order_by(Recipe.id.desc())
+    stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+
+    rows = (await db.execute(stmt)).all()
+    if rows:
+        return [row[0] for row in rows], int(rows[0][1])
+    if page > 1:
+        return [], await count_recipes(db, source=source)
+    return [], 0
+
+
 async def count_recipes(db: AsyncSession, source: str | None = None) -> int:
     stmt = _apply_recipe_filters(select(func.count()).select_from(Recipe), source)
     return (await db.execute(stmt)).scalar_one()
@@ -53,6 +75,23 @@ async def recipe_exists(db: AsyncSession, recipe_id: int) -> bool:
 async def get_ingredients(db: AsyncSession, recipe_id: int) -> list[RecipeIngredient]:
     stmt = select(RecipeIngredient).where(RecipeIngredient.recipe_id == recipe_id).order_by(RecipeIngredient.id)
     return list((await db.execute(stmt)).scalars().all())
+
+
+async def get_recipe_with_ingredients(
+    db: AsyncSession,
+    recipe_id: int,
+) -> tuple[Recipe, list[RecipeIngredient]]:
+    """Load a recipe and its ingredients in a single database round trip."""
+    stmt = (
+        select(Recipe, RecipeIngredient)
+        .outerjoin(RecipeIngredient, RecipeIngredient.recipe_id == Recipe.id)
+        .where(Recipe.id == recipe_id)
+        .order_by(RecipeIngredient.id)
+    )
+    rows = (await db.execute(stmt)).all()
+    if not rows:
+        raise RecipeNotFoundError("레시피를 찾을 수 없습니다.")
+    return rows[0][0], [ingredient for _, ingredient in rows if ingredient is not None]
 
 
 async def toggle_favorite(db: AsyncSession, recipe_id: int, user_id: int) -> bool:
