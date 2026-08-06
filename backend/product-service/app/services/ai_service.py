@@ -130,6 +130,16 @@ async def _call_claude(prompt: str, max_tokens: int = _MAX_TOKENS) -> str:
         except Exception:
             logger.exception("Bedrock 호출 실패")
             return _BEDROCK_FAILURE_MSG
+    # 2026-08-04 모니터링팀 요청 — AI_PROVIDER가 배포 설정에서 빠지거나 다른
+    # 값으로 바뀌면 여기로 조용히 흘러들어와 과금 경로가 바뀐다(Bedrock 대신
+    # Anthropic 직접 API, 별도 과금). 애플리케이션 로그가 사실상 비어 있어
+    # (헬스체크 액세스 로그뿐) 이 경로는 지금까지 로그로 탐지할 방법이 없었다.
+    # ConfigMap 단에 Kyverno enforce 정책이 별도로 걸리지만, 그 정책이 우회되거나
+    # 아직 안 걸린 다른 환경에서도 잡히도록 런타임에서도 WARN을 남긴다.
+    logger.warning(
+        "ai_provider policy drift: expected 'bedrock' but got %r — falling back to Anthropic direct API (별도 과금 경로)",
+        settings.ai_provider,
+    )
     return await _call_claude_anthropic(prompt, max_tokens)
 
 
