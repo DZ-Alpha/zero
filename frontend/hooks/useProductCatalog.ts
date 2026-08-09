@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { products as mockProducts, type ProductData } from "@/data/catalog";
-import { PRODUCT_CATEGORIES, type ProductCategory } from "@/data/taxonomy";
+import { PRODUCT_CATEGORIES, SWEETENER_FILTERS, type ProductCategory } from "@/data/taxonomy";
+import { useUserSettings } from "@/hooks/useUserSettings";
 import {
   searchProducts,
   type ProductSearchItem,
@@ -17,7 +18,11 @@ function productCategory(value?: string | null, fallback?: ProductCategory): Pro
 
 function toProductCard(item: ProductSearchItem): ProductData {
   const fallback = mockProducts.find((product) => product.backendId === item.id);
-  const brand = item.desc || fallback?.brand || "브랜드 정보 준비 중";
+  const brand = item.brand || item.desc || fallback?.brand || "브랜드 정보 준비 중";
+  const nutritionAvailable = item.sugar != null && item.calories != null;
+  const sweeteners = (item.tags ?? []).filter((tag) =>
+    SWEETENER_FILTERS.some((filter) => tag.includes(filter) || filter.includes(tag)),
+  );
 
   return {
     backendId: item.id,
@@ -26,36 +31,45 @@ function toProductCard(item: ProductSearchItem): ProductData {
     title: item.name || fallback?.title || "상품 이름 준비 중",
     brand,
     maker: fallback?.maker ?? brand,
-    category: productCategory(undefined, fallback?.category),
-    serving: fallback?.serving ?? "100g",
-    calories: fallback?.calories ?? 0,
-    sugar: fallback?.sugar ?? 0,
+    category: productCategory(item.category, fallback?.category),
+    serving: item.serving ?? fallback?.serving ?? "제품 표시량",
+    calories: item.calories ?? fallback?.calories ?? 0,
+    sugar: item.sugar ?? fallback?.sugar ?? 0,
     protein: fallback?.protein ?? 0,
     fat: fallback?.fat ?? 0,
     carbs: fallback?.carbs ?? 0,
     ingredients: fallback?.ingredients ?? [],
-    sweeteners: fallback?.sweeteners ?? [],
-    image: item.url || fallback?.image || "",
+    sweeteners: sweeteners.length > 0 ? sweeteners : fallback?.sweeteners ?? [],
+    image: item.image || item.url || fallback?.image || "",
     summary: fallback?.summary ?? `${brand}의 영양정보와 원재료는 상세에서 확인할 수 있어요.`,
     savedDemo: fallback?.savedDemo ?? 0,
-    nutritionAvailable: Boolean(fallback),
+    nutritionAvailable,
   };
 }
 
-async function loadProductPage(values: { query?: string; category?: string; sort?: string; page: number }) {
-  const response = await searchProducts(values);
+async function loadProductPage(values: { query?: string; category?: string; warning?: string; sort?: string; page: number }) {
+  const timeout = new Promise<never>((_, reject) => {
+    window.setTimeout(() => reject(new Error("PRODUCT_CATALOG_MOCK_FALLBACK")), 3500);
+  });
+  const response = await Promise.race([searchProducts(values), timeout]);
   const cards = response.items.map(toProductCard);
-  return { cards, hasMore: response.items.length === PAGE_SIZE };
+  return {
+    cards,
+    hasMore: response.hasNext ?? response.items.length === PAGE_SIZE,
+  };
 }
 
 export function useProductCatalog(values: { query?: string; category?: string; sort?: string }) {
+  const { profile } = useUserSettings();
   const [items, setItems] = useState<ProductData[]>([]);
   const [status, setStatus] = useState<"loading" | "api" | "mock">("loading");
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [revision, setRevision] = useState(0);
-  const requestKey = `${values.query ?? ""}|${values.category ?? ""}|${values.sort ?? "rank"}|${revision}`;
+  const warning = (profile.allergenCodes ?? []).join(",") || undefined;
+  const requestValues = { ...values, warning };
+  const requestKey = `${values.query ?? ""}|${values.category ?? ""}|${warning ?? ""}|${values.sort ?? "rank"}|${revision}`;
   const activeKey = useRef(requestKey);
 
   useEffect(() => {
@@ -66,7 +80,7 @@ export function useProductCatalog(values: { query?: string; category?: string; s
     setHasMore(false);
 
     const timeout = window.setTimeout(() => {
-      loadProductPage({ ...values, page: 1 })
+      loadProductPage({ ...requestValues, page: 1 })
         .then(({ cards, hasMore: nextHasMore }) => {
           if (!active) return;
           setItems(cards);
@@ -92,7 +106,7 @@ export function useProductCatalog(values: { query?: string; category?: string; s
     const nextPage = page + 1;
     const keyAtStart = activeKey.current;
     setLoadingMore(true);
-    loadProductPage({ ...values, page: nextPage })
+    loadProductPage({ ...requestValues, page: nextPage })
       .then(({ cards, hasMore: nextHasMore }) => {
         if (activeKey.current !== keyAtStart) return;
         setItems((current) => {

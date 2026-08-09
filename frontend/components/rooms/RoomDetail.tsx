@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { RecordMealModal } from "@/components/RecordMealModal";
 import { SafeImage } from "@/components/SafeImage";
 import { suppressScrollTopGuard } from "@/components/ScrollToTop";
+import { mockRoomDetail } from "@/data/mockRooms";
 import { useExitPresence } from "@/hooks/useDelayedClose";
 import type { MealType as DietMealType } from "@/hooks/useDietRecords";
 import { ConfirmDialog } from "@/components/SystemFeedback";
@@ -88,9 +89,9 @@ function formatDateLabel(key: string) {
 }
 
 export function RoomDetail({ roomId }: { roomId: string }) {
-  const { ready: authReady, signedIn, token } = useAuthSession();
-  const [detail, setDetail] = useState<RoomDetailResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { ready: authReady, signedIn, token, isMockSession } = useAuthSession();
+  const [detail, setDetail] = useState<RoomDetailResponse | null>(isMockSession && roomId === mockRoomDetail.room.id ? mockRoomDetail : null);
+  const [loading, setLoading] = useState(!isMockSession);
   const [notFound, setNotFound] = useState(false);
   const room = detail?.room ?? null;
   const roomMembers = detail?.members ?? [];
@@ -128,6 +129,12 @@ export function RoomDetail({ roomId }: { roomId: string }) {
   const didInitialScroll = useRef(false);
 
   useEffect(() => {
+    if (isMockSession) {
+      setDetail(roomId === mockRoomDetail.room.id ? mockRoomDetail : null);
+      setNotFound(roomId !== mockRoomDetail.room.id);
+      setLoading(false);
+      return;
+    }
     if (!token) return;
     let active = true;
     setLoading(true);
@@ -154,7 +161,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     return () => {
       active = false;
     };
-  }, [token, roomId, selectedDate, roomRefreshTick]);
+  }, [isMockSession, token, roomId, selectedDate, roomRefreshTick]);
 
   // 캘린더가 열려 있는 동안 보고 있는 달의 기록 현황을 불러온다(월 단위 캐시).
   const calMonthKey = `${calMonth.year}-${String(calMonth.month).padStart(2, "0")}`;
@@ -274,7 +281,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
     );
   }
 
-  if (notFound || !room || !detail || !token) {
+  if (notFound || !room || !detail || (!token && !isMockSession)) {
     return (
       <main className={styles.page}>
         <div className={styles.wrap}>

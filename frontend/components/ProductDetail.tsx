@@ -9,7 +9,15 @@ import { useAuthSession } from "@/hooks/useAuthSession";
 import { useDailyGauge } from "@/hooks/useDailyGauge";
 import { getTodayKey, useDietRecords } from "@/hooks/useDietRecords";
 import { useUserSettings } from "@/hooks/useUserSettings";
-import { getProductAiSummary, getProductDetail, ProductDetailResponse } from "@/lib/api/zerocheck";
+import {
+  getProductAiSummary,
+  getProductAlternatives,
+  getProductDetail,
+  getProductReviews,
+  ProductAlternativesResponse,
+  ProductDetailResponse,
+  ProductReviewsResponse,
+} from "@/lib/api/zerocheck";
 import { renderInlineMarkdown } from "@/lib/inlineMarkdown";
 
 function format(value: number) {
@@ -20,7 +28,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   const { token } = useAuthSession();
   const remoteGauge = useDailyGauge(token);
   const { recordsByDate } = useDietRecords();
-  const { goals } = useUserSettings();
+  const { goals, profile } = useUserSettings();
   const catalogDetail = productBySlug[slug] ?? products.find((product) => product.backendId === slug) ?? null;
   const productId = catalogDetail?.backendId ?? (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(slug) ? slug : null);
   const fallbackDetail = useMemo<ProductData>(() => catalogDetail ?? ({
@@ -45,6 +53,8 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   }), [catalogDetail, productId, slug]);
   const [liveDetail, setLiveDetail] = useState<ProductDetailResponse | null>(null);
   const [liveSummary, setLiveSummary] = useState<string | null>(null);
+  const [alternativeResult, setAlternativeResult] = useState<ProductAlternativesResponse | null>(null);
+  const [reviewResult, setReviewResult] = useState<ProductReviewsResponse | null>(null);
   const [loading, setLoading] = useState(Boolean(productId));
   const [unavailable, setUnavailable] = useState(!catalogDetail && !productId);
 
@@ -54,6 +64,8 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   // 막혀 있었다. AI 3종은 각자 도착하는 대로 해당 섹션만 채운다.
   useEffect(() => {
     setLiveDetail(null);
+    setAlternativeResult(null);
+    setReviewResult(null);
     if (!productId) {
       setLoading(false);
       setUnavailable(!catalogDetail);
@@ -71,6 +83,16 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     }).finally(() => {
       if (active) setLoading(false);
     });
+    getProductAlternatives(productId)
+      .then((result) => {
+        if (active) setAlternativeResult(result);
+      })
+      .catch(() => {});
+    getProductReviews(productId)
+      .then((result) => {
+        if (active) setReviewResult(result);
+      })
+      .catch(() => {});
 
     return () => {
       active = false;
@@ -112,6 +134,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     .filter((product) => product.slug !== detail.slug && product.category === detail.category)
     .concat(products.filter((product) => product.slug !== detail.slug))
     .slice(0, 3);
+  const hasAlternatives = alternativeResult?.status === "AVAILABLE" && alternativeResult.alternatives.length > 0;
   const sweetenerTitle = detail.sweeteners.length > 0 ? `${detail.sweeteners[0]}을(를) 사용했어요.` : "원재료를 한 번 더 확인해보세요.";
   const todayRecords = recordsByDate[getTodayKey()] ?? [];
   const currentSugar = Math.round((todayRecords.filter((item) => item.source !== "server").reduce((sum, item) => sum + item.sugar, 0) + Number(remoteGauge?.sugar ?? 0) + Number.EPSILON) * 100) / 100;
@@ -122,6 +145,11 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   const calorieRate = Math.round((todayCalories / goals.calories) * 100);
   const remainingSugar = Math.round((goals.sugar - todaySugar + Number.EPSILON) * 100) / 100;
   const withinGoal = remainingSugar >= 0;
+  const matchedAllergens = (liveDetail?.allerg ?? []).filter((allergen) =>
+    (profile.allergens ?? []).some((selected) =>
+      allergen.replace(/\s/g, "").includes(selected.replace(/\s/g, "")),
+    ),
+  );
 
   if (loading && !catalogDetail) {
     return <main className="detail-page page-wrap"><div className="detail-state wrap"><div className="catalog-loading"><i /><i /><i /><span>상품 정보를 불러오고 있어요.</span></div></div></main>;
@@ -142,6 +170,13 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
           <FavoriteButton label={detail.title} id={productId} kind="product" checkInitial />
         </div>
       </section>
+
+      {token && matchedAllergens.length > 0 && (
+        <section className="allergen-user-warning wrap" role="alert">
+          <div><strong>내 주의 성분과 겹쳐요</strong><span>{matchedAllergens.join(", ")}</span></div>
+          <p>알레르기 판단을 대신하는 정보가 아니에요. 구매·섭취 전 제품 포장의 최신 원재료명과 알레르기 표시를 반드시 확인해 주세요.</p>
+        </section>
+      )}
 
       <section className="personal-ai-note wrap">
         {token ? (
@@ -186,15 +221,24 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
       <section className="review-summary wrap">
         <header>
           <div><p className="eyebrow">최근 리뷰 요약</p><h2>사람들이 남긴 이야기를 한눈에 볼 수 있어요</h2></div>
-          <span>리뷰 준비 중</span>
+          <span>{reviewResult ? `${reviewResult.total}개${reviewResult.summary?.includesExample ? " · 예시 포함" : ""}` : "리뷰 확인 중"}</span>
         </header>
-        <div className="review-empty"><i aria-hidden="true">✦</i><p>아직 모인 리뷰가 없어요. 리뷰가 쌓이면 맛, 단맛, 식감과 재구매 의견을 짧게 정리해드릴게요.</p></div>
+        {reviewResult?.reviews.length ? reviewResult.reviews.map((review) => (
+          <div className="review-empty" key={review.id}><i aria-hidden="true">{review.rating}★</i><p>{review.isExample ? "[예시 리뷰] " : ""}{review.content}</p></div>
+        )) : <div className="review-empty"><i aria-hidden="true">✦</i><p>아직 모인 리뷰가 없어요. 리뷰가 쌓이면 맛, 단맛, 식감과 재구매 의견을 짧게 정리해드릴게요.</p></div>}
       </section>
 
       <section className="product-similar-band">
         <div className="similar-section wrap">
-          <header className="section-line-heading"><div><p className="eyebrow">비슷한 상품</p><h2>같은 카테고리에서 비교해보세요</h2></div><Link href="/search">제품 전체 보기 →</Link></header>
-          <div className="compact-recommendations">{similar.map((product) => <Link href={`/product/${product.backendId ?? product.slug}`} key={product.backendId ?? product.slug}><div className="compact-product-photo"><SafeImage src={product.image} alt={`${product.title} 제품`} /></div><h3>{product.title}</h3><p>{product.serving} 기준 당류 {format(product.sugar)}g · {format(product.calories)}kcal</p><b>♥</b></Link>)}</div>
+          <header className="section-line-heading"><div><p className="eyebrow">{hasAlternatives ? "저당 대안" : "비슷한 상품"}</p><h2>{hasAlternatives ? "이거 대신 이건 어때요?" : "같은 카테고리에서 비교해보세요"}</h2></div><Link href="/search">제품 전체 보기 →</Link></header>
+          {alternativeResult?.status === "ALREADY_LOW" && <div className="review-empty"><i aria-hidden="true">✓</i><p>이미 당류 0g이라 더 낮은 대안을 권하지 않아요.</p></div>}
+          {alternativeResult?.status !== "ALREADY_LOW" && (
+            <div className="compact-recommendations">
+              {hasAlternatives
+                ? alternativeResult.alternatives.map((product) => <Link href={`/product/${product.id}`} key={product.id}><div className="compact-product-photo"><SafeImage src={product.image ?? ""} alt={`${product.name} 제품`} /></div><h3>{product.name}</h3><p>당류 {format(product.sugar)}g · 기존보다 {format(product.sugarSavedG)}g 낮아요</p><b>♥</b></Link>)
+                : similar.map((product) => <Link href={`/product/${product.backendId ?? product.slug}`} key={product.backendId ?? product.slug}><div className="compact-product-photo"><SafeImage src={product.image} alt={`${product.title} 제품`} /></div><h3>{product.title}</h3><p>{product.serving} 기준 당류 {format(product.sugar)}g · {format(product.calories)}kcal</p><b>♥</b></Link>)}
+            </div>
+          )}
         </div>
       </section>
     </main>

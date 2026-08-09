@@ -15,6 +15,11 @@ export type RecipeListItem = {
   thumbnailUrl?: string | null;
   sugarReductionPct?: number | null;
   comparisonStatus?: string | null;
+  category?: string | null;
+  cookTimeMin?: number | null;
+  sugar?: number | null;
+  calories?: number | null;
+  source?: string | null;
 };
 
 export type RecipeDetailResponse = RecipeListItem & {
@@ -22,6 +27,8 @@ export type RecipeDetailResponse = RecipeListItem & {
   videoId?: string | null;
   steps?: unknown;
   source?: string | null;
+  category?: string | null;
+  cookTimeMin?: number | null;
   publishedAt?: string | null;
   nutrition?: {
     totalSugarG?: number | null;
@@ -69,6 +76,28 @@ export type HealthProfileResponse = {
   consent?: boolean;
 };
 
+export type PreferenceTag = {
+  id: string;
+  name: string;
+  code: string;
+  desc?: string | null;
+  caution?: string | null;
+  url?: string | null;
+};
+
+export type UserPreferenceItem = {
+  preferenceId: string;
+  preferenceType: "INTEREST_CATEGORY" | "ALLERGEN" | "CAUTION_INGREDIENT";
+  tagId?: string | null;
+  tagType?: string | null;
+  tagCode?: string | null;
+  tagName?: string | null;
+  description?: string | null;
+  cautionText?: string | null;
+  sourceUrl?: string | null;
+  customValue?: string | null;
+};
+
 export type ProductDetailResponse = {
   name?: string | null;
   brand?: string | null;
@@ -84,6 +113,71 @@ export type ProductDetailResponse = {
   allerg?: string[] | null;
   imageUrl?: string | null;
   purchaseUrl?: string | null;
+  source?: string | null;
+  lastVerifiedAt?: string | null;
+};
+
+export type ProductAlternativeItem = {
+  id: string;
+  name: string;
+  brand?: string | null;
+  image?: string | null;
+  sugar: number;
+  calories: number;
+  rank: number;
+  similarity: number;
+  sugarDeltaG: number;
+  sugarSavedG: number;
+  sugarDeltaPct?: number | null;
+  kcalDelta?: number | null;
+  variantCount: number;
+  variantBrands: string[];
+};
+
+export type ProductAlternativesResponse = {
+  status: "AVAILABLE" | "ALREADY_LOW" | "NO_MATCH";
+  current: {
+    id: string;
+    name: string;
+    brand?: string | null;
+    image?: string | null;
+    sugar: number;
+    calories: number;
+  };
+  categoryStats?: {
+    code: string;
+    name: string;
+    productCount: number;
+    avgSugar?: number | null;
+    medianSugar?: number | null;
+    zeroSugarCount: number;
+    avgCalories?: number | null;
+  } | null;
+  alternatives: ProductAlternativeItem[];
+};
+
+export type ProductReviewsResponse = {
+  status: "SUCCESS";
+  reviews: Array<{
+    id: string;
+    rating: number;
+    content: string;
+    isExample: boolean;
+    createdAt: string;
+  }>;
+  summary?: {
+    reviewCount: number;
+    positiveCount: number;
+    neutralCount: number;
+    negativeCount: number;
+    text?: string | null;
+    includesExample: boolean;
+    computedAt: string;
+  } | null;
+  page: number;
+  pageSize: number;
+  total: number;
+  hasNext: boolean;
 };
 
 export type ProductSearchItem = {
@@ -108,6 +202,30 @@ export type HomeProductItem = {
   brand?: string | null;
   image?: string | null;
   url?: string | null;
+};
+
+export type HomeRecipeRankingItem = {
+  id: number;
+  rank: number;
+  name: string;
+  image?: string | null;
+  source?: string | null;
+  baseSugarG?: number | null;
+  totalSugarG?: number | null;
+  sugarSavedG?: number | null;
+  sugarReductionPct: number;
+  totalKcal?: number | null;
+  baseKcal?: number | null;
+  kcalReductionPct?: number | null;
+};
+
+export type HomeArticleItem = {
+  slug: string;
+  category: string;
+  title: string;
+  summary?: string | null;
+  readMinutes?: number | null;
+  sourceNote?: string | null;
 };
 
 export type DietCalendarItem = {
@@ -141,6 +259,30 @@ export type DietPhotoStatusResponse = {
   confidence?: number | null;
   confidence_source?: string | null;
   "list-diet"?: DietAnalysisItem[];
+};
+
+export type DietSwapProduct = {
+  id: string;
+  name: string;
+  brand?: string | null;
+  image?: string | null;
+  category?: string | null;
+  foodType?: string | null;
+  serving?: string | null;
+  sugar: number;
+  calories: number;
+  similarity?: number;
+  sugarSavedG?: number;
+  variantCount?: number;
+  variantBrands?: string[];
+};
+
+export type DietSwapRecommendationResponse = {
+  status: "AVAILABLE" | "NO_MATCH";
+  mealLogId: string;
+  recognizedItem?: string;
+  current?: DietSwapProduct;
+  alternatives: DietSwapProduct[];
 };
 
 export type RecipeSubstituteResponse = {
@@ -233,14 +375,40 @@ export function updateHealthProfile(token: string, payload: HealthProfileRespons
   });
 }
 
-export function getRecipes(page = 1) {
+export function getHealthLabelTags() {
+  return apiRequest<{ list: PreferenceTag[] }>("/tags/health-label", { cache: "default" });
+}
+
+export function getAllergenTags() {
+  return apiRequest<{ list: PreferenceTag[] }>("/tags/allergen", { cache: "default" });
+}
+
+export function getUserPreferences(token: string) {
+  return apiRequest<{ preferences: UserPreferenceItem[] }>("/home/preferences", {
+    headers: authHeader(token),
+  });
+}
+
+export function replaceUserPreferences(token: string, payload: {
+  interestTagIds: string[];
+  allergenTagIds: string[];
+  cautionIngredients?: string[];
+}) {
+  return apiRequest<{ status: string; preferences: UserPreferenceItem[] }>("/home/preferences", {
+    method: "PUT",
+    headers: authHeader(token),
+    body: JSON.stringify({ ...payload, cautionIngredients: payload.cautionIngredients ?? [] }),
+  });
+}
+
+export function getRecipes(page = 1, search?: string) {
   // 백엔드가 페이지네이션을 도입한 뒤에도(page/pageSize/total/hasNext) 이 함수는
   // page 파라미터 없이 항상 1페이지(20건)만 불러왔다 - 전체 1700여 건 중 20건만
   // 보이고 나머지는 화면에 절대 안 나오던 원인 (무한스크롤은 이미 받아온 20건
   // 안에서만 더 보여주는 클라이언트 로직이라, 서버에 다음 페이지를 요청하지
   // 않았다). useRecipeCatalog가 hasNext를 보고 다음 page를 이 함수로 다시 부른다.
   return apiRequest<{ recipes: RecipeListItem[]; page: number; pageSize: number; total: number; hasNext: boolean }>(
-    `/recipes?page=${page}`,
+    query("/recipes", { page, search: search?.trim() || undefined }),
     { cache: "default" },
   );
 }
@@ -310,6 +478,19 @@ export function getProductDetail(id: string) {
   return apiRequest<ProductDetailResponse>(query("/product", { id }), { cache: "default" });
 }
 
+export function getProductAlternatives(id: string) {
+  return apiRequest<ProductAlternativesResponse>(query("/product/alternatives", { id }), {
+    cache: "default",
+  });
+}
+
+export function getProductReviews(id: string, page = 1, more = false) {
+  return apiRequest<ProductReviewsResponse>(
+    query("/product/review", { id, page, "is-more": more }),
+    { cache: "default" },
+  );
+}
+
 export function getProductAiSummary(id: string) {
   return apiRequest<{ "ai-oneline"?: string }>(query("/product/ai", { id }));
 }
@@ -319,11 +500,27 @@ export function getProductSweetenerInfo(id: string) {
 }
 
 export function getUserRecommendations(token: string) {
-  return apiRequest<{ listProducts: HomeProductItem[] }>("/home/user-recommend", { headers: authHeader(token) });
+  return apiRequest<{
+    listProducts: HomeProductItem[];
+    personalized: boolean;
+    matchedPreferenceIds: string[];
+    reason?: "NO_PREFERENCES" | "NO_MATCHING_PRODUCTS" | null;
+  }>("/home/user-recommend", { headers: authHeader(token) });
 }
 
-export function getProductRanking() {
-  return apiRequest<{ status?: string; listProducts: HomeProductItem[] }>("/home/rank/item");
+export function getRecipeSwapRanking(limit = 10) {
+  return apiRequest<{
+    status: string;
+    listRecipes: HomeRecipeRankingItem[];
+    listProducts: HomeProductItem[];
+  }>(query("/home/rank/item", { limit }));
+}
+
+export function getHomeArticles(limit = 10) {
+  return apiRequest<{ articles: HomeArticleItem[] }>(
+    query("/home/content/articles", { limit }),
+    { cache: "default" },
+  );
 }
 
 export function getDietCalendar(token: string, year: number, month: number) {
@@ -587,6 +784,12 @@ export function uploadDietPhoto(token: string, objectKey: string, mealType?: "BR
 export function getDietPhotoStatus(token: string, mealLogId: string) {
   return apiRequest<DietPhotoStatusResponse>(`/diet/photo/${mealLogId}`, {
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function getDietSwapRecommendation(token: string, mealLogId: string) {
+  return apiRequest<DietSwapRecommendationResponse>(query("/diet/recommend-alt", { id: mealLogId }), {
+    headers: authHeader(token),
   });
 }
 

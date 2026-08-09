@@ -5,6 +5,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import { RecordDateNavigator } from "@/components/RecordDateNavigator";
 import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
+import { VisionSwapCard, type VisionRecipeSuggestion } from "@/components/VisionSwapCard";
 import { recipes } from "@/data/catalog";
 import { PRODUCT_CATEGORIES } from "@/data/taxonomy";
 import { useDelayedClose } from "@/hooks/useDelayedClose";
@@ -19,9 +20,12 @@ import {
   confirmDietPhoto,
   DietAnalysisItem,
   DietPhotoStatusResponse,
+  DietSwapRecommendationResponse,
   getDietPhotoStatus,
+  getDietSwapRecommendation,
   getProductDetail,
   getProductFavorites,
+  getRecipes,
   getRecipeDetail,
   getRecipeFavorites,
   uploadDietPhoto,
@@ -60,11 +64,63 @@ type FoodItem = {
   nutritionAvailable: boolean;
 };
 
+const mockVisionFood: FoodItem = {
+  id: "vision-mock-caramel-popcorn",
+  name: "카라멜 팝콘",
+  kind: "사진 분석",
+  category: "사진으로 계산",
+  sugar: 18.5,
+  calories: 430,
+  note: "개발 목업에서 사진 속 제품을 인식한 결과예요.",
+  href: "/diet",
+  nutritionAvailable: true,
+};
+
+const mockVisionSwap: DietSwapRecommendationResponse = {
+  status: "AVAILABLE",
+  mealLogId: "mock-vision",
+  recognizedItem: "카라멜 팝콘",
+  current: {
+    id: "mock-caramel-popcorn",
+    name: "카라멜 팝콘",
+    brand: "시네마 스낵",
+    category: "베이커리·간식",
+    foodType: "팝콘",
+    serving: "100g",
+    sugar: 18.5,
+    calories: 430,
+  },
+  alternatives: [{
+    id: "4d1df7ff-88d9-46f1-990a-c4ac9364ab06",
+    name: "롯데시네마 제로팝콘",
+    brand: "롯데시네마",
+    image: "/product-data/lotte-zero-popcorn.png",
+    category: "베이커리·간식",
+    foodType: "팝콘",
+    serving: "100g",
+    sugar: 0,
+    calories: 456,
+    similarity: 0.91,
+    sugarSavedG: 18.5,
+    variantCount: 1,
+    variantBrands: ["롯데시네마"],
+  }],
+};
+
+const mockVisionRecipes: VisionRecipeSuggestion[] = recipes.slice(0, 2).map((recipe) => ({
+  id: recipe.databaseId ?? recipe.slug,
+  name: recipe.title,
+  image: recipe.thumbnail,
+  category: recipe.category,
+  sugar: recipe.nutritionCoverage ? recipe.estimatedSugar : null,
+  calories: recipe.nutritionCoverage ? recipe.estimatedCalories : null,
+}));
+
 const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 const sourceTabs: { id: Source; label: string }[] = [
   { id: "photo", label: "사진 입력" },
   { id: "recipe", label: "레시피" },
-  { id: "product", label: "저당픽" },
+  { id: "product", label: "저당제품" },
   { id: "favorite", label: "즐겨찾기" },
 ];
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -83,7 +139,7 @@ function sugarText(value: number) {
 }
 
 function visibleKind(kind: FoodItem["kind"]) {
-  return kind === "식품" ? "저당픽" : kind;
+  return kind === "식품" ? "저당제품" : kind;
 }
 
 export function RecordMealModal({
@@ -92,6 +148,7 @@ export function RecordMealModal({
   minDate = "2026-06-01",
   maxDate = getTodayKey(),
   existingRecordsByDate,
+  mockPreview = false,
   onClose,
   onSaved,
 }: {
@@ -100,16 +157,17 @@ export function RecordMealModal({
   minDate?: string;
   maxDate?: string;
   existingRecordsByDate?: DietRecordsByDate;
+  mockPreview?: boolean;
   onClose: () => void;
   onSaved?: (dateKey: string, record: DietRecord) => void;
 }) {
   const { recordsByDate: hookRecordsByDate, addRecord, addServerRecord } = useDietRecords();
-  const { ready: authReady, signedIn } = useAuthSession();
+  const { ready: authReady, signedIn, isMockSession } = useAuthSession();
   const recordsByDate = existingRecordsByDate ?? hookRecordsByDate;
-  const { goals } = useUserSettings();
+  const { goals, profile } = useUserSettings();
   const [recordDate, setRecordDate] = useState(initialDate);
   const [source, setSource] = useState<Source>("photo");
-  const [selected, setSelected] = useState<FoodItem | null>(null);
+  const [selected, setSelected] = useState<FoodItem | null>(mockPreview ? mockVisionFood : null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("전체");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -122,6 +180,9 @@ export function RecordMealModal({
   const [analysisError, setAnalysisError] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [serverMealLogId, setServerMealLogId] = useState<string | null>(null);
+  const [visionSwap, setVisionSwap] = useState<DietSwapRecommendationResponse | null>(mockPreview ? mockVisionSwap : null);
+  const [visionRecipes, setVisionRecipes] = useState<VisionRecipeSuggestion[]>(mockPreview ? mockVisionRecipes : []);
+  const [visionAllergens, setVisionAllergens] = useState<string[]>([]);
   const [draftItems, setDraftItems] = useState<DietAnalysisItem[] | null>(null);
   const [draftConfidence, setDraftConfidence] = useState<number | null>(null);
   const [confirmState, setConfirmState] = useState<"idle" | "confirming" | "error">("idle");
@@ -236,6 +297,8 @@ export function RecordMealModal({
 
   async function selectLibraryItem(item: FoodItem) {
     setSelectionError("");
+    setVisionSwap(null);
+    setVisionRecipes([]);
     if (item.nutritionAvailable) {
       setSelected(item);
       return;
@@ -274,6 +337,51 @@ export function RecordMealModal({
     }
   }
 
+  async function loadVisionRecommendations(token: string, mealLogId: string, itemNames: string[]) {
+    setVisionSwap(null);
+    setVisionRecipes([]);
+    setVisionAllergens([]);
+
+    const swapRequest = getDietSwapRecommendation(token, mealLogId);
+    const recipeRequest = Promise.all(
+      itemNames.filter(Boolean).slice(0, 2).map((name) => getRecipes(1, name)),
+    );
+    const [swapResult, recipeResult] = await Promise.allSettled([swapRequest, recipeRequest]);
+
+    if (swapResult.status === "fulfilled") {
+      const recommendation = swapResult.value;
+      if (recommendation.status === "AVAILABLE" && recommendation.current && recommendation.alternatives.length > 0) {
+        setVisionSwap(recommendation);
+        try {
+          const detail = await getProductDetail(recommendation.current.id);
+          const matched = (detail.allerg ?? []).filter((allergen) =>
+            (profile.allergens ?? []).some((selected) =>
+              allergen.replace(/\s/g, "").includes(selected.replace(/\s/g, "")),
+            ),
+          );
+          setVisionAllergens(matched);
+        } catch {
+          setVisionAllergens([]);
+        }
+      }
+    }
+
+    if (recipeResult.status === "fulfilled") {
+      const unique = new Map<number, VisionRecipeSuggestion>();
+      recipeResult.value.flatMap((result) => result.recipes).forEach((recipe) => {
+        if (!unique.has(recipe.id)) unique.set(recipe.id, {
+          id: recipe.id,
+          name: recipe.name,
+          image: recipe.thumbnailUrl,
+          category: recipe.category,
+          sugar: recipe.sugar,
+          calories: recipe.calories,
+        });
+      });
+      setVisionRecipes(Array.from(unique.values()).slice(0, 2));
+    }
+  }
+
   async function analyzePhoto() {
     if (!photoFile) {
       photoInput.current?.click();
@@ -288,9 +396,22 @@ export function RecordMealModal({
       return;
     }
     setAnalysisError("");
+    setVisionSwap(null);
+    setVisionRecipes([]);
     setIsAnalyzing(true);
     setAnalysisDelayed(false);
     setUploadProgress(18);
+
+    if (isMockSession) {
+      setUploadProgress(65);
+      await new Promise((resolve) => window.setTimeout(resolve, 650));
+      setUploadProgress(100);
+      setIsAnalyzing(false);
+      setSelected({ ...mockVisionFood, image: photoPreview ?? mockVisionFood.image });
+      setVisionSwap(mockVisionSwap);
+      setVisionRecipes(mockVisionRecipes);
+      return;
+    }
 
     // 실제 백엔드에 사진을 등록한다: gateway -> MinIO(object_key) -> RC-0101
     // /diet/upload(202, PENDING) -> Vision worker가 비동기로 분석 -> 폴링.
@@ -365,6 +486,7 @@ export function RecordMealModal({
         image: photoPreview ?? undefined,
         nutritionAvailable: true,
       });
+      void loadVisionRecommendations(token, registeredId, serverItems.map((item) => item.name));
       return;
     }
 
@@ -415,6 +537,7 @@ export function RecordMealModal({
         image: photoPreview ?? undefined,
         nutritionAvailable: true,
       });
+      void loadVisionRecommendations(token, serverMealLogId, draftItems.map((item) => item.name));
       setDraftItems(null);
       setDraftConfidence(null);
       setConfirmState("idle");
@@ -501,6 +624,9 @@ export function RecordMealModal({
     setConvertingHeic(false);
     setUploadProgress(0);
     setServerMealLogId(null);
+    setVisionSwap(null);
+    setVisionRecipes([]);
+    setVisionAllergens([]);
     if (photoInput.current) photoInput.current.value = "";
   }
 
@@ -671,7 +797,7 @@ export function RecordMealModal({
                 <div className="entry-search"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={source === "recipe" ? "음식이나 레시피 검색" : source === "product" ? "제품명이나 브랜드 검색" : "즐겨찾기 검색"} /><span>⌕</span></div>
                 <div className="entry-categories">{categories.map((item) => <button type="button" className={category === item ? "is-active" : ""} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div>
                 {selectionError && <p className="entry-data-state is-error" role="alert">{selectionError}</p>}
-                {(source === "recipe" && recipeCatalog.loading) || (source === "product" && productCatalog.status === "loading") ? <p className="entry-data-state" role="status">목록을 불러오고 있어요.</p> : filtered.length === 0 ? <p className="entry-data-state">조건에 맞는 항목이 없어요. 검색어나 카테고리를 바꿔보세요.</p> : <div className="entry-result-grid">{filtered.map((item) => <button type="button" className="entry-result" key={item.id} onClick={() => void selectLibraryItem(item)} disabled={resolvingItemId === item.id}><span>{item.category}</span><h3>{item.name}</h3><p>{item.note}</p><small>{resolvingItemId === item.id ? "영양정보를 불러오고 있어요" : item.nutritionAvailable ? `당류 ${item.sugar}g · ${item.calories}kcal` : "누르면 영양정보를 불러와요"}</small>{item.favorite && <i aria-label="즐겨찾기">♥</i>}</button>)}</div>}
+                {(source === "recipe" && recipeCatalog.loading) || (source === "product" && productCatalog.status === "loading") ? <p className="entry-data-state" role="status">목록을 불러오고 있어요.</p> : filtered.length === 0 ? <p className="entry-data-state">조건에 맞는 항목이 없어요. 검색어나 카테고리를 바꿔보세요.</p> : <div className="entry-result-grid">{filtered.map((item) => <button type="button" className="entry-result" key={item.id} onClick={() => void selectLibraryItem(item)} disabled={resolvingItemId === item.id}>{item.image ? <span className="entry-result-image"><SafeImage src={item.image} alt={`${item.name} 사진`} fallbackLabel={item.category} /></span> : <span className="entry-result-image is-empty" aria-hidden="true"><b>{visibleKind(item.kind)}</b></span>}<span className="entry-result-copy"><span>{item.category}</span><h3>{item.name}</h3><p>{item.note}</p><small>{resolvingItemId === item.id ? "영양정보를 불러오고 있어요" : item.nutritionAvailable ? `당류 ${item.sugar}g · ${item.calories}kcal` : "누르면 영양정보를 불러와요"}</small></span>{item.favorite && <i aria-label="즐겨찾기">♥</i>}</button>)}</div>}
               </div>
             )}
           </>
@@ -688,6 +814,8 @@ export function RecordMealModal({
               <div className="projected-row"><div><span>선택한 날 당류</span><strong>{sugarText(totals.sugar)}g → {sugarText(totals.sugar + selected.sugar)}g</strong></div><div className="projected-bar"><i style={{ clipPath: `inset(0 ${100 - percent(totals.sugar + selected.sugar, goals.sugar)}% 0 0)` }} /></div><p>{totals.sugar + selected.sugar <= goals.sugar ? `설정한 목표까지 ${sugarText(goals.sugar - totals.sugar - selected.sugar)}g 남아요.` : `설정한 목표보다 ${sugarText(totals.sugar + selected.sugar - goals.sugar)}g 높아져요.`}</p></div>
               <div className="projected-row calorie"><div><span>선택한 날 칼로리</span><strong>{totals.calories.toLocaleString()} → {(totals.calories + selected.calories).toLocaleString()}kcal</strong></div><div className="projected-bar"><i style={{ clipPath: `inset(0 ${100 - percent(totals.calories + selected.calories, goals.calories)}% 0 0)` }} /></div><p>설정한 하루 목표 {goals.calories.toLocaleString()}kcal와 함께 계산했어요.</p></div>
             </div> : <div className="projected-change"><p className="eyebrow">분석 대기 중</p><p>아직 영양 수치를 계산하지 않았어요. 완료되면 캘린더와 오늘 기록에 반영돼요.</p></div>}
+            {selected.kind === "사진 분석" && visionAllergens.length > 0 && <div className="allergen-user-warning" role="alert"><div><strong>사진 속 상품이 내 주의 성분과 겹쳐요</strong><span>{visionAllergens.join(", ")}</span></div><p>인식 결과에 기반한 참고 정보예요. 섭취 전 제품 포장의 원재료명과 알레르기 표시를 반드시 확인해 주세요.</p></div>}
+            {selected.kind === "사진 분석" && (visionSwap?.status === "AVAILABLE" || visionRecipes.length > 0) && <VisionSwapCard recommendation={visionSwap} recipes={visionRecipes} />}
             <footer className={`mini-detail-actions save-${saveState}`}><p>{saveState === "saved" ? "기록을 저장했어요." : saveState === "error" ? "저장하지 못했어요. 다시 시도해 주세요." : selected.kind === "사진 분석" && serverMealLogId ? "서버에 등록한 사진을 선택한 식사에 표시해둘게요." : <>저장한 다음에는 <b>{nextMeal}</b> 기록을 이어볼 수 있어요.</>}</p><button type="button" className="solid-button" onClick={saveItem} disabled={saveState === "saving" || saveState === "saved"}>{saveState === "saving" ? "저장하고 있어요" : saveState === "saved" ? "저장했어요" : saveState === "error" ? "다시 저장하기" : selected.kind === "사진 분석" && serverMealLogId ? "사진 등록 마치기" : `${meal}에 저장하기`}</button></footer>
           </div>
         )}

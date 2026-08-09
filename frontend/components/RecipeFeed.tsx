@@ -91,7 +91,6 @@ export function RecipeFeed() {
           <p className="eyebrow">저당 레시피</p>
           <h1>등록된 재료까지 확인한<br />저당 메뉴를 모았어요.</h1>
         </div>
-        <div className="catalog-search"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="메뉴나 재료를 검색해보세요" /><span>⌕</span></div>
       </section>
 
       <section className="catalog-recommendation personal-picks wrap">
@@ -100,11 +99,18 @@ export function RecipeFeed() {
       </section>
 
       <section className="recipe-results-band">
-        <div className="catalog-list wrap">
-          <header className="catalog-tools">
-          <div className="filter-chips">{categories.map((item) => <button type="button" className={category === item ? "is-active" : ""} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div>
-          <div className="catalog-sort"><label><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} />추천 메뉴만</label><select value={sort} onChange={(event) => setSort(event.target.value)}><option>추천순</option><option>인기순</option><option>등록 당류 낮은순</option></select></div>
-          </header>
+        <div className="catalog-explorer wrap">
+          <aside className="catalog-filter-rail" aria-label="레시피 검색과 필터">
+            <div className="catalog-filter-title"><strong>레시피 찾기</strong>{activeFilters.length > 0 && <button type="button" onClick={resetFilters}>초기화</button>}</div>
+            <div className="catalog-rail-search"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="메뉴나 재료 검색" /><span aria-hidden="true">⌕</span></div>
+            <div className="catalog-filter-group">
+              <strong>카테고리</strong>
+              <div className="catalog-filter-options">{categories.map((item) => <button type="button" className={category === item ? "is-active" : ""} onClick={() => setCategory(item)} key={item}><i aria-hidden="true" />{item}</button>)}</div>
+            </div>
+            <label className="catalog-rail-check"><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} /><span>내 기록 추천 메뉴만</span></label>
+          </aside>
+          <section className="catalog-list">
+          <header className="catalog-tools"><p>{loading ? "레시피를 불러오는 중" : <><b>{filtered.length}</b>개의 레시피</>}</p><div className="catalog-sort"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="레시피 정렬"><option>추천순</option><option>인기순</option><option>등록 당류 낮은순</option></select></div></header>
           {activeFilters.length > 0 && <div className="active-filter-summary" aria-label="적용된 필터"><span>적용한 조건</span>{activeFilters.map((item) => <b key={item}>{item}</b>)}<button type="button" onClick={resetFilters}>모두 지우기</button></div>}
           {source === "mock" && !loading && <div className="inline-service-notice" role="status"><div><b>서버에서 레시피를 불러오지 못했어요.</b><span>지금은 준비된 레시피 목록을 보여드려요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
           {loading && <div className="catalog-loading" aria-live="polite"><i /><i /><i /><span>레시피를 불러오고 있어요.</span></div>}
@@ -125,6 +131,7 @@ export function RecipeFeed() {
           {(visible < filtered.length || hasMore) && <div ref={sentinel} className="feed-sentinel">다음 레시피를 불러오고 있어요.</div>}
           {!loading && !hasMore && visible >= filtered.length && filtered.length > 0 && <div className="feed-end">현재 조건의 레시피를 모두 봤어요.</div>}
           {!loading && filtered.length === 0 && <div className="empty-catalog"><b>조건에 맞는 레시피가 없어요.</b><span>검색어를 짧게 바꾸거나 선택한 분류를 지워보세요.</span><button type="button" onClick={resetFilters}>검색 조건 지우기</button></div>}
+          </section>
         </div>
       </section>
     </main>

@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.product import Product
+from app.models.product_display import ProductDisplay
 
 
 async def search_products_in_db(db: AsyncSession, keyword: str) -> list[dict]:
@@ -10,19 +10,22 @@ async def search_products_in_db(db: AsyncSession, keyword: str) -> list[dict]:
     # SQL 구조에 끼어들 수 없다(SQL Injection 불가). 응답 키는 프론트 계약(id/name/desc/url).
     stmt = (
         select(
-            Product.product_id,
-            Product.product_name,
-            Product.brand_name,
-            Product.image_url,
+            ProductDisplay.product_id,
+            ProductDisplay.display_name,
+            ProductDisplay.brand_name,
+            ProductDisplay.image_url,
         )
-        .where(Product.product_name.ilike(f"%{keyword}%"))
+        .where(
+            ProductDisplay.display_name.ilike(f"%{keyword}%")
+            | ProductDisplay.brand_name.ilike(f"%{keyword}%")
+        )
         .limit(20)
     )
     rows = await db.execute(stmt)
     return [
         {
             "id": str(row.product_id),
-            "name": row.product_name,
+            "name": row.display_name,
             "desc": row.brand_name,
             "url": row.image_url,
         }

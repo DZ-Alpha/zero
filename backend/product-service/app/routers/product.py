@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models.product import Product
 from app.models.user_health_profile_ref import UserHealthProfileRef
 from app.services.ai_service import (
     generate_product_summary,
@@ -18,10 +17,16 @@ from app.services.ai_service import (
     is_summary_unavailable,
     sanitize_summary,
 )
+from app.services.alternative_store import (
+    AlternativeRead,
+    get_category_sugar_stats,
+    get_product_alternatives,
+)
 from app.services.product_store import (
     ProductNotFoundError,
+    ProductRead,
     get_ai_summary_cache,
-    get_product,
+    get_public_product,
     get_product_tags,
     get_product_with_tags,
     get_sweetener_tags_for_product,
@@ -29,12 +34,18 @@ from app.services.product_store import (
     toggle_favorite,
     upsert_ai_summary_cache,
 )
+from app.services.review_store import (
+    get_product_review_sentiment,
+    list_product_reviews,
+)
 
 logger = logging.getLogger("product_service.product")
 
 router = APIRouter(prefix="/product")
 
 PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300"
+_LOW_SUGAR_TAG_CODES = {"SUGAR_FREE", "ZERO_SUGAR", "LOW_SUGAR", "ZERO_GENERAL"}
+_LOW_SUGAR_NAME_MARKERS = ("저당", "제로", "무가당", "무설탕", "sugarfree", "sugar-free")
 
 _KST = ZoneInfo("Asia/Seoul")
 # 이 시각 이전에 캐싱된 AI 요약(한줄요약/감미료 설명)은 소급 재생성한다 - 이후
@@ -50,7 +61,7 @@ def _to_uuid(product_id: str) -> uuid.UUID:
         raise HTTPException(status_code=422, detail="유효하지 않은 상품 ID 형식입니다.")
 
 
-def _product_detail(p: Product, tags: list) -> dict[str, object]:
+def _product_detail(p: ProductRead, tags: list) -> dict[str, object]:
     category_tags = [t for t in tags if t.tag_type == "CATEGORY"]
     allergen_tags = [t for t in tags if t.tag_type == "ALLERGEN"]
     serving = None
@@ -61,6 +72,7 @@ def _product_detail(p: Product, tags: list) -> dict[str, object]:
         "name": p.product_name,
         "brand": p.brand_name,
         "category": category_tags[0].tag_name if category_tags else None,
+        "foodType": p.food_type,
         # search.py의 검색 결과 카드엔 있지만 여기(상세)엔 빠져 있었다 - 프론트가
         # 이 값이 없으면 하드코딩된 "100g"으로 표시해, 음료처럼 g이 아닌 상품도
         # 전부 "100g"으로 잘못 보였다(2026-07-31 리포트).
@@ -78,7 +90,48 @@ def _product_detail(p: Product, tags: list) -> dict[str, object]:
         # 기본 정보
         "imageUrl": p.image_url,
         "purchaseUrl": p.purchase_url,
+        "source": p.source,
+        "lastVerifiedAt": p.last_verified_at.isoformat() if p.last_verified_at else None,
     }
+
+
+def _alternative_item(candidate: AlternativeRead) -> dict[str, object]:
+    product = candidate.product
+    return {
+        "id": str(product.product_id),
+        "name": product.display_name,
+        "brand": product.brand_name,
+        "image": product.image_url,
+        "sugar": float(product.sugars),
+        "calories": float(product.calories),
+        "rank": candidate.rank,
+        "similarity": float(candidate.similarity),
+        # DB 값은 음수이며, 원본 값과 사람이 읽기 쉬운 절감량을 모두 제공한다.
+        "sugarDeltaG": float(candidate.sugar_delta_g),
+        "sugarSavedG": float(-candidate.sugar_delta_g),
+        "sugarDeltaPct": (
+            float(candidate.sugar_delta_pct)
+            if candidate.sugar_delta_pct is not None
+            else None
+        ),
+        "kcalDelta": (
+            float(candidate.kcal_delta) if candidate.kcal_delta is not None else None
+        ),
+        "variantCount": product.variant_count,
+        "variantBrands": product.variant_brands or [],
+    }
+
+
+def _is_already_low_sugar_product(product: ProductRead, tags: list) -> bool:
+    normalized_name = product.product_name.lower().replace(" ", "")
+    return (
+        float(product.sugars or 0) <= 0
+        or any(
+            tag.tag_type == "HEALTH_LABEL" and tag.tag_code in _LOW_SUGAR_TAG_CODES
+            for tag in tags
+        )
+        or any(marker in normalized_name for marker in _LOW_SUGAR_NAME_MARKERS)
+    )
 
 
 @router.get("")
@@ -97,6 +150,70 @@ async def get_product_detail(
     return _product_detail(product, tags)
 
 
+@router.get("/alternatives")
+async def get_low_sugar_alternatives(
+    response: Response,
+    id: str = Query(..., description="상품 UUID"),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Return up to three precomputed, lower-sugar alternatives."""
+    pid = _to_uuid(id)
+    try:
+        product = await get_public_product(db, pid)
+    except ProductNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    tags = await get_product_tags(db, pid)
+    already_low = _is_already_low_sugar_product(product, tags)
+    stats = await get_category_sugar_stats(db, pid)
+    candidates = (
+        [] if already_low else await get_product_alternatives(db, pid, limit=3)
+    )
+    if already_low:
+        status = "ALREADY_LOW"
+    elif candidates:
+        status = "AVAILABLE"
+    else:
+        status = "NO_MATCH"
+
+    response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
+    return {
+        "status": status,
+        "current": {
+            "id": str(product.product_id),
+            "name": product.product_name,
+            "brand": product.brand_name,
+            "image": product.image_url,
+            "foodType": product.food_type,
+            "serving": (
+                f"{float(product.serving_value):g}{product.serving_unit}"
+                if product.serving_value is not None and product.serving_unit
+                else None
+            ),
+            "sugar": float(product.sugars),
+            "calories": float(product.calories),
+        },
+        "categoryStats": (
+            {
+                "code": stats.tag_code,
+                "name": stats.tag_name,
+                "productCount": stats.product_count,
+                "avgSugar": float(stats.avg_sugar) if stats.avg_sugar is not None else None,
+                "medianSugar": (
+                    float(stats.median_sugar) if stats.median_sugar is not None else None
+                ),
+                "zeroSugarCount": stats.zero_sugar_count,
+                "avgCalories": (
+                    float(stats.avg_calories) if stats.avg_calories is not None else None
+                ),
+            }
+            if stats is not None
+            else None
+        ),
+        "alternatives": [_alternative_item(candidate) for candidate in candidates],
+    }
+
+
 @router.get("/ai")
 async def get_ai_summary(
     id: str = Query(..., description="상품 UUID"),
@@ -106,7 +223,7 @@ async def get_ai_summary(
     캐싱하고 재사용한다(회의 결정 2026-07-27). 없는 상품만 새로 생성한다."""
     pid = _to_uuid(id)
     try:
-        product = await get_product(db, pid)
+        product = await get_public_product(db, pid)
     except ProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -134,7 +251,7 @@ async def get_sweetener_info(
     고정 문구라 캐싱 대상이 아니다."""
     pid = _to_uuid(id)
     try:
-        product = await get_product(db, pid)
+        product = await get_public_product(db, pid)
     except ProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -165,7 +282,7 @@ async def get_user_group_info(
     user_id: int = payload["user_id"]
 
     try:
-        await get_product(db, pid)
+        await get_public_product(db, pid)
     except ProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -194,7 +311,7 @@ async def get_bulk_recommendation(
     """
     pid = _to_uuid(id)
     try:
-        await get_product(db, pid)
+        await get_public_product(db, pid)
     except ProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -207,22 +324,52 @@ async def get_bulk_recommendation(
 
 @router.get("/review")
 async def get_reviews(
+    response: Response,
     id: str = Query(..., description="상품 UUID"),
     is_more: bool = Query(False, alias="is-more"),
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    """PR-0306: 상품 리뷰 (service.product_reviews 테이블 미정 — 준비 중)."""
+    """PR-0306: 상품 리뷰와 비동기 감정 요약."""
     pid = _to_uuid(id)
     try:
-        await get_product(db, pid)
+        await get_public_product(db, pid)
     except ProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+    page_size = 20 if is_more else 3
+    reviews, total = await list_product_reviews(db, pid, page, page_size)
+    sentiment = await get_product_review_sentiment(db, pid)
+    response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return {
-        "status": "PREPARING",
-        "message": "리뷰 기능은 준비 중입니다. (service.product_reviews 테이블 설계 필요)",
-        "reviews": [],
+        "status": "SUCCESS",
+        "reviews": [
+            {
+                "id": str(review.review_id),
+                "rating": review.rating,
+                "content": review.content,
+                "isExample": review.is_seed,
+                "createdAt": review.created_at.isoformat(),
+            }
+            for review in reviews
+        ],
+        "summary": (
+            {
+                "reviewCount": sentiment.review_count,
+                "positiveCount": sentiment.positive_count,
+                "neutralCount": sentiment.neutral_count,
+                "negativeCount": sentiment.negative_count,
+                "text": sentiment.summary,
+                "includesExample": sentiment.includes_seed,
+                "computedAt": sentiment.computed_at.isoformat(),
+            }
+            if sentiment is not None
+            else None
+        ),
+        "page": page,
+        "pageSize": page_size,
+        "total": total,
+        "hasNext": page * page_size < total,
     }
 
 
@@ -230,7 +377,7 @@ class FavoriteToggleBody(BaseModel):
     id: str
 
 
-def _favorite_list_item(p: Product) -> dict[str, object]:
+def _favorite_list_item(p: ProductRead) -> dict[str, object]:
     return {
         "id": str(p.product_id),
         "name": p.product_name,

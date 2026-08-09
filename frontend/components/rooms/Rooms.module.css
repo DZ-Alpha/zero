@@ -4261,3 +4261,190 @@
     width: 100%;
   }
 }
+
+/* 2026-08-09 mobile density audit. */
+@media (max-width: 700px) {
+  .page {
+    min-height: calc(100dvh - 56px);
+    padding-bottom: 88px;
+  }
+
+  .wrap {
+    width: calc(100% - 32px);
+  }
+
+  .hero {
+    padding: 25px 0 20px;
+    gap: 13px;
+  }
+
+  .hero h1 {
+    max-width: 340px;
+    font-size: 29px;
+    line-height: 1.16;
+  }
+
+  .liveSignal {
+    margin-top: 13px;
+    padding: 8px 11px;
+  }
+
+  .liveSignal strong,
+  .liveSignal span {
+    font-size: 11px;
+  }
+
+  .heroActions {
+    gap: 7px;
+  }
+
+  .primaryButton,
+  .secondaryButton,
+  .textButton {
+    min-height: 42px;
+    padding-inline: 13px;
+    font-size: 11px;
+  }
+
+  .roomLimit {
+    font-size: 10px;
+  }
+
+  .hero + .section {
+    padding-top: 18px;
+  }
+
+  .section {
+    padding-top: 40px;
+  }
+
+  .sectionHeader {
+    margin-bottom: 18px;
+    padding-top: 14px;
+    gap: 7px;
+  }
+
+  .sectionHeader h2 {
+    font-size: 23px;
+  }
+
+  .roomCard {
+    min-height: 372px;
+    padding: 18px;
+    border-radius: 18px;
+  }
+
+  .roomEmoji {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    font-size: 21px;
+  }
+
+  .rankBadge {
+    padding: 6px 9px;
+    font-size: 10px;
+  }
+
+  .roomCard h3 {
+    margin-top: 14px;
+    font-size: 21px;
+  }
+
+  .roomMeta {
+    font-size: 10px;
+  }
+
+  .roomCardPhotos {
+    height: 74px;
+    margin-top: 13px;
+  }
+
+  .roomStats {
+    margin: 13px 0 15px;
+  }
+
+  .roomStats div {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .roomStats small {
+    font-size: 10px;
+  }
+
+  .roomStats strong {
+    font-size: 15px;
+  }
+
+  .qualification {
+    margin-bottom: 13px;
+    padding: 7px 9px;
+    font-size: 10px;
+  }
+
+  .activitySection {
+    padding-top: 38px;
+  }
+
+  .activityRibbon {
+    grid-auto-columns: 238px;
+  }
+
+  .activityItem {
+    min-height: 78px;
+    grid-template-columns: 54px minmax(0, 1fr) auto;
+    border-radius: 17px;
+  }
+
+  .activityPhoto {
+    width: 54px;
+    height: 54px;
+    border-radius: 14px;
+  }
+
+  .rankRow {
+    min-height: 72px;
+  }
+
+  .rankNumber {
+    width: 36px;
+    height: 36px;
+    font-size: 12px;
+  }
+
+  .teamEmoji {
+    width: 34px;
+    height: 34px;
+  }
+
+  .teamCopy strong {
+    font-size: 13px;
+  }
+
+  .teamCopy small,
+  .teamSugar span {
+    font-size: 10px;
+  }
+
+  .roomHeader {
+    padding: 15px 0 8px;
+  }
+
+  .settingsHeader {
+    padding: 24px 0 18px;
+  }
+
+  .settingsHeader h1 {
+    font-size: 28px;
+  }
+
+  .settingsCard {
+    padding: 19px;
+    border-radius: 18px;
+  }
+
+  .settingsCard h2 {
+    font-size: 20px;
+  }
+}

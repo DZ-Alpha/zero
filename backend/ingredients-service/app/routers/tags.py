@@ -88,7 +88,12 @@ async def allergen_list(db: AsyncSession = Depends(get_db)) -> dict[str, object]
     tags = await list_tags_by_type(db, "ALLERGEN", active_only=True)
     return {
         "list": [
-            {"id": str(t.tag_id), "name": t.tag_name, "desc": t.description, "url": t.source_url}
+            {
+                **_tag_summary(t),
+                "desc": t.description,
+                "caution": t.caution_text,
+                "url": t.source_url,
+            }
             for t in tags
         ]
     }
@@ -100,6 +105,23 @@ async def category_list(db: AsyncSession = Depends(get_db)) -> dict[str, object]
     """카테고리(CATEGORY) 태그 목록."""
     tags = await list_tags_by_type(db, "CATEGORY", active_only=True)
     return {"list": [_tag_summary(t) for t in tags]}
+
+
+@router.get("/tags/health-label")
+async def health_label_list(db: AsyncSession = Depends(get_db)) -> dict[str, object]:
+    """User preference choices backed by active HEALTH_LABEL tags."""
+    tags = await list_tags_by_type(db, "HEALTH_LABEL", active_only=True)
+    return {
+        "list": [
+            {
+                **_tag_summary(tag),
+                "desc": tag.description,
+                "caution": tag.caution_text,
+                "url": tag.source_url,
+            }
+            for tag in tags
+        ]
+    }
 
 
 # 관리자용: 태그 상세 (product_count 포함)

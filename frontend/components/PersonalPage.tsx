@@ -4,11 +4,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { OAUTH_PROVIDERS } from "@/components/OAuthButtons";
 import { ConfirmDialog } from "@/components/SystemFeedback";
-import { ALLERGEN_OPTIONS } from "@/data/taxonomy";
+import { ALLERGEN_OPTIONS, HEALTH_LABELS } from "@/data/taxonomy";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useExitPresence } from "@/hooks/useDelayedClose";
 import { AUTH_CHANGE_EVENT, AUTH_KEY, LEGACY_AUTH_KEY } from "@/hooks/useAuthSession";
-import { saveUserSettingsToServer, UserGoals, UserProfile, useUserSettings } from "@/hooks/useUserSettings";
+import { savePreferenceLabelsToServer, saveUserSettingsToServer, UserGoals, UserProfile, useUserSettings } from "@/hooks/useUserSettings";
 import { ApiError, clearAccessToken } from "@/lib/api/client";
 import { deleteAccount, unlinkSocialAccount } from "@/lib/api/zerocheck";
 
@@ -16,7 +16,7 @@ const LINK_RESULT_KEY = "dangdang-link-result";
 
 type Editor = "profile" | "goals" | "interests" | "allergens" | "notifications";
 
-const interestOptions = ["제로슈거", "저당", "저칼로리", "고단백", "간편식", "저당 레시피"];
+const interestOptions = [...HEALTH_LABELS];
 // 2026-07-30: 가입 화면(SignupProfileForm)과 같은 목록을 쓴다 - data/taxonomy.ts 참고.
 const allergenOptions = [...ALLERGEN_OPTIONS];
 const providerNames: Record<string, string> = { google: "Google", kakao: "카카오", naver: "NAVER", apple: "Apple" };
@@ -181,8 +181,16 @@ export function PersonalPage() {
         setMessage(token ? "관심 기준을 저장했어요." : "이 기기에 관심 기준을 저장했어요.");
       }
       if (editor === "allergens") {
-        updateProfile({ allergens: selectionDraft });
-        setMessage("주의 성분은 이 기기에 저장했어요. 서버 저장 기능은 준비 중이에요.");
+        const nextProfile = { ...profile, allergens: selectionDraft };
+        const saved = token
+          ? await savePreferenceLabelsToServer(token, nextProfile.interests ?? [], selectionDraft)
+          : null;
+        const allergenCodes = saved?.preferences
+          .filter((preference) => preference.preferenceType === "ALLERGEN")
+          .map((preference) => preference.tagCode)
+          .filter((value): value is string => Boolean(value));
+        updateProfile({ allergens: selectionDraft, allergenCodes });
+        setMessage(token ? "주의 성분을 저장했어요." : "이 기기에 주의 성분을 저장했어요.");
       }
       if (editor === "notifications") {
         updateProfile({ notifications: notificationDraft });
@@ -245,9 +253,11 @@ export function PersonalPage() {
       clearAccessToken();
       window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
       window.location.replace("/?accountDeleted=true");
-    } catch {
+    } catch (error) {
       setConfirmingWithdrawal(false);
-      setMessage("회원 탈퇴를 처리하지 못했어요. 잠시 후 다시 시도해 주세요.");
+      setMessage(error instanceof ApiError && error.status === 409
+        ? "소유한 모임이 있어 탈퇴할 수 없어요. 얌로그에서 방장을 위임하거나 모임을 삭제한 뒤 다시 시도해 주세요."
+        : "회원 탈퇴를 처리하지 못했어요. 잠시 후 다시 시도해 주세요.");
     } finally {
       setWithdrawing(false);
     }

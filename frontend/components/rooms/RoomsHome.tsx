@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { SafeImage } from "@/components/SafeImage";
+import { mockRoomsHome } from "@/data/mockRooms";
 import styles from "@/components/rooms/Rooms.module.css";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useExitPresence } from "@/hooks/useDelayedClose";
@@ -27,9 +28,9 @@ const MOCK_TEAM_RANKING: TeamRankingItem[] = [
 
 export function RoomsHome() {
   const router = useRouter();
-  const { ready: authReady, signedIn, token } = useAuthSession();
-  const [home, setHome] = useState<RoomsHomeResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { ready: authReady, signedIn, token, isMockSession } = useAuthSession();
+  const [home, setHome] = useState<RoomsHomeResponse | null>(isMockSession ? mockRoomsHome : null);
+  const [loading, setLoading] = useState(!isMockSession);
   const myRooms = home?.rooms ?? [];
   const roomActivity = home?.recentActivities ?? [];
   // recentActivities는 "다른 멤버의 새 식탁" 리본 전용(내 기록 제외) - 방
@@ -57,10 +58,21 @@ export function RoomsHome() {
   const [toast, setToast] = useState("");
 
   useEffect(() => {
-    if (!token) return;
+    if (isMockSession) {
+      setHome(mockRoomsHome);
+      setLoading(false);
+      return;
+    }
+    if (!token) {
+      setLoading(false);
+      return;
+    }
     let active = true;
     setLoading(true);
-    getRoomsHome(token)
+    const timeout = new Promise<never>((_, reject) => {
+      window.setTimeout(() => reject(new Error("ROOMS_MOCK_FALLBACK")), 4500);
+    });
+    Promise.race([getRoomsHome(token), timeout])
       .then((response) => {
         if (active) setHome(response);
       })
@@ -73,7 +85,7 @@ export function RoomsHome() {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [isMockSession, token]);
 
   useEffect(() => {
     if (!toast) return;

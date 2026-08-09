@@ -14,7 +14,12 @@ from app.models.admin_account import AdminAccount
 from app.models.social_account import SocialAccount
 from app.models.user import User
 from app.services import jwt_service, user_store
-from app.services.user_store import DuplicateEmailError, LastSocialAccountError, SocialAccountNotFoundError
+from app.services.user_store import (
+    AccountDeletionBlockedError,
+    DuplicateEmailError,
+    LastSocialAccountError,
+    SocialAccountNotFoundError,
+)
 
 logger = logging.getLogger("app.user")
 
@@ -195,6 +200,17 @@ async def leave(
     # 탈퇴 처리 자체엔 갱신 토큰이 의미 없지만(계정이 곧 사라짐), 검증 로직은
     # 통일해서 쓴다 — 헤더는 그냥 무시돼도 무해하다.
     user_id = _decode_user_id_or_401(_resolve_token(None, authorization), response)
-    await user_store.delete_user(db, user_id)
+    try:
+        await user_store.delete_user(db, user_id)
+    except AccountDeletionBlockedError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ACCOUNT_DELETION_REQUIRES_CLEANUP",
+                "ownedRooms": error.owned_rooms,
+                "authoredNotices": error.authored_notices,
+                "message": "소유한 모임은 방장을 위임하거나 삭제한 뒤 다시 시도해 주세요.",
+            },
+        ) from error
 
     return {"status": "SUCCESS"}

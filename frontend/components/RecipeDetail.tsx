@@ -6,6 +6,8 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { RecipeCover } from "@/components/RecipeCover";
 import { SafeImage } from "@/components/SafeImage";
 import { recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
+import { useAuthSession } from "@/hooks/useAuthSession";
+import { useUserSettings } from "@/hooks/useUserSettings";
 import { getRecipeDetail, getRecipeSubstitutes, RecipeDetailResponse, RecipeSubstituteResponse } from "@/lib/api/zerocheck";
 
 function normalizeSteps(value: unknown, fallback: { title: string; description: string }[]) {
@@ -24,6 +26,8 @@ function normalizeSteps(value: unknown, fallback: { title: string; description: 
 }
 
 export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: string }) {
+  const { token } = useAuthSession();
+  const { profile } = useUserSettings();
   const catalogDetail = recipeBySlug[slug] ?? recipes.find((recipe) => recipe.databaseId === slug) ?? null;
   const parsedId = Number(catalogDetail?.databaseId ?? slug);
   const recipeId = Number.isFinite(parsedId) ? parsedId : null;
@@ -131,6 +135,11 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
   const substitutesLoaded = liveSubstitutes !== null;
   const similar = recipes.filter((recipe) => recipe.slug !== detail.slug).slice(0, 3);
   const comparisonReady = detail.comparisonStatus === "completed" && detail.comparisonSugar > 0 && detail.comparisonCalories > 0;
+  const matchedAllergens = (profile.allergens ?? []).filter((allergen) =>
+    detail.ingredients.some((ingredient) =>
+      ingredient.replace(/\s/g, "").includes(allergen.replace(/\s/g, "")),
+    ),
+  );
 
   if (loading && !catalogDetail) {
     return <main className="detail-page page-wrap"><div className="detail-state wrap"><div className="catalog-loading"><i /><i /><i /><span>레시피를 불러오고 있어요.</span></div></div></main>;
@@ -154,6 +163,13 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
         </div>
       </section>
 
+      {token && matchedAllergens.length > 0 && (
+        <section className="allergen-user-warning wrap" role="alert">
+          <div><strong>내 주의 성분이 재료에 포함될 수 있어요</strong><span>{matchedAllergens.join(", ")}</span></div>
+          <p>재료명 기반 참고 정보이며 의료 판단을 대신하지 않아요. 조리 전 실제 제품 포장과 원재료 표시를 반드시 확인해 주세요.</p>
+        </section>
+      )}
+
       <section className="recipe-compare wrap">
         {comparisonReady ? <>
           <header className="section-line-heading"><div><p className="eyebrow">일반 조리와 비교</p><h2>바꾼 재료가 수치에 어떻게 보이는지 확인해요</h2></div></header>
@@ -167,7 +183,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
 
       <section className="recipe-body wrap">
         <aside><p className="eyebrow">재료 · {detail.servings}</p>{detail.ingredients.map((item) => <div key={item}><span>{item}</span><i>✓</i></div>)}</aside>
-        <div className="recipe-steps"><p className="eyebrow">간단히 보는 조리 순서</p>{detail.steps.map((step, index) => <article key={step.title}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{step.title}</h3><p>{step.description}</p></div></article>)}</div>
+        <div className="recipe-steps"><p className="eyebrow">간단히 보는 조리 순서</p>{detail.steps.map((step, index) => <article key={`${index}-${step.title}`}><span>{String(index + 1).padStart(2, "0")}</span><div><p>{step.description}</p></div></article>)}</div>
       </section>
 
       <section className="detail-products-band">

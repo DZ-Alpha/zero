@@ -3,7 +3,7 @@ import { ChatWidget } from "@/components/ChatWidget";
 import { HeaderAuth } from "@/components/HeaderAuth";
 import { SavedMenuDrawer } from "@/components/SavedMenuDrawer";
 import { ScrollToTop } from "@/components/ScrollToTop";
-import { SiteNav } from "@/components/SiteNav";
+import { MobileNav, SiteNav } from "@/components/SiteNav";
 import { SessionExpiredNotice } from "@/components/SystemFeedback";
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -14,14 +14,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <header className="site-header">
         <Link href="/" className="brand" aria-label="당당 홈">
           <span className="brand-mark">
-            <img src="/dangdang.svg" alt="" width={25} height={25} />
+            <img src="/icon.svg" alt="" width={32} height={32} />
           </span>
           <span className="brand-copy"><b>당당</b></span>
         </Link>
         <SiteNav />
         <HeaderAuth />
       </header>
-      <div id="main-content" tabIndex={-1}>{children}</div>
+      <div id="main-content" className="site-main" tabIndex={-1}>{children}</div>
+      <MobileNav />
       <footer className="service-footer"><div className="wrap"><span>당당 · 제로·저당 선택 서비스</span><nav aria-label="서비스 정책"><Link href="/terms">이용약관</Link><Link href="/privacy">개인정보처리방침</Link></nav></div></footer>
       <SessionExpiredNotice />
       <SavedMenuDrawer />

@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Numeric, String, Text
+from sqlalchemy import DateTime, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,3 +42,9 @@ class Product(Base):
     # 상품 정보 — image_url만 NOT NULL, purchase_url은 nullable
     image_url: Mapped[str] = mapped_column(Text)
     purchase_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 데이터 출처·검증 시각. 007_columns_recipes_products.sql에서 추가됐고
+    # 기존 행은 NULL이 정상이다.
+    source: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
