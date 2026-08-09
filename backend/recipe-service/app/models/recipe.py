@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, Numeric, String, Text
+from sqlalchemy import JSON, DateTime, Numeric, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -27,3 +27,5 @@ class Recipe(Base):
     comparison_status: Mapped[str] = mapped_column(String(20))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cook_time_min: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)

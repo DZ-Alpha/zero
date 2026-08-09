@@ -12,9 +12,11 @@ class RecipeNotFoundError(Exception):
     pass
 
 
-def _apply_recipe_filters(stmt, source: str | None):
+def _apply_recipe_filters(stmt, source: str | None, search: str | None = None):
     if source:
         stmt = stmt.where(Recipe.source == source)
+    if search and search.strip():
+        stmt = stmt.where(Recipe.name.ilike(f"%{search.strip()}%"))
     return stmt
 
 
@@ -23,11 +25,12 @@ async def list_recipes(
     source: str | None = None,
     sort: str | None = None,
     page: int = 1,
+    search: str | None = None,
 ) -> list[Recipe]:
     """PRODUCTION_HANDOFF.md P1-2 — source 필터(만개의레시피/유튜브 구분) + 페이지네이션.
     category/time(조리시간)은 명세엔 있지만 실제 service.recipes 테이블에 해당 컬럼이
     없어서 필터/응답 필드 모두 아직 못 채운다 — 데이터팀 스키마 추가 필요."""
-    stmt = _apply_recipe_filters(select(Recipe), source)
+    stmt = _apply_recipe_filters(select(Recipe), source, search)
     # sort=sugarReduction: 저당 비율 높은 순. 기본은 기존과 동일하게 id desc(최신 적재순).
     stmt = stmt.order_by(Recipe.sugar_reduction_pct.desc()) if sort == "sugarReduction" else stmt.order_by(Recipe.id.desc())
     stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
@@ -39,6 +42,7 @@ async def list_recipes_with_total(
     source: str | None = None,
     sort: str | None = None,
     page: int = 1,
+    search: str | None = None,
 ) -> tuple[list[Recipe], int]:
     """Return one recipe page and total count with one database round trip.
 
@@ -47,6 +51,7 @@ async def list_recipes_with_total(
     stmt = _apply_recipe_filters(
         select(Recipe, func.count().over().label("total_count")),
         source,
+        search,
     )
     stmt = stmt.order_by(Recipe.sugar_reduction_pct.desc()) if sort == "sugarReduction" else stmt.order_by(Recipe.id.desc())
     stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
@@ -55,12 +60,12 @@ async def list_recipes_with_total(
     if rows:
         return [row[0] for row in rows], int(rows[0][1])
     if page > 1:
-        return [], await count_recipes(db, source=source)
+        return [], await count_recipes(db, source=source, search=search)
     return [], 0
 
 
-async def count_recipes(db: AsyncSession, source: str | None = None) -> int:
-    stmt = _apply_recipe_filters(select(func.count()).select_from(Recipe), source)
+async def count_recipes(db: AsyncSession, source: str | None = None, search: str | None = None) -> int:
+    stmt = _apply_recipe_filters(select(func.count()).select_from(Recipe), source, search)
     return (await db.execute(stmt)).scalar_one()
 
 

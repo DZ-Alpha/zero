@@ -40,6 +40,12 @@ from app.services.diet_store import (
     update_record,
 )
 from app.services.storage import StorageUploadError, presign_diet_photo_url, validate_diet_photo_key
+from app.services.swap_rules import (
+    is_already_low_sugar,
+    is_credible_product_match,
+    is_valid_swap_candidate,
+    serving_key,
+)
 
 _KST = ZoneInfo("Asia/Seoul")
 
@@ -327,30 +333,100 @@ async def other_foods(
     }
 
 
-# RC-0105: 대체 제품 추천 (Product Service 검색 API 위임)
+# RC-0105: 사진 분석 결과에 연결되는 대체 제품 추천
 @router.get("/recommend-alt")
 async def recommend_alt(
     id: str = Query(..., description="meal_log UUID"),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(get_current_user),
 ) -> dict[str, object]:
-    """RC-0105: 식단 내 제품의 저당/제로 대체 제품 추천 (Product Service 검색 위임).
+    """사진에서 인식된 제품에만 보수적인 저당 스왑 후보를 반환한다.
 
-    현재 PREPARING — Product Service /search 연동 후 활성화.
+    후보는 Product Service가 ``v_product_swap_pick``으로 브랜드 중복을 묶어
+    제공하며, 이 경계에서 세부 식품군·비교 단위·감소폭을 다시 검증한다.
+    조건을 만족하지 않으면 설명용 카드 대신 ``NO_MATCH``만 반환한다.
     """
     user_id: int = payload["user_id"]
     log_id = _to_uuid(id, "meal_log ID")
 
     try:
-        await get_meal_log_for_user(db, log_id, user_id)
+        log = await get_meal_log_for_user(db, log_id, user_id)
     except MealLogNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    return {
-        "status": "PREPARING",
-        "message": "대체 제품 추천 기능은 Product Service 연동 후 활성화됩니다.",
-        "list-products": [],
-    }
+    if log.input_type != "VISION" or log.analysis_status != "COMPLETED":
+        return {"status": "NO_MATCH", "mealLogId": str(log_id), "alternatives": []}
+
+    meal_items = await get_meal_items(db, log_id)
+    product_service = settings.product_service_url.rstrip("/")
+
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            for meal_item in meal_items:
+                recognized_name = str(meal_item.item_name or "").strip()
+                if not recognized_name:
+                    continue
+
+                search_response = await client.get(
+                    f"{product_service}/search",
+                    params={"query": recognized_name, "page": 1},
+                )
+                search_response.raise_for_status()
+                search_items = search_response.json().get("items", [])
+
+                for source in search_items[:5]:
+                    if not is_credible_product_match(recognized_name, source.get("name")):
+                        continue
+                    if is_already_low_sugar(source):
+                        continue
+                    if not source.get("foodType") or not serving_key(source.get("serving")):
+                        continue
+
+                    alternatives_response = await client.get(
+                        f"{product_service}/product/alternatives",
+                        params={"id": source.get("id")},
+                    )
+                    alternatives_response.raise_for_status()
+                    alternatives_payload = alternatives_response.json()
+                    if alternatives_payload.get("status") != "AVAILABLE":
+                        continue
+
+                    valid: list[dict[str, object]] = []
+                    seen_ids: set[str] = set()
+                    for candidate in alternatives_payload.get("alternatives", []):
+                        candidate_id = str(candidate.get("id") or "")
+                        if not candidate_id or candidate_id in seen_ids:
+                            continue
+                        detail_response = await client.get(
+                            f"{product_service}/product",
+                            params={"id": candidate_id},
+                        )
+                        detail_response.raise_for_status()
+                        detail = detail_response.json()
+                        if not is_valid_swap_candidate(source, candidate, detail):
+                            continue
+                        seen_ids.add(candidate_id)
+                        valid.append(
+                            {
+                                **candidate,
+                                "category": detail.get("category"),
+                                "foodType": detail.get("foodType"),
+                                "serving": detail.get("serving"),
+                            }
+                        )
+
+                    if valid:
+                        return {
+                            "status": "AVAILABLE",
+                            "mealLogId": str(log_id),
+                            "recognizedItem": recognized_name,
+                            "current": source,
+                            "alternatives": valid[:2],
+                        }
+    except (httpx.HTTPError, TypeError, ValueError, AttributeError):
+        logger.exception("product swap lookup failed for meal_log_id=%s", log_id)
+
+    return {"status": "NO_MATCH", "mealLogId": str(log_id), "alternatives": []}
 
 
 # RC-0106: 캘린더 (날짜별 식단 기록)

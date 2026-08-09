@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { readUserProfile, saveUserGoals } from "@/hooks/useUserSettings";
+import { readUserProfile, savePreferenceLabelsToServer, saveUserGoals } from "@/hooks/useUserSettings";
 import { ApiError, getAccessToken } from "@/lib/api/client";
 import { updateFirstSet, updateHealthProfile } from "@/lib/api/zerocheck";
 
@@ -136,7 +136,12 @@ export function SignupTargetForm({ provider }: { provider: string }) {
             dailySugarTargetG: sugarTarget,
           })
         : Promise.resolve(null);
-      await Promise.all([baseRequest, healthRequest]);
+      const preferenceRequest = savePreferenceLabelsToServer(
+        token,
+        profile.interests ?? [],
+        profile.allergens ?? [],
+      );
+      await Promise.all([baseRequest, healthRequest, preferenceRequest]);
       saveUserGoals({
         calories: calorieTarget,
         sugar: sugarTarget,

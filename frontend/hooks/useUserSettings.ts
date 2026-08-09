@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { AUTH_CHANGE_EVENT } from "@/hooks/useAuthSession";
 import { getAccessToken, readJwtPayload } from "@/lib/api/client";
-import { getHealthProfile, getMyPage, updateFirstSet, updateHealthProfile } from "@/lib/api/zerocheck";
+import {
+  getAllergenTags,
+  getHealthLabelTags,
+  getHealthProfile,
+  getMyPage,
+  getUserPreferences,
+  replaceUserPreferences,
+  updateFirstSet,
+  updateHealthProfile,
+  type UserPreferenceItem,
+} from "@/lib/api/zerocheck";
 
 export const USER_PROFILE_KEY = "dangdang-signup-profile";
 export const USER_GOALS_KEY = "dangdang-goals";
@@ -19,6 +29,7 @@ export type UserProfile = {
   activity?: string;
   interests?: string[];
   allergens?: string[];
+  allergenCodes?: string[];
   provider?: string;
   email?: string;
   enabledSns?: string[];
@@ -89,7 +100,63 @@ function birthdayForApi(profile: UserProfile) {
   return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
 }
 
-export type ServerSettingsScope = "profile" | "goals" | "interests";
+export type ServerSettingsScope = "profile" | "goals" | "interests" | "allergens";
+
+const HEALTH_LABEL_CODE_BY_NAME: Record<string, string> = {
+  "제로": "ZERO_GENERAL",
+  "제로슈거": "ZERO_SUGAR",
+  "제로칼로리": "ZERO_CALORIE",
+  "저당": "LOW_SUGAR",
+  "저칼로리": "LOW_CALORIE",
+  "무가당·무첨가당": "NO_ADDED_SUGAR",
+  "고단백": "HIGH_PROTEIN",
+};
+
+function preferenceLabels(preferences: UserPreferenceItem[], type: UserPreferenceItem["preferenceType"]) {
+  const healthNameByCode = new Map(
+    Object.entries(HEALTH_LABEL_CODE_BY_NAME).map(([name, code]) => [code, name]),
+  );
+  return preferences
+    .filter((preference) => preference.preferenceType === type)
+    .map((preference) => type === "INTEREST_CATEGORY" && preference.tagCode
+      ? healthNameByCode.get(preference.tagCode) || preference.tagName
+      : preference.tagName || preference.customValue)
+    .filter((value): value is string => Boolean(value));
+}
+
+export async function savePreferenceLabelsToServer(
+  token: string,
+  interests: string[],
+  allergens: string[],
+) {
+  const [healthLabels, allergenTags, current] = await Promise.all([
+    getHealthLabelTags(),
+    getAllergenTags(),
+    getUserPreferences(token),
+  ]);
+  const healthByCode = new Map(healthLabels.list.map((tag) => [tag.code, tag]));
+  const allergenByName = new Map(allergenTags.list.map((tag) => [tag.name.replace(/\s/g, ""), tag]));
+  const interestTagIds = interests
+    .map((label) => healthByCode.get(HEALTH_LABEL_CODE_BY_NAME[label])?.id)
+    .filter((id): id is string => Boolean(id));
+  const selectedAllergens = allergens.filter((label) => label !== "해당 없음");
+  const allergenTagIds = selectedAllergens
+    .map((label) => allergenByName.get(label.replace(/\s/g, ""))?.id)
+    .filter((id): id is string => Boolean(id));
+  const cautionIngredients = current.preferences
+    .filter((preference) => preference.preferenceType === "CAUTION_INGREDIENT")
+    .map((preference) => preference.customValue)
+    .filter((value): value is string => Boolean(value));
+
+  if (interestTagIds.length !== new Set(interests).size) {
+    throw new Error("선택한 관심 기준을 서버 태그와 연결하지 못했습니다.");
+  }
+  if (allergenTagIds.length !== new Set(selectedAllergens).size) {
+    throw new Error("선택한 알레르기 성분을 서버 태그와 연결하지 못했습니다.");
+  }
+
+  return replaceUserPreferences(token, { interestTagIds, allergenTagIds, cautionIngredients });
+}
 
 export async function saveUserSettingsToServer(
   token: string,
@@ -109,6 +176,14 @@ export async function saveUserSettingsToServer(
       weight: scope === "profile" && profile.weight ? profile.weight : undefined,
       birthday: scope === "profile" ? birthdayForApi(profile) : undefined,
     }));
+  }
+
+  if (scope === "interests" || scope === "allergens") {
+    requests.push(savePreferenceLabelsToServer(
+      token,
+      profile.interests ?? [],
+      profile.allergens ?? [],
+    ));
   }
 
   if ((scope === "profile" || scope === "goals") && profile.healthConsent) {
@@ -162,7 +237,7 @@ export function useUserSettings() {
     if (!token) return;
     let active = true;
 
-    Promise.allSettled([getMyPage(token), getHealthProfile(token)]).then(([myPageResult, healthResult]) => {
+    Promise.allSettled([getMyPage(token), getHealthProfile(token), getUserPreferences(token)]).then(([myPageResult, healthResult, preferenceResult]) => {
       if (!active) return;
       const currentProfile = readUserProfile(token);
       const currentGoals = readUserGoals(token);
@@ -170,6 +245,16 @@ export function useUserSettings() {
       const nickname = typeof tokenPayload?.nickname === "string" ? tokenPayload.nickname : undefined;
       const myPage = myPageResult.status === "fulfilled" ? myPageResult.value : null;
       const health = healthResult.status === "fulfilled" ? healthResult.value : null;
+      const preferences = preferenceResult.status === "fulfilled" ? preferenceResult.value.preferences : null;
+      const databaseInterests = preferences ? preferenceLabels(preferences, "INTEREST_CATEGORY") : null;
+      const databaseAllergens = preferences ? preferenceLabels(preferences, "ALLERGEN") : null;
+      const databaseAllergenCodes = preferences
+        ? preferences
+          .filter((preference) => preference.preferenceType === "ALLERGEN")
+          .map((preference) => preference.tagCode)
+          .filter((value): value is string => Boolean(value))
+        : null;
+      const hasDatabasePreferences = Boolean(preferences?.length);
 
       const nextProfile: UserProfile = {
         ...currentProfile,
@@ -179,7 +264,11 @@ export function useUserSettings() {
         email: myPage?.email ?? currentProfile.email,
         enabledSns: myPage?.enabledSns ?? currentProfile.enabledSns,
         provider: myPage?.enabledSns?.[0]?.toLowerCase() ?? currentProfile.provider,
-        interests: myPage?.favorite?.length ? myPage.favorite : currentProfile.interests,
+        interests: hasDatabasePreferences
+          ? databaseInterests ?? []
+          : myPage?.favorite?.length ? myPage.favorite : currentProfile.interests,
+        allergens: hasDatabasePreferences ? databaseAllergens ?? [] : currentProfile.allergens,
+        allergenCodes: hasDatabasePreferences ? databaseAllergenCodes ?? [] : currentProfile.allergenCodes,
         height: health?.heightCm ?? myPage?.healthStat?.tall ?? currentProfile.height,
         weight: health?.weightKg ?? myPage?.healthStat?.weight ?? currentProfile.weight,
         birthYear: health?.birthYear ? String(health.birthYear) : currentProfile.birthYear,
@@ -198,6 +287,29 @@ export function useUserSettings() {
       setProfile(nextProfile);
       setGoals(nextGoals);
       notifySettingsChanged();
+
+      if (preferences && preferences.length === 0) {
+        const legacyInterests = nextProfile.interests ?? [];
+        const legacyAllergens = nextProfile.allergens ?? [];
+        if (legacyInterests.length > 0 || legacyAllergens.some((item) => item !== "해당 없음")) {
+          void savePreferenceLabelsToServer(token, legacyInterests, legacyAllergens)
+            .then((saved) => {
+              if (!active) return;
+              const allergenCodes = saved.preferences
+                .filter((preference) => preference.preferenceType === "ALLERGEN")
+                .map((preference) => preference.tagCode)
+                .filter((value): value is string => Boolean(value));
+              const migratedProfile = { ...readUserProfile(token), allergenCodes };
+              window.localStorage.setItem(
+                scopedSettingsKey(USER_PROFILE_KEY, token),
+                JSON.stringify(migratedProfile),
+              );
+              setProfile(migratedProfile);
+              notifySettingsChanged();
+            })
+            .catch(() => undefined);
+        }
+      }
     });
 
     return () => {

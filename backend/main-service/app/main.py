@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)sZ %(levelname)s %(nam
 from app.core.config import settings  # noqa: E402
 from app.core.database import Base, run_with_retry  # noqa: E402
 from app.models import OWNED_TABLES  # noqa: E402, F401 (import registers all models on Base.metadata)
-from app.routers import gauge, health, health_profile, home, preferences, rank, recommend, search  # noqa: E402
+from app.routers import content, gauge, health, health_profile, home, preferences, rank, recommend, search  # noqa: E402
 
 logger = logging.getLogger("main_service")
 
@@ -63,3 +63,4 @@ app.include_router(gauge.router)
 app.include_router(recommend.router)
 app.include_router(search.router)
 app.include_router(rank.router)
+app.include_router(content.router)

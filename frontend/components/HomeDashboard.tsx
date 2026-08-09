@@ -2,22 +2,38 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { HomeAdBanner } from "@/components/HomeAdBanner";
 import { RecordMealModal } from "@/components/RecordMealModal";
 import { SafeImage } from "@/components/SafeImage";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
-import { teamRanking as mockTeamRanking } from "@/components/rooms/roomData";
 import { products, recipes } from "@/data/catalog";
+import { mockRoomsHome } from "@/data/mockRooms";
+import { featuredReadingArticles, getReadingArticle } from "@/data/reading";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useDailyGauge } from "@/hooks/useDailyGauge";
 import { DietRecord, getTodayKey, keyToDate, MealType, useDietRecords } from "@/hooks/useDietRecords";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { withMockFallback } from "@/lib/api/client";
 import { getRoomsHome } from "@/lib/api/rooms";
-import { getProductRanking, getUserRecommendations, HomeProductItem } from "@/lib/api/zerocheck";
+import {
+  getRecipeSwapRanking,
+  getHomeArticles,
+  getUserRecommendations,
+  HomeArticleItem,
+  HomeProductItem,
+  HomeRecipeRankingItem,
+} from "@/lib/api/zerocheck";
 import { RoomsHomeResponse } from "@/lib/rooms/contracts";
 
-type RankingItem = { name: string; meta: string; saved: number; href: string };
+type RankingItem = {
+  name: string;
+  meta: string;
+  metric?: string;
+  href: string;
+  image?: string | null;
+  symbol?: string;
+};
+
+type ProductSignalMode = "personalized" | "general" | "guest" | "preview";
 
 const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 
@@ -52,17 +68,20 @@ function markActivitySeen(roomId: string, activityId: string) {
   }
 }
 
-const recipeRanking: RankingItem[] = recipes.map((recipe) => ({ name: recipe.title, meta: `${recipe.time} · 등록 재료 당류 ${recipe.estimatedSugar}g`, saved: recipe.savedDemo, href: `/recipes/${recipe.slug}` }));
-const fallbackProductRanking: RankingItem[] = products.slice(0, 10).map((product) => ({ name: product.title, meta: `${product.serving} 기준 · 당류 ${product.sugar}g · ${product.calories}kcal`, saved: product.savedDemo, href: `/product/${product.slug}` }));
-// 실제 랭킹 참여 조건(멤버 3명+·개설 7일+)을 만족하는 방이 아직 없으면
-// weeklyRanking이 통째로 빈 배열로 온다 - 그렇다고 카드를 비워두면 안
-// 만들어진 기능처럼 보이니, 저당픽 랭킹과 같은 패턴으로 목업을 채워둔다.
-const fallbackRoomRanking: RankingItem[] = mockTeamRanking.slice(0, 3).map((team, index) => ({
-  name: team.name,
-  meta: `멤버 ${team.members}명 · 기록률 ${team.recordRate}% · 평균 당류 ${team.averageSugar}g`,
-  saved: index + 1,
-  href: "/rooms",
+const fallbackRecipeRanking: RankingItem[] = recipes.map((recipe) => ({
+  name: recipe.title,
+  meta: `등록 재료 당류 ${sugarText(recipe.estimatedSugar)}g · ${recipe.time}`,
+  href: `/recipes/${recipe.slug}`,
+  image: recipe.thumbnail,
 }));
+const fallbackProductRanking: RankingItem[] = products.slice(0, 10).map((product) => ({
+  name: product.title,
+  meta: `${product.serving} 기준 · 당류 ${product.sugar}g`,
+  metric: `${product.calories}kcal`,
+  href: `/product/${product.slug}`,
+  image: product.image,
+}));
+
 const emptyRoomsHome: RoomsHomeResponse = {
   rooms: [],
   recentActivities: [],
@@ -76,16 +95,17 @@ const emptyRoomsHome: RoomsHomeResponse = {
 };
 
 function toRoomRanking(weeklyRanking: RoomsHomeResponse["weeklyRanking"]): RankingItem[] {
-  return weeklyRanking.map((room, index) => ({
+  return weeklyRanking.map((room) => ({
     name: room.name,
-    meta: `멤버 ${room.memberCount}명 · 기록률 ${room.recordRate}% · 평균 당류 ${room.averageSugar}g`,
-    saved: index + 1,
+    meta: `멤버 ${room.memberCount}명 · 평균 당류 ${room.averageSugar}g`,
+    metric: `기록률 ${room.recordRate}%`,
     href: room.isMine ? `/rooms/${room.id}` : "/rooms",
+    symbol: room.emoji,
   }));
 }
 
 function toRankingItems(items: HomeProductItem[], personalized: boolean): RankingItem[] {
-  return items.map((item, index) => {
+  return items.map((item) => {
     // item.id(실제 상품 ID)가 있으면 그걸로 바로 상세 페이지로 보낸다 - 예전엔
     // 이름으로 로컬 목업 카탈로그를 매칭해야만 상세로 갔고, 실서버 상품 대부분은
     // 매칭이 안 돼 검색 페이지로만 보내졌다(2026-07-31 리포트 - 상세로 가야 함).
@@ -93,19 +113,79 @@ function toRankingItems(items: HomeProductItem[], personalized: boolean): Rankin
     const productKey = item.id ?? catalogItem?.slug;
     return {
       name: item.name,
-      meta: [item.brand, personalized ? "관심 기준에 맞춘 추천" : "많이 찾는 저당픽"].filter(Boolean).join(" · "),
-      saved: item.rank ?? index + 1,
+      meta: [item.brand, personalized ? "관심 기준과 일치" : "전체 제품에서 보기"].filter(Boolean).join(" · "),
+      metric: personalized ? "내 기준" : undefined,
       href: productKey ? `/product/${productKey}` : `/search?query=${encodeURIComponent(item.name)}`,
+      image: item.image,
     };
   });
 }
 
-const readingList = [
-  { category: "성분 읽기", title: "제로슈거인데 당류가 0g이 아닐 수 있나요?", copy: "표시 문구와 영양성분표를 함께 봐야 하는 이유를 알아봐요.", time: "3분" },
-  { category: "감미료", title: "알룰로스와 에리스리톨은 무엇이 다를까요?", copy: "자주 쓰이는 대체 감미료의 특징을 쉬운 말로 정리했어요.", time: "4분" },
-  { category: "식단 기록", title: "간식을 끊지 않고 당류를 줄이는 방법", copy: "먹는 시간을 바꾸고 양을 기록하는 작은 습관부터 시작해요.", time: "3분" },
-  { category: "처음 읽기", title: "영양성분표는 이 세 줄부터 보면 쉬워요", copy: "열량, 당류, 1회 제공량을 순서대로 확인해보세요.", time: "2분" },
-] as const;
+function toRecipeRankingItems(items: HomeRecipeRankingItem[]): RankingItem[] {
+  return items.map((item) => ({
+    name: item.name,
+    meta:
+      item.baseSugarG != null && item.totalSugarG != null
+        ? `당류 ${sugarText(item.baseSugarG)}g → ${sugarText(item.totalSugarG)}g`
+        : "등록 재료 기준으로 비교했어요",
+    metric: `${sugarText(item.sugarReductionPct)}% 감소`,
+    href: `/recipes/${item.id}`,
+    image: item.image,
+  }));
+}
+
+function SignalList({ items, emptyMessage }: { items: RankingItem[]; emptyMessage: string }) {
+  if (items.length === 0) {
+    return <p className="home-signal-empty">{emptyMessage}</p>;
+  }
+
+  return (
+    <ul className="home-signal-list">
+      {items.slice(0, 3).map((item) => (
+        <li key={`${item.href}-${item.name}`}>
+          <Link href={item.href}>
+            <span className={`home-signal-visual${item.image ? " has-image" : ""}`} aria-hidden={!item.image}>
+              {item.image ? <SafeImage src={item.image} alt="" fallbackLabel={item.symbol ?? "당"} /> : <b>{item.symbol ?? "당"}</b>}
+            </span>
+            <span className="home-signal-copy">
+              <strong>{item.name}</strong>
+              <small>{item.meta}</small>
+            </span>
+            {item.metric ? <em>{item.metric}</em> : null}
+            <i aria-hidden="true">→</i>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type ReadingItem = { slug?: string; category: string; title: string; copy: string; time: string; cover: string; coverCaption: string };
+
+const fallbackReadingList: ReadingItem[] = featuredReadingArticles.map((article) => ({
+  slug: article.slug,
+  category: article.category,
+  title: article.title,
+  copy: article.summary,
+  time: `${article.readMinutes}분`,
+  cover: article.cover,
+  coverCaption: article.coverCaption,
+}));
+
+function toReadingItems(items: HomeArticleItem[]): ReadingItem[] {
+  return items.map((item) => {
+    const editorial = getReadingArticle(item.slug);
+    return {
+      slug: item.slug,
+      category: item.category,
+      title: item.title,
+      copy: item.summary ?? editorial?.summary ?? "본문에서 자세한 내용을 확인해보세요.",
+      time: item.readMinutes ? `${item.readMinutes}분` : editorial ? `${editorial.readMinutes}분` : "짧게",
+      cover: editorial?.cover ?? "한눈에 읽기",
+      coverCaption: editorial?.coverCaption ?? "선택 전에 알아둘 핵심",
+    };
+  });
+}
 
 function percent(value: number, max: number) {
   return Math.min(100, Math.round((value / max) * 100));
@@ -157,7 +237,7 @@ function MealSymbol({ meal }: { meal: MealType }) {
 }
 
 export function HomeDashboard() {
-  const { ready: authReady, signedIn, token } = useAuthSession();
+  const { ready: authReady, signedIn, token, isMockSession } = useAuthSession();
   const remoteGauge = useDailyGauge(token);
   const { recordsByDate, loadServerMonth } = useDietRecords();
   const { goals } = useUserSettings();
@@ -165,9 +245,11 @@ export function HomeDashboard() {
   const [activeMeal, setActiveMeal] = useState<MealType | null>(null);
   const [loginPrompt, setLoginPrompt] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const [productRanking, setProductRanking] = useState<RankingItem[]>(fallbackProductRanking);
-  const [productPanelTitle, setProductPanelTitle] = useState("저당픽 TOP");
-  const [roomsHome, setRoomsHome] = useState<RoomsHomeResponse>(emptyRoomsHome);
+  const [readingList, setReadingList] = useState<ReadingItem[]>(fallbackReadingList);
+  const [recipeRanking, setRecipeRanking] = useState<RankingItem[]>(isMockSession ? fallbackRecipeRanking : []);
+  const [productRanking, setProductRanking] = useState<RankingItem[]>(isMockSession ? fallbackProductRanking : []);
+  const [productSignalMode, setProductSignalMode] = useState<ProductSignalMode>(isMockSession ? "preview" : "guest");
+  const [roomsHome, setRoomsHome] = useState<RoomsHomeResponse>(isMockSession ? mockRoomsHome : emptyRoomsHome);
   const [nudgeToast, setNudgeToast] = useState("");
   const [seenActivityMap, setSeenActivityMap] = useState<Record<string, string | null>>({});
   const [dismissedNudgeKey, setDismissedNudgeKey] = useState<string | null>(null);
@@ -186,33 +268,71 @@ export function HomeDashboard() {
 
   useEffect(() => {
     let active = true;
-    const rankRequest = withMockFallback(() => getProductRanking(), { listProducts: [] });
+
+    if (isMockSession) {
+      setRecipeRanking(fallbackRecipeRanking);
+      setProductRanking(fallbackProductRanking);
+      setProductSignalMode("preview");
+      return () => {
+        active = false;
+      };
+    }
+
+    const rankRequest = withMockFallback(
+      () => getRecipeSwapRanking(),
+      { status: "PREPARING", listRecipes: [], listProducts: [] },
+    );
     const recommendRequest = token
-      ? withMockFallback(() => getUserRecommendations(token), { listProducts: [] })
-      : Promise.resolve({ listProducts: [] });
+      ? withMockFallback(() => getUserRecommendations(token), {
+          listProducts: [],
+          personalized: false,
+          matchedPreferenceIds: [],
+          reason: "NO_PREFERENCES" as const,
+        })
+      : Promise.resolve({
+          listProducts: [],
+          personalized: false,
+          matchedPreferenceIds: [],
+          reason: "NO_PREFERENCES" as const,
+        });
 
     Promise.all([rankRequest, recommendRequest]).then(([rank, recommend]) => {
       if (!active) return;
+      setRecipeRanking(
+        rank.listRecipes.length > 0
+          ? toRecipeRankingItems(rank.listRecipes)
+          : [],
+      );
       if (token && recommend.listProducts.length > 0) {
-        setProductRanking(toRankingItems(recommend.listProducts, true));
-        setProductPanelTitle("맞춤 저당픽");
+        setProductRanking(toRankingItems(recommend.listProducts, recommend.personalized));
+        setProductSignalMode(recommend.personalized ? "personalized" : "general");
         return;
       }
-      if (rank.listProducts.length > 0) {
-        setProductRanking(toRankingItems(rank.listProducts, false));
-        setProductPanelTitle("저당픽 TOP");
-        return;
-      }
-      setProductRanking(fallbackProductRanking);
-      setProductPanelTitle("저당픽 TOP");
+      setProductRanking([]);
+      setProductSignalMode(token ? "general" : "guest");
     });
 
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [isMockSession, token]);
 
   useEffect(() => {
+    let active = true;
+    withMockFallback(() => getHomeArticles(4), { articles: [] }).then(({ articles }) => {
+      if (!active) return;
+      setReadingList(articles.length > 0 ? toReadingItems(articles) : fallbackReadingList);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMockSession) {
+      setRoomsHome(mockRoomsHome);
+      return;
+    }
     if (!token) {
       setRoomsHome(emptyRoomsHome);
       return;
@@ -233,7 +353,7 @@ export function HomeDashboard() {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [isMockSession, token]);
 
   const todayRecords = recordsByDate[todayKey] ?? [];
   const entries = useMemo(() => Object.fromEntries(meals.map((meal) => [
@@ -300,7 +420,21 @@ export function HomeDashboard() {
   // 기록까지 섞이면 빈 칸에 라벨만 뜬다(2026-07-31 리포트). 아바타/기록 수는
   // 사진 유무와 무관하게 myRoomTodayActivities를 그대로 쓴다.
   const myRoomTodayPhotos = myRoomTodayActivities.filter((activity) => activity.imageUrl);
-  const roomRanking = roomsHome.weeklyRanking.length > 0 ? toRoomRanking(roomsHome.weeklyRanking) : fallbackRoomRanking;
+  const roomRanking = toRoomRanking(roomsHome.weeklyRanking);
+  const productSignalTitle = productSignalMode === "personalized"
+    ? "내 기준에 맞는 저당 제품"
+    : productSignalMode === "guest"
+      ? "로그인하면 내 기준으로 골라드려요"
+      : productSignalMode === "preview"
+        ? "내 기준에 맞는 저당 제품"
+        : "먼저 둘러볼 저당 제품";
+  const productSignalBasis = productSignalMode === "personalized"
+    ? "관심 기준"
+    : productSignalMode === "preview"
+      ? "오늘 추천"
+      : productSignalMode === "guest"
+        ? "로그인 필요"
+        : "전체 목록";
 
   const myRooms = roomsHome.rooms;
   const myRoomIdsKey = myRooms.map((room) => room.id).join(",");
@@ -331,6 +465,17 @@ export function HomeDashboard() {
 
   return (
     <main className="home-dashboard">
+      <section className="home-intro wrap" aria-labelledby="home-intro-title">
+        <div className="home-intro-copy">
+          <h1 id="home-intro-title">먹고 싶은 건 그대로,<br /><em>당은 더 가볍게.</em></h1>
+          <p>당당이 제품과 레시피의 당류를 비교해서, 지금 먹기 좋은 선택을 찾아줄게요.</p>
+        </div>
+        <div className="home-intro-visual">
+          <div className={`today-sugar-character state-${state}`} role="img" aria-label="당당 설탕이" />
+          <span className="home-intro-bubble">{stateCopy}</span>
+        </div>
+      </section>
+
       {authReady && !signedIn && (
         <aside className="guest-preview-notice wrap" aria-label="로그인 전 미리보기 안내">
           <div><span>예시 화면</span><p>내 기록은 로그인 후 보여요.</p></div>
@@ -410,7 +555,10 @@ export function HomeDashboard() {
         </div>
 
         <div className="meal-slots">
-          <div className="meal-slots-heading"><div><p className="eyebrow">식사별 기록</p><h2>기록할 식사를 골라주세요</h2></div></div>
+          <div className="meal-slots-heading">
+            <div><p className="eyebrow">식사별 기록</p><h2>기록할 식사를 골라주세요</h2></div>
+            <Link className="meal-flow-link" href="/diet">기록 흐름 보기 <b aria-hidden="true">→</b></Link>
+          </div>
           <div className="meal-slot-grid">
             {meals.map((meal) => (
               <button type="button" className="meal-slot" data-meal={meal} key={meal} onClick={() => openMeal(meal)} aria-label={`${meal} 기록 열기`}>
@@ -422,10 +570,6 @@ export function HomeDashboard() {
           </div>
         </div>
       </section>
-
-      <Link className="home-thin-banner" href="/diet">
-        <span>{stateCopy} 기록 흐름을 캘린더에서 이어서 볼 수 있어요.</span><b>캘린더에서 흐름 보기 →</b>
-      </Link>
 
       {myRoom ? (
         <section className="home-room-preview wrap" aria-labelledby="home-room-title" data-preview={!signedIn ? "예시" : undefined}>
@@ -461,40 +605,58 @@ export function HomeDashboard() {
         </section>
       ) : null}
 
-      <HomeAdBanner />
+      <section className="ranking-section home-signal-section wrap" aria-labelledby="home-signal-title">
+        <header className="section-line-heading home-signal-heading">
+          <div><p className="eyebrow">이번 주 당당 신호</p><h2 id="home-signal-title">기록하고, 바꾸고, 골라보세요</h2></div>
+          <p>오늘 식사를 이어갈 다음 선택을 한곳에 모았어요. 함께 기록하고, 당류를 확인하고, 내 기준에 맞게 골라보세요.</p>
+        </header>
+        <div className="home-signal-board">
+          <article className="home-signal-panel home-signal-room">
+            <header>
+              <div><small>함께 기록하기</small><h3>꾸준히 기록 중인 모임</h3></div>
+              <span>최근 7일</span>
+            </header>
+            <p className="home-signal-intro">기록률이 높은 모임을 보며 오늘 한 끼를 함께 이어가요.</p>
+            <SignalList items={roomRanking} emptyMessage={signedIn ? "이번 주 집계 조건을 충족한 모임이 아직 없어요." : "로그인하면 이번 주 모임 기록률을 볼 수 있어요."} />
+            <Link className="home-signal-action" href="/rooms">모임 기록 보기 <span aria-hidden="true">→</span></Link>
+          </article>
 
-      <section className="ranking-section home-ranking-three wrap">
-        <header className="section-line-heading"><div><p className="eyebrow">이번 주 랭킹</p><h2>지금 인기 있는 모임과 메뉴</h2></div></header>
-        <div className="ranking-columns">
-          {[["모임", roomRanking, "/rooms", "👥"], ["레시피", recipeRanking, "/recipes", "🥗"], [productPanelTitle.replace(" TOP", ""), productRanking, "/search", "🛒"]].map(([title, list, href, icon]) => (
-            <article className="ranking-panel" key={title as string}>
-              <header>
-                <div className="ranking-panel-heading"><span aria-hidden="true">{icon as string}</span><div><small>이번 주 TOP 3</small><h3>{title as string}</h3></div></div>
-                <Link href={href as string}>전체 순위</Link>
-              </header>
-              <ol>
-                {(list as RankingItem[]).slice(0, 3).map((item, index) => (
-                  <li key={item.name}>
-                    <Link href={item.href}>
-                      <span className="ranking-number">{String(index + 1).padStart(2, "0")}</span>
-                      <span className="ranking-copy"><strong>{item.name}</strong><small>{item.meta}</small></span>
-                    </Link>
-                  </li>
-                ))}
-              </ol>
-            </article>
-          ))}
+          <article className="home-signal-panel home-signal-recipe">
+            <header>
+              <div><small>바꿔 먹는 방법</small><h3>{isMockSession ? "당류를 확인한 레시피" : "당류를 많이 덜어낸 레시피"}</h3></div>
+              <span>재료 기준</span>
+            </header>
+            <SignalList items={recipeRanking} emptyMessage="당류 비교가 끝난 레시피를 불러오고 있어요." />
+            <Link className="home-signal-action" href="/recipes">레시피 둘러보기 <span aria-hidden="true">→</span></Link>
+          </article>
+
+          <article className="home-signal-panel home-signal-product">
+            <header>
+              <div><small>내 기준으로 고르기</small><h3>{productSignalTitle}</h3></div>
+              <span>{productSignalBasis}</span>
+            </header>
+            <SignalList items={productRanking} emptyMessage={productSignalMode === "guest" ? "로그인하면 관심 기준과 알레르기를 반영한 제품을 볼 수 있어요." : "조건에 맞는 제품을 준비하고 있어요."} />
+            <Link className="home-signal-action" href={productSignalMode === "guest" ? "/login" : "/search"}>{productSignalMode === "guest" ? "로그인하기" : "저당 제품 찾기"} <span aria-hidden="true">→</span></Link>
+          </article>
         </div>
+        <p className="home-signal-note">레시피 수치는 등록 재료 기준 비교이며, 제품 추천은 의료 판단이 아닌 선택 참고 정보예요.</p>
       </section>
 
       <section className="reading-section wrap">
-        <header className="section-line-heading"><div><p className="eyebrow">당당 읽을거리</p><h2>알아두면 선택이 쉬워지는 이야기</h2></div></header>
+        <header className="section-line-heading reading-heading"><div><p className="eyebrow">당당 읽을거리</p><h2>고를 때 바로 써먹는 기준</h2></div><p>숫자를 외우기보다, 다음 선택이 쉬워지는 기준만 짧고 정확하게 정리했어요.</p></header>
         <div className="reading-grid">
-          {readingList.slice(0, 2).map((item, index) => (
-            <article className={`reading-card tone-${index + 1}`} key={item.title}>
-              <div className="reading-card-cover"><span>{item.category}</span><b>{String(index + 1).padStart(2, "0")}</b></div>
-              <div className="reading-card-copy"><small>{item.time} 읽기</small><h3>{item.title}</h3><p>{item.copy}</p></div>
-            </article>
+          {readingList.slice(0, 4).map((item, index) => (
+            <Link className={`reading-card tone-${(index % 4) + 1}`} href={item.slug ? `/reading/${item.slug}` : "/search"} key={item.title}>
+              <div className="reading-card-cover">
+                <span>{item.category}</span>
+                <strong>{item.cover}</strong>
+                <small>{item.coverCaption}</small>
+              </div>
+              <div className="reading-card-copy">
+                <h3>{item.title}</h3>
+                <div className="reading-card-meta"><small>{item.time} 읽기</small><b>읽어보기 <i aria-hidden="true">→</i></b></div>
+              </div>
+            </Link>
           ))}
         </div>
       </section>

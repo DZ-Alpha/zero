@@ -34,6 +34,13 @@ function inferCategory(name: string): RecipeData["category"] {
   return "한 끼";
 }
 
+function recipeCategory(value: string | null | undefined, name: string): RecipeData["category"] {
+  const allowed: RecipeData["category"][] = ["소스", "면", "분식", "간식", "국·찌개", "샐러드", "반찬", "한 끼"];
+  return allowed.includes(value as RecipeData["category"])
+    ? value as RecipeData["category"]
+    : inferCategory(name);
+}
+
 function toRecipeData(item: RecipeListItem, detail: RecipeDetailResponse | null, fallback: RecipeData[]): RecipeData {
   const matched = fallback.find((recipe) => recipe.databaseId === String(item.id));
   const nutrition = detail?.nutrition;
@@ -47,24 +54,24 @@ function toRecipeData(item: RecipeListItem, detail: RecipeDetailResponse | null,
     databaseId: String(item.id),
     title: detail?.name || item.name || matched?.title || "레시피 이름 준비 중",
     author: detail?.source || matched?.author || "저당 레시피",
-    category: matched?.category ?? inferCategory(item.name),
+    category: item.category ? recipeCategory(item.category, item.name) : matched?.category ?? inferCategory(item.name),
     servings: matched?.servings ?? "분량 정보 준비 중",
-    time: matched?.time ?? "조리 시간 준비 중",
+    time: item.cookTimeMin != null ? `${item.cookTimeMin}분` : matched?.time ?? "조리 시간 준비 중",
     difficulty: matched?.difficulty ?? "차근차근",
     summary: matched?.summary ?? "재료와 조리 순서를 확인하고 식단에 가볍게 더해보세요.",
     ingredients: ingredients.length > 0 ? ingredients : matched?.ingredients ?? [],
     steps: detail?.steps ? normalizeSteps(detail.steps) : matched?.steps ?? [],
     sourceUrl,
-    estimatedSugar: nutrition?.totalSugarG ?? matched?.estimatedSugar ?? 0,
-    estimatedCalories: nutrition?.totalKcal ?? matched?.estimatedCalories ?? 0,
+    estimatedSugar: nutrition?.totalSugarG ?? item.sugar ?? matched?.estimatedSugar ?? 0,
+    estimatedCalories: nutrition?.totalKcal ?? item.calories ?? matched?.estimatedCalories ?? 0,
     estimatedProtein: matched?.estimatedProtein ?? 0,
     comparisonSugar: nutrition?.baseSugarG ?? matched?.comparisonSugar ?? 0,
     comparisonCalories: nutrition?.baseKcal ?? matched?.comparisonCalories ?? 0,
     savedDemo: matched?.savedDemo ?? 0,
     tone: matched?.tone ?? tones[item.id % tones.length],
     keywords: keywords.length > 0 ? keywords : matched?.keywords ?? [],
-    comparisonStatus: nutrition?.comparisonStatus === "completed" || item.comparisonStatus === "completed" ? "completed" : "pending",
-    nutritionCoverage: detail?.nutrition ? 100 : matched?.nutritionCoverage ?? 0,
+    comparisonStatus: ["completed", "ready"].includes(nutrition?.comparisonStatus ?? item.comparisonStatus ?? "") ? "completed" : "pending",
+    nutritionCoverage: detail?.nutrition || item.sugar != null || item.calories != null ? 100 : matched?.nutritionCoverage ?? 0,
     publishedAt: detail?.publishedAt || matched?.publishedAt,
     thumbnail: detail?.thumbnailUrl || item.thumbnailUrl || matched?.thumbnail,
   };
@@ -82,7 +89,10 @@ export function useRecipeCatalog(fallback: RecipeData[]) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    getRecipes(1)
+    const timeout = new Promise<never>((_, reject) => {
+      window.setTimeout(() => reject(new Error("RECIPE_CATALOG_MOCK_FALLBACK")), 3500);
+    });
+    Promise.race([getRecipes(1), timeout])
       .then(({ recipes, hasNext }) => {
         if (!active) return;
         // 목록 응답만으로 카드를 만들고 상세 정보는 상세 페이지에 들어갔을 때만 호출한다.

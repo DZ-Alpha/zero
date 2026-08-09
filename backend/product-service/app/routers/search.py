@@ -1,13 +1,13 @@
 import logging
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.models.product import Product
 from app.models.tag import Tag
 from app.services.product_store import (
     PAGE_SIZE,
+    ProductRead,
     autocomplete_products,
     get_product_tags_bulk,
     search_products_with_total,
@@ -18,9 +18,10 @@ logger = logging.getLogger("product_service.search")
 router = APIRouter()
 
 PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300"
+SUPPORTED_SORTS = {"rank", "abc", "sugar_asc", "calorie_asc"}
 
 
-def _search_item(p: Product, tags: list[Tag]) -> dict[str, object]:
+def _search_item(p: ProductRead, tags: list[Tag]) -> dict[str, object]:
     category_tags = [t for t in tags if t.tag_type == "CATEGORY"]
     serving = f"{p.serving_value}{p.serving_unit}" if p.serving_value is not None and p.serving_unit else None
     return {
@@ -31,6 +32,7 @@ def _search_item(p: Product, tags: list[Tag]) -> dict[str, object]:
         # PRODUCTION_HANDOFF.md P1-1 — 카드 렌더링에 필요한 필드
         "brand": p.brand_name,
         "category": category_tags[0].tag_name if category_tags else None,
+        "foodType": p.food_type,
         "serving": serving,
         "sugar": float(p.sugars) if p.sugars is not None else None,
         "calories": float(p.calories) if p.calories is not None else None,
@@ -39,7 +41,7 @@ def _search_item(p: Product, tags: list[Tag]) -> dict[str, object]:
     }
 
 
-def _autocomplete_item(p: Product) -> dict[str, object]:
+def _autocomplete_item(p: ProductRead) -> dict[str, object]:
     return {
         "id": str(p.product_id),
         "name": p.product_name,
@@ -52,13 +54,21 @@ async def search(
     query: str | None = Query(None, description="검색어 (제품명/브랜드)"),
     category: str | None = Query(None, description="카테고리 코드, 콤마 구분 (PR-0103)"),
     warning: str | None = Query(None, description="주의 성분(알레르기) 코드, 콤마 구분 (PR-0104)"),
-    sort: str | None = Query(None, description="정렬: rank(기본) | abc (PR-0105)"),
+    sort: str | None = Query(
+        None,
+        description="정렬: rank(기본) | abc | sugar_asc | calorie_asc",
+    ),
     page: int = Query(1, ge=1, description="페이지 번호"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
     """PR-0101~0105 / MN-0102: 키워드 검색, 카테고리/주의성분 필터, 정렬."""
     category_codes = [c.strip() for c in category.split(",") if c.strip()] if category else None
     warning_codes = [w.strip() for w in warning.split(",") if w.strip()] if warning else None
+    if sort is not None and sort not in SUPPORTED_SORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"지원하지 않는 정렬입니다. sort={sort}",
+        )
 
     products, total = await search_products_with_total(
         db,

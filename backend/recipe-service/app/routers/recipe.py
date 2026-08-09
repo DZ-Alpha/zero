@@ -40,8 +40,9 @@ def _list_item(recipe: Recipe) -> dict[str, object]:
         "thumbnailUrl": _thumbnail_url(recipe),
         "sugarReductionPct": float(recipe.sugar_reduction_pct) if recipe.sugar_reduction_pct is not None else None,
         "comparisonStatus": recipe.comparison_status,
-        # PRODUCTION_HANDOFF.md P1-2 — 카드 필드. category/time(조리시간)은 명세엔
-        # 있지만 service.recipes에 해당 컬럼이 없어서 아직 못 채운다.
+        # 007_columns_recipes_products.sql — 크롤러 백필 전에는 NULL이 정상이다.
+        "category": recipe.category,
+        "cookTimeMin": recipe.cook_time_min,
         "sugar": float(recipe.total_sugar_g) if recipe.total_sugar_g is not None else None,
         "calories": float(recipe.total_kcal) if recipe.total_kcal is not None else None,
         "source": recipe.source,
@@ -67,10 +68,11 @@ async def get_recipe_list(
     response: Response,
     source: str | None = Query(None, description="출처 필터: 10000recipe | youtube (PRODUCTION_HANDOFF.md P1-2)"),
     sort: str | None = Query(None, description="정렬: sugarReduction(저당 비율순) | 기본(최신 적재순)"),
+    search: str | None = Query(None, min_length=1, max_length=80, description="레시피명 검색"),
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    recipes, total = await list_recipes_with_total(db, source=source, sort=sort, page=page)
+    recipes, total = await list_recipes_with_total(db, source=source, sort=sort, page=page, search=search)
     response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return {
         "recipes": [_list_item(recipe) for recipe in recipes],
@@ -137,6 +139,8 @@ async def get_recipe_detail(
         "thumbnailUrl": _thumbnail_url(recipe),
         "steps": recipe.steps,
         "source": recipe.source,
+        "category": recipe.category,
+        "cookTimeMin": recipe.cook_time_min,
         "publishedAt": recipe.published_at.isoformat() if recipe.published_at else None,
         "nutrition": {
             "totalSugarG": float(recipe.total_sugar_g) if recipe.total_sugar_g is not None else None,

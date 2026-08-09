@@ -1,11 +1,14 @@
 import uuid
 import logging
+from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
+from app.models.product_display import ProductDisplay
 from app.models.product_ai_summary import ProductAiSummary
 from app.models.product_favorite import ProductFavorite
 from app.models.product_tag import ProductTag
@@ -14,6 +17,60 @@ from app.models.tag import Tag
 logger = logging.getLogger("product_service.store")
 
 PAGE_SIZE = 20
+
+
+@dataclass(frozen=True)
+class ProductRead:
+    """Public product projection with the curated display name.
+
+    ``v_product_display`` intentionally contains only list-level fields. The
+    public read path joins it to the base table so detail responses retain
+    nutrition and ingredient fields while removed products stay invisible.
+    """
+
+    product_id: uuid.UUID
+    product_name: str
+    raw_product_name: str
+    brand_name: str | None
+    manufacturer_name: str | None
+    food_type: str | None
+    serving_value: Decimal | None
+    serving_unit: str | None
+    calories: Decimal
+    carbohydrate: Decimal | None
+    sugars: Decimal
+    protein: Decimal | None
+    fat: Decimal | None
+    sodium: Decimal | None
+    ingredient_text: str | None
+    image_url: str
+    purchase_url: str | None
+    source: str | None
+    last_verified_at: datetime | None
+
+
+def _public_product(product: Product, display_name: str) -> ProductRead:
+    return ProductRead(
+        product_id=product.product_id,
+        product_name=display_name,
+        raw_product_name=product.product_name,
+        brand_name=product.brand_name,
+        manufacturer_name=product.manufacturer_name,
+        food_type=product.food_type,
+        serving_value=product.serving_value,
+        serving_unit=product.serving_unit,
+        calories=product.calories,
+        carbohydrate=product.carbohydrate,
+        sugars=product.sugars,
+        protein=product.protein,
+        fat=product.fat,
+        sodium=product.sodium,
+        ingredient_text=product.ingredient_text,
+        image_url=product.image_url,
+        purchase_url=product.purchase_url,
+        source=product.source,
+        last_verified_at=product.last_verified_at,
+    )
 
 
 class ProductNotFoundError(Exception):
@@ -70,52 +127,56 @@ def _name_or_brand_matches(query: str):
     """
     contains_pattern = f"%{_escape_like(query)}%"
     matches = [
-        Product.product_name.ilike(contains_pattern, escape="\\"),
-        Product.brand_name.ilike(contains_pattern, escape="\\"),
+        ProductDisplay.display_name.ilike(contains_pattern, escape="\\"),
+        ProductDisplay.brand_name.ilike(contains_pattern, escape="\\"),
     ]
     if _has_hangul(query):
         max_distance = _max_edit_distance(query)
         matches.extend((
-            _korean_edit_distance(Product.product_name, query) <= max_distance,
-            _korean_edit_distance(Product.brand_name, query) <= max_distance,
+            _korean_edit_distance(ProductDisplay.display_name, query) <= max_distance,
+            _korean_edit_distance(ProductDisplay.brand_name, query) <= max_distance,
         ))
     elif len(query) >= 2:
         matches.extend((
-            Product.product_name.op("%")(query),
-            Product.brand_name.op("%")(query),
+            ProductDisplay.display_name.op("%")(query),
+            ProductDisplay.brand_name.op("%")(query),
         ))
     return or_(*matches)
 
 
 def _apply_search_order(stmt, query: str | None, sort: str | None):
     """Keep exact/partial results above fuzzy matches, then sort fuzzy by score."""
+    if sort == "sugar_asc":
+        return stmt.order_by(ProductDisplay.sugars.asc(), ProductDisplay.display_name.asc())
+    if sort == "calorie_asc":
+        return stmt.order_by(ProductDisplay.calories.asc(), ProductDisplay.display_name.asc())
     if sort == "abc" or query is None:
-        return stmt.order_by(Product.product_name)
+        return stmt.order_by(ProductDisplay.display_name)
 
     prefix_pattern = f"{_escape_like(query)}%"
     contains_pattern = f"%{_escape_like(query)}%"
     normalized_query = query.lower()
     match_priority = case(
-        (func.lower(Product.product_name) == normalized_query, 5),
-        (func.lower(Product.brand_name) == normalized_query, 4),
-        (Product.product_name.ilike(prefix_pattern, escape="\\"), 3),
-        (Product.brand_name.ilike(prefix_pattern, escape="\\"), 2),
-        (Product.product_name.ilike(contains_pattern, escape="\\"), 1),
+        (func.lower(ProductDisplay.display_name) == normalized_query, 5),
+        (func.lower(ProductDisplay.brand_name) == normalized_query, 4),
+        (ProductDisplay.display_name.ilike(prefix_pattern, escape="\\"), 3),
+        (ProductDisplay.brand_name.ilike(prefix_pattern, escape="\\"), 2),
+        (ProductDisplay.display_name.ilike(contains_pattern, escape="\\"), 1),
         else_=0,
     )
     if _has_hangul(query):
         max_distance = _max_edit_distance(query)
         edit_distance = func.least(
-            _korean_edit_distance(Product.product_name, query),
-            func.coalesce(_korean_edit_distance(Product.brand_name, query), max_distance + 1),
+            _korean_edit_distance(ProductDisplay.display_name, query),
+            func.coalesce(_korean_edit_distance(ProductDisplay.brand_name, query), max_distance + 1),
         )
-        return stmt.order_by(match_priority.desc(), edit_distance.asc(), Product.product_name)
+        return stmt.order_by(match_priority.desc(), edit_distance.asc(), ProductDisplay.display_name)
 
     similarity_score = func.greatest(
-        func.similarity(Product.product_name, query),
-        func.coalesce(func.similarity(Product.brand_name, query), 0.0),
+        func.similarity(ProductDisplay.display_name, query),
+        func.coalesce(func.similarity(ProductDisplay.brand_name, query), 0.0),
     )
-    return stmt.order_by(match_priority.desc(), similarity_score.desc(), Product.product_name)
+    return stmt.order_by(match_priority.desc(), similarity_score.desc(), ProductDisplay.display_name)
 
 
 def _apply_search_filters(stmt, query: str | None, category_codes: list[str] | None, warning_codes: list[str] | None):
@@ -130,7 +191,7 @@ def _apply_search_filters(stmt, query: str | None, category_codes: list[str] | N
                 select(ProductTag.product_id)
                 .join(Tag, Tag.tag_id == ProductTag.tag_id)
                 .where(
-                    ProductTag.product_id == Product.product_id,
+                    ProductTag.product_id == ProductDisplay.product_id,
                     Tag.tag_type == "CATEGORY",
                     Tag.tag_code.in_(category_codes),
                     Tag.active.is_(True),
@@ -145,7 +206,7 @@ def _apply_search_filters(stmt, query: str | None, category_codes: list[str] | N
                 select(ProductTag.product_id)
                 .join(Tag, Tag.tag_id == ProductTag.tag_id)
                 .where(
-                    ProductTag.product_id == Product.product_id,
+                    ProductTag.product_id == ProductDisplay.product_id,
                     Tag.tag_type == "ALLERGEN",
                     Tag.tag_code.in_(warning_codes),
                 )
@@ -162,14 +223,21 @@ async def search_products(
     warning_codes: list[str] | None,
     sort: str | None,
     page: int,
-) -> list[Product]:
+) -> list[ProductRead]:
     normalized_query = _normalized_query(query)
-    stmt = _apply_search_filters(select(Product), normalized_query, category_codes, warning_codes)
+    stmt = _apply_search_filters(
+        select(Product, ProductDisplay.display_name).join(
+            ProductDisplay, ProductDisplay.product_id == Product.product_id
+        ),
+        normalized_query,
+        category_codes,
+        warning_codes,
+    )
     stmt = _apply_search_order(stmt, normalized_query, sort)
 
     stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = (await db.execute(stmt)).all()
+    return [_public_product(product, display_name) for product, display_name in rows]
 
 
 async def search_products_with_total(
@@ -179,7 +247,7 @@ async def search_products_with_total(
     warning_codes: list[str] | None,
     sort: str | None,
     page: int,
-) -> tuple[list[Product], int]:
+) -> tuple[list[ProductRead], int]:
     """Return one page and its total count with one database round trip.
 
     An empty page beyond the end needs one fallback count query so callers can
@@ -187,7 +255,11 @@ async def search_products_with_total(
     """
     normalized_query = _normalized_query(query)
     stmt = _apply_search_filters(
-        select(Product, func.count().over().label("total_count")),
+        select(
+            Product,
+            ProductDisplay.display_name,
+            func.count().over().label("total_count"),
+        ).join(ProductDisplay, ProductDisplay.product_id == Product.product_id),
         normalized_query,
         category_codes,
         warning_codes,
@@ -197,7 +269,8 @@ async def search_products_with_total(
 
     rows = (await db.execute(stmt)).all()
     if rows:
-        return [row[0] for row in rows], int(rows[0][1])
+        products = [_public_product(row[0], row[1]) for row in rows]
+        return products, int(rows[0][2])
     if page > 1:
         return [], await count_search_products(db, query, category_codes, warning_codes)
     return [], 0
@@ -212,7 +285,10 @@ async def count_search_products(
     """P1-1(PRODUCTION_HANDOFF.md) — search_products와 동일한 필터로 전체 건수를 센다
     (프론트 total/hasNext 계산용)."""
     stmt = _apply_search_filters(
-        select(func.count()).select_from(Product), query, category_codes, warning_codes
+        select(func.count()).select_from(ProductDisplay),
+        _normalized_query(query),
+        category_codes,
+        warning_codes,
     )
     return (await db.execute(stmt)).scalar_one()
 
@@ -235,15 +311,19 @@ async def get_product_tags_bulk(db: AsyncSession, product_ids: list[uuid.UUID]) 
     return tags_by_product
 
 
-async def autocomplete_products(db: AsyncSession, query: str) -> list[Product]:
+async def autocomplete_products(db: AsyncSession, query: str) -> list[ProductRead]:
     normalized_query = _normalized_query(query)
     if normalized_query is None:
         return []
 
-    stmt = select(Product).where(_name_or_brand_matches(normalized_query))
+    stmt = (
+        select(Product, ProductDisplay.display_name)
+        .join(ProductDisplay, ProductDisplay.product_id == Product.product_id)
+        .where(_name_or_brand_matches(normalized_query))
+    )
     stmt = _apply_search_order(stmt, normalized_query, sort="rank").limit(10)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = (await db.execute(stmt)).all()
+    return [_public_product(product, display_name) for product, display_name in rows]
 
 
 async def get_product(db: AsyncSession, product_id: uuid.UUID) -> Product:
@@ -253,6 +333,19 @@ async def get_product(db: AsyncSession, product_id: uuid.UUID) -> Product:
     if product is None:
         raise ProductNotFoundError(f"상품을 찾을 수 없습니다. id={product_id}")
     return product
+
+
+async def get_public_product(db: AsyncSession, product_id: uuid.UUID) -> ProductRead:
+    """Return a visible product with its curated display name."""
+    stmt = (
+        select(Product, ProductDisplay.display_name)
+        .join(ProductDisplay, ProductDisplay.product_id == Product.product_id)
+        .where(Product.product_id == product_id)
+    )
+    row = (await db.execute(stmt)).one_or_none()
+    if row is None:
+        raise ProductNotFoundError(f"상품을 찾을 수 없습니다. id={product_id}")
+    return _public_product(row[0], row[1])
 
 
 async def get_product_tags(db: AsyncSession, product_id: uuid.UUID) -> list[Tag]:
@@ -269,10 +362,11 @@ async def get_product_tags(db: AsyncSession, product_id: uuid.UUID) -> list[Tag]
 async def get_product_with_tags(
     db: AsyncSession,
     product_id: uuid.UUID,
-) -> tuple[Product, list[Tag]]:
+) -> tuple[ProductRead, list[Tag]]:
     """Load a product and all active tags in a single database round trip."""
     stmt = (
-        select(Product, Tag)
+        select(Product, ProductDisplay.display_name, Tag)
+        .join(ProductDisplay, ProductDisplay.product_id == Product.product_id)
         .outerjoin(ProductTag, ProductTag.product_id == Product.product_id)
         .outerjoin(
             Tag,
@@ -284,7 +378,8 @@ async def get_product_with_tags(
     rows = (await db.execute(stmt)).all()
     if not rows:
         raise ProductNotFoundError(f"상품을 찾을 수 없습니다. id={product_id}")
-    return rows[0][0], [tag for _, tag in rows if tag is not None]
+    product = _public_product(rows[0][0], rows[0][1])
+    return product, [tag for _, _, tag in rows if tag is not None]
 
 
 async def get_sweetener_tags_for_product(db: AsyncSession, product_id: uuid.UUID) -> list[Tag]:
@@ -403,7 +498,7 @@ async def update_nutrition(
 
 async def toggle_favorite(db: AsyncSession, product_id: uuid.UUID, user_id: int) -> bool:
     """PR-0307: 찜 등록/해제 토글. 반환값은 토글 후 상태(True=찜됨)."""
-    await get_product(db, product_id)  # 없는 상품이면 404
+    await get_public_product(db, product_id)
 
     existing = await db.get(ProductFavorite, {"product_id": product_id, "user_id": user_id})
     if existing is not None:
@@ -416,16 +511,17 @@ async def toggle_favorite(db: AsyncSession, product_id: uuid.UUID, user_id: int)
     return True
 
 
-async def list_favorites(db: AsyncSession, user_id: int) -> list[Product]:
+async def list_favorites(db: AsyncSession, user_id: int) -> list[ProductRead]:
     """PR-0308: 찜한 상품 목록."""
     stmt = (
-        select(Product)
+        select(Product, ProductDisplay.display_name)
+        .join(ProductDisplay, ProductDisplay.product_id == Product.product_id)
         .join(ProductFavorite, ProductFavorite.product_id == Product.product_id)
         .where(ProductFavorite.user_id == user_id)
         .order_by(ProductFavorite.created_at.desc())
     )
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = (await db.execute(stmt)).all()
+    return [_public_product(product, display_name) for product, display_name in rows]
 
 
 async def get_ai_summary_cache(db: AsyncSession, product_id: uuid.UUID) -> ProductAiSummary | None:
