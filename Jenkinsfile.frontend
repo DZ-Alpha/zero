@@ -150,7 +150,7 @@ pipeline {
             when { expression { env.CHANGED?.trim() } }
             steps {
                 script {
-                    def SERVER = '192.168.0.68:30080'   // ArgoCD NodePort (HTTP, insecure)
+                    def SERVER = '192.168.0.68:30443'   // ArgoCD NodePort (HTTPS/gRPC). --insecure로 인증서 검증만 생략.
                     // 서비스별 독립 승격: 한 프론트의 승격 실패(staging wait 타임아웃/DAST High/
                     // 매니페스트 push 실패)가 다른 프론트 승격을 막지 않게 catchError로 격리한다.
                     // (백엔드 Jenkinsfile과 동일 패턴. 이전엔 격리가 없어 frontend의 argocd wait
@@ -166,7 +166,7 @@ pipeline {
                             // 1) staging App(frontend/frontend-admin) Synced+Healthy 대기 (게이트)
                             sh """
                                 argocd app wait ${fe} \
-                                    --server ${SERVER} --auth-token \$ARGOCD_TOKEN --plaintext \
+                                    --server ${SERVER} --auth-token \$ARGOCD_TOKEN --insecure \
                                     --sync --health --timeout 300
                             """
                             // ★ DAST 게이트: staging 뜬 것에 ZAP baseline. FAIL(High)이면 prod 승격 차단.
