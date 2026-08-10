@@ -5385,3 +5385,22 @@ body{overflow-x:hidden}
 @media(max-width:700px){
   .personal-ai-note h2{font-size:19px}
 }
+
+/* 10. 홈을 세로로 훑으면 오늘의 기록 → 모임 → 당당 신호가 전부 같은 연두라
+       블록이 나뉘어 보이지 않았다. 가운데 두 곳만 톤을 옮겨 리듬을 만든다. */
+.home-dashboard .home-room-preview{
+  border-color:#cadfd6;
+  background:#e9f3ef;
+  box-shadow:0 15px 34px rgba(24,60,48,.06);
+}
+.home-dashboard .home-room-preview-title>span{background:#d2e6dd}
+.home-dashboard .home-room-avatars span,
+.home-dashboard .home-room-preview-photos>span{border-color:#e9f3ef}
+.home-dashboard .home-room-preview-stats{border-left-color:#cfdfd8}
+.home-dashboard .home-room-preview-stats>span{border-right-color:#cfdfd8}
+
+/* 당당 신호 3단 중 가운데(레시피)만 크림톤으로 - 위아래가 연두/흰색이라 대비가 산다. */
+.home-signal-recipe{border-color:#ecdcbd;background:#fdf5e6}
+.home-signal-recipe .home-signal-panel>header,
+.home-signal-recipe>header{border-bottom-color:rgba(120,92,36,.18)}
+.home-signal-recipe>header>span{border-color:#e3d3b4}
