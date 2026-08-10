@@ -181,7 +181,7 @@ pipeline {
             when { expression { env.CHANGED?.trim() } }
             steps {
                 script {
-                    def SERVER = '192.168.0.68:30080'   // ArgoCD NodePort (HTTP, insecure)
+                    def SERVER = '192.168.0.68:30443'   // ArgoCD NodePort (HTTPS/gRPC). --insecure로 인증서 검증만 생략.
                     // active scan은 staging JWT_SECRET으로 유저 토큰을 직접 서명(pyjwt).
                     // Jenkins는 클러스터 밖이라 kubectl exec 불가 → credential로 secret 주입.
                     // 서비스별 독립 승격: 한 서비스의 승격 실패(staging wait 타임아웃/DAST High/
@@ -206,7 +206,7 @@ pipeline {
                             // 1) staging App(login-service 등) Synced+Healthy 대기 (게이트)
                             sh """
                                 argocd app wait ${svc} \
-                                    --server ${SERVER} --auth-token \$ARGOCD_TOKEN --plaintext \
+                                    --server ${SERVER} --auth-token \$ARGOCD_TOKEN --insecure \
                                     --sync --health --timeout 300
                             """
                             // ★ DAST 게이트: staging 뜬 것에 비인증 ZAP baseline. High(exit1)면 prod 승격 차단.
