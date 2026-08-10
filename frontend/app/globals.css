@@ -5336,3 +5336,35 @@ body{overflow-x:hidden}
   .saved-menu-toggle{bottom:0!important;width:26px;height:46px;border-radius:0 11px 11px 0}
   .saved-menu-toggle>span{font-size:14px}
 }
+
+/* 7. 저당 제품 필터 레일은 카테고리·영양 기준·감미료까지 쌓여 1,100px이 넘는다.
+      뷰포트보다 큰 sticky 요소는 화면에 고정되지 못하고 같이 밀려 올라가서,
+      레시피 쪽처럼 따라오지 않았다. 레일 안쪽만 스크롤되게 높이를 잡아준다. */
+@media(min-width:901px){
+  .catalog-filter-rail{
+    max-height:calc(100dvh - 96px);
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    scrollbar-width:thin;
+    scrollbar-color:#d3dacf transparent;
+  }
+  .catalog-filter-rail::-webkit-scrollbar{width:6px}
+  .catalog-filter-rail::-webkit-scrollbar-thumb{border-radius:999px;background:#d3dacf}
+  .catalog-filter-rail::-webkit-scrollbar-track{background:transparent}
+}
+
+/* 8. 상세 페이지 "비슷한 상품" 카드: 3열일 때 카드가 264px까지 좁아지는데 사진이
+      118px을 차지해 제목과 수치가 두세 줄로 잘려 보였다. 카드가 좁아지는 구간에서는
+      2열로 떨어뜨리고, 사진도 조금 줄여 글자가 들어갈 자리를 만든다. */
+@media(max-width:1120px){
+  .detail-products-band .compact-recommendations,
+  .product-similar-band .compact-recommendations{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(min-width:901px){
+  .detail-page .detail-products-band .compact-recommendations>a,
+  .detail-page .product-similar-band .compact-recommendations>a{grid-template-columns:104px minmax(0,1fr)}
+  .detail-products-band .compact-recommendations h3,
+  .product-similar-band .compact-recommendations h3{margin-right:22px}
+  .detail-products-band .compact-product-photo,
+  .product-similar-band .compact-product-photo{height:104px}
+}
