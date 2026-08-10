@@ -5368,3 +5368,39 @@ body{overflow-x:hidden}
   .detail-products-band .compact-product-photo,
   .product-similar-band .compact-product-photo{height:104px}
 }
+
+/* 9. "당당 AI가 읽은 한마디"가 백엔드에서 내려오면 한 줄짜리 기본 문구보다 훨씬
+      길다. 그런데 헤드라인에 white-space:nowrap이 걸려 있어 1,150px짜리 한 줄이
+      되어 초록 배너를 뚫고 나갔다. 줄바꿈을 허용하고 한글 어절 단위로 끊는다. */
+.personal-ai-note h2{
+  white-space:normal;
+  word-break:keep-all;
+  overflow-wrap:break-word;
+  text-wrap:pretty;
+  font-size:clamp(20px,2.1vw,27px);
+  line-height:1.4;
+}
+.personal-ai-note>div:first-child{min-width:0}
+
+@media(max-width:700px){
+  .personal-ai-note h2{font-size:19px}
+}
+
+/* 10. 홈을 세로로 훑으면 오늘의 기록 → 모임 → 당당 신호가 전부 같은 연두라
+       블록이 나뉘어 보이지 않았다. 가운데 두 곳만 톤을 옮겨 리듬을 만든다. */
+.home-dashboard .home-room-preview{
+  border-color:#cadfd6;
+  background:#e9f3ef;
+  box-shadow:0 15px 34px rgba(24,60,48,.06);
+}
+.home-dashboard .home-room-preview-title>span{background:#d2e6dd}
+.home-dashboard .home-room-avatars span,
+.home-dashboard .home-room-preview-photos>span{border-color:#e9f3ef}
+.home-dashboard .home-room-preview-stats{border-left-color:#cfdfd8}
+.home-dashboard .home-room-preview-stats>span{border-right-color:#cfdfd8}
+
+/* 당당 신호 3단 중 가운데(레시피)만 크림톤으로 - 위아래가 연두/흰색이라 대비가 산다. */
+.home-signal-recipe{border-color:#ecdcbd;background:#fdf5e6}
+.home-signal-recipe .home-signal-panel>header,
+.home-signal-recipe>header{border-bottom-color:rgba(120,92,36,.18)}
+.home-signal-recipe>header>span{border-color:#e3d3b4}
