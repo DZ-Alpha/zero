@@ -188,6 +188,7 @@ async def unlink_social(
     return {"status": "SUCCESS", "enabledSns": [SOCIAL_CODES[p] for p in remaining]}
 
 
+# 탈퇴는 계정 삭제 전에 연결된 소유 데이터 정리까지 한 번에 처리한다.
 @router.delete("/mypage")
 async def leave(
     exituser: str,
