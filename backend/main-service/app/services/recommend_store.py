@@ -58,7 +58,7 @@ async def get_recommended_products(db: AsyncSession, user_id: int) -> Recommenda
             .join(ProductTag, ProductTag.product_id == ProductSwapPick.product_id)
             .where(ProductTag.tag_id.in_(interest_tag_ids))
             .distinct()
-            .order_by(ProductSwapPick.display_name)
+            .order_by(ProductSwapPick.variant_count.desc(), ProductSwapPick.sugars.asc(), ProductSwapPick.display_name)
             .limit(_RECOMMEND_LIMIT)
         )
         personalized_stmt = _without_allergens(personalized_stmt, allergen_tag_ids)
@@ -78,7 +78,11 @@ async def get_recommended_products(db: AsyncSession, user_id: int) -> Recommenda
                 reason=None,
             )
 
-    fallback_stmt = select(ProductSwapPick).order_by(ProductSwapPick.display_name).limit(
+    fallback_stmt = select(ProductSwapPick).order_by(
+        ProductSwapPick.variant_count.desc(),
+        ProductSwapPick.sugars.asc(),
+        ProductSwapPick.display_name,
+    ).limit(
         _RECOMMEND_LIMIT
     )
     fallback_stmt = _without_allergens(fallback_stmt, allergen_tag_ids)

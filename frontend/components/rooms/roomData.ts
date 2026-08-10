@@ -99,7 +99,7 @@ export const mealPhotos = [
     items: [
       { source: "사진", name: "덮밥 사진" },
       { source: "레시피", name: "애호박 당근라페 덮밥" },
-      { source: "저당픽", name: "현미밥 1팩" },
+      { source: "저당 제품", name: "현미밥 1팩" },
     ],
   },
   {
@@ -117,7 +117,7 @@ export const mealPhotos = [
     reactions: 7,
     items: [
       { source: "사진", name: "아침 접시 사진" },
-      { source: "저당픽", name: "구운 달걀 2개" },
+      { source: "저당 제품", name: "구운 달걀 2개" },
     ],
   },
   {
@@ -135,7 +135,7 @@ export const mealPhotos = [
     reactions: 3,
     items: [
       { source: "레시피", name: "저당 당근 케이크" },
-      { source: "저당픽", name: "무가당 요거트" },
+      { source: "저당 제품", name: "무가당 요거트" },
     ],
   },
 ] as const;

@@ -41,7 +41,7 @@ export const metadata: Metadata = {
     default: "당당 — 먹기 전에, 한 번 더 당당하게",
     template: "%s | 당당",
   },
-  description: "식단 기록과 건강정보를 바탕으로 나에게 맞는 저당픽을 고르는 서비스",
+  description: "식단 기록과 건강정보를 바탕으로 나에게 맞는 저당 제품을 고르는 서비스",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

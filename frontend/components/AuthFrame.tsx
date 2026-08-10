@@ -11,7 +11,7 @@ export function AuthFrame({ children, asideTitle = "먹은 만큼 알고, 다음
         <aside className="auth-aside">
           <p className="eyebrow">ZERO · LOW SUGAR · FOOD LOG</p>
           <h1>{asideTitle}</h1>
-          <ol><li><span>01</span>오늘 먹은 음식 기록</li><li><span>02</span>당류와 열량 바로 계산</li><li><span>03</span>내 관심사에 맞는 저당픽</li></ol>
+          <ol><li><span>01</span>오늘 먹은 음식 기록</li><li><span>02</span>당류와 열량 바로 계산</li><li><span>03</span>내 관심사에 맞는 저당 제품</li></ol>
         </aside>
         <section className="auth-content">{children}</section>
       </div>

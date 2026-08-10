@@ -10,19 +10,22 @@ import { useAuthSession } from "@/hooks/useAuthSession";
 import { useRecipeCatalog } from "@/hooks/useRecipeCatalog";
 import { getRecipeFavorites } from "@/lib/api/zerocheck";
 
-const personalSlugs = new Set(mockRecipes.filter((recipe) => recipe.category === "한 끼" || recipe.category === "반찬").slice(0, 6).map((recipe) => recipe.slug));
-const personalIds = new Set(mockRecipes.filter((recipe) => personalSlugs.has(recipe.slug)).map((recipe) => recipe.databaseId).filter(Boolean));
-
 export function RecipeFeed() {
-  const { recipes, source, loading, hasMore, loadMore, retry } = useRecipeCatalog(mockRecipes);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("전체");
-  const [sort, setSort] = useState("추천순");
+  const [sort, setSort] = useState("당류 감소순");
   const [personalOnly, setPersonalOnly] = useState(false);
   const [visible, setVisible] = useState(6);
   const sentinel = useRef<HTMLDivElement>(null);
   const { ready: authReady, signedIn, token } = useAuthSession();
   const [favoriteRecipeIds, setFavoriteRecipeIds] = useState<Set<string>>(new Set());
+  const { recipes, source, loading, total, hasMore, loadMore, retry } = useRecipeCatalog(mockRecipes, {
+    search: query.trim() || undefined,
+    sort: sort === "당류 감소순" ? "sugarReduction" : undefined,
+    eligible: true,
+  });
+  const recommendationItems = useMemo(() => recipes.slice(0, 3), [recipes]);
+  const recommendationIds = useMemo(() => new Set(recommendationItems.map((recipe) => recipe.databaseId ?? recipe.slug)), [recommendationItems]);
 
   // 목록 카드마다 즐겨찾기 여부를 개별 조회하면 N+1이라, 즐겨찾기 목록을 한 번만
   // 통으로 불러와 Set으로 대조한다(RecordMealModal.tsx와 같은 패턴) — 이게
@@ -47,15 +50,15 @@ export function RecipeFeed() {
     let list = recipes.filter((recipe) => {
       const queryMatch = [recipe.title, recipe.category, recipe.author, ...recipe.keywords].some((value) => value.includes(query));
       const categoryMatch = category === "전체" || recipe.category === category;
-      return queryMatch && categoryMatch && (!personalOnly || personalSlugs.has(recipe.slug) || personalIds.has(recipe.databaseId));
+      return queryMatch && categoryMatch && (!personalOnly || recommendationIds.has(recipe.databaseId ?? recipe.slug));
     });
     if (sort === "인기순") list = [...list].sort((a, b) => b.savedDemo - a.savedDemo);
     // "빠른 조리순"은 조리 시간 숨김(RecipeCover.tsx 참고)과 함께 잠시 뺐다 —
     // DB 레시피 대부분 time이 "조리 시간 준비 중"이라 파싱이 NaN이 돼 정렬이
     // 사실상 동작하지 않았다. 시간 데이터가 채워지면 옵션과 함께 되돌린다.
-    if (sort === "등록 당류 낮은순") list = [...list].sort((a, b) => a.estimatedSugar - b.estimatedSugar);
+    if (sort === "당류 낮은순") list = [...list].sort((a, b) => a.estimatedSugar - b.estimatedSugar);
     return list;
-  }, [category, personalOnly, query, recipes, sort]);
+  }, [category, personalOnly, query, recipes, sort, recommendationIds]);
 
   useEffect(() => setVisible(6), [category, personalOnly, query, sort]);
   useEffect(() => {
@@ -73,15 +76,13 @@ export function RecipeFeed() {
     return () => observer.disconnect();
   }, [filtered.length, hasMore, loadMore, recipes.length, visible]);
 
-  const personalRecipes = recipes.filter((recipe) => personalSlugs.has(recipe.slug) || personalIds.has(recipe.databaseId)).slice(0, 3);
-  const recommendationItems = personalRecipes.length > 0 ? personalRecipes : recipes.length > 0 ? recipes.slice(0, 3) : mockRecipes.slice(0, 3);
   const activeFilters = [category !== "전체" ? category : "", personalOnly ? "추천 메뉴" : ""].filter(Boolean);
 
   function resetFilters() {
     setQuery("");
     setCategory("전체");
     setPersonalOnly(false);
-    setSort("추천순");
+    setSort("당류 감소순");
   }
 
   return (
@@ -94,8 +95,8 @@ export function RecipeFeed() {
       </section>
 
       <section className="catalog-recommendation personal-picks wrap">
-        <header><div><span>기록에 맞춘 추천</span><h2>최근 기록과 잘 맞는 메뉴예요</h2></div></header>
-        <div>{recommendationItems.map((recipe, index) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><span className="recommendation-rank">0{index + 1}</span><div><h3>{recipe.title}</h3><p>{recipe.nutritionCoverage ? `등록 재료 당류 ${recipe.estimatedSugar}g` : "영양정보를 확인하고 있어요"}</p></div></Link>)}</div>
+        <header><div><span>재료 비교가 끝난 메뉴</span><h2>당류를 덜어낸 순서로 골랐어요</h2></div></header>
+        <div>{recommendationItems.map((recipe, index) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><span className="recommendation-rank">0{index + 1}</span><div><h3>{recipe.title}</h3><p>당류 {recipe.estimatedSugar}g · {recipe.estimatedCalories}kcal</p></div></Link>)}</div>
       </section>
 
       <section className="recipe-results-band">
@@ -110,9 +111,9 @@ export function RecipeFeed() {
             <label className="catalog-rail-check"><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} /><span>내 기록 추천 메뉴만</span></label>
           </aside>
           <section className="catalog-list">
-          <header className="catalog-tools"><p>{loading ? "레시피를 불러오는 중" : <><b>{filtered.length}</b>개의 레시피</>}</p><div className="catalog-sort"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="레시피 정렬"><option>추천순</option><option>인기순</option><option>등록 당류 낮은순</option></select></div></header>
+          <header className="catalog-tools"><p>{loading ? "레시피를 불러오는 중" : source === "mock" ? "레시피 목록" : category !== "전체" || personalOnly ? "선택한 조건의 레시피" : <><b>{total.toLocaleString()}</b>개의 레시피</>}</p><div className="catalog-sort"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="레시피 정렬"><option>당류 감소순</option><option>인기순</option><option>당류 낮은순</option></select></div></header>
           {activeFilters.length > 0 && <div className="active-filter-summary" aria-label="적용된 필터"><span>적용한 조건</span>{activeFilters.map((item) => <b key={item}>{item}</b>)}<button type="button" onClick={resetFilters}>모두 지우기</button></div>}
-          {source === "mock" && !loading && <div className="inline-service-notice" role="status"><div><b>서버에서 레시피를 불러오지 못했어요.</b><span>지금은 준비된 레시피 목록을 보여드려요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
+          {source === "mock" && !loading && <div className="inline-service-notice" role="status"><div><b>레시피 목록을 잠시 불러오지 못했어요.</b><span>잠시 후 다시 시도해 주세요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
           {loading && <div className="catalog-loading" aria-live="polite"><i /><i /><i /><span>레시피를 불러오고 있어요.</span></div>}
           <div className="recipe-feed">
             {!loading && filtered.slice(0, visible).map((recipe) => {
@@ -120,7 +121,7 @@ export function RecipeFeed() {
               return (
               <article className="feed-card" key={key}>
                 <Link href={`/recipes/${key}`} className="feed-image"><RecipeCover recipe={recipe} /></Link>
-                <div className="feed-card-copy"><small>{recipe.author}{recipe.nutritionCoverage ? ` · 영양 계산 ${recipe.nutritionCoverage}%` : ""}</small><h2><Link href={`/recipes/${key}`}>{recipe.title}</Link></h2><p>{recipe.nutritionCoverage ? <>등록 재료 합계 <b>당류 {recipe.estimatedSugar}g</b> · {recipe.estimatedCalories}kcal</> : "영양정보를 확인하고 있어요."}</p></div>
+                <div className="feed-card-copy"><small>{recipe.author}</small><h2><Link href={`/recipes/${key}`}>{recipe.title}</Link></h2><p>{recipe.nutritionCoverage ? <><b>당류 {recipe.estimatedSugar}g</b> · {recipe.estimatedCalories}kcal</> : "영양정보를 확인하고 있어요."}</p></div>
                 <FavoriteIconButton label={recipe.title} id={recipe.databaseId} kind="recipe" initial={favoriteRecipeIds.has(String(recipe.databaseId))} />
               </article>
             )})}

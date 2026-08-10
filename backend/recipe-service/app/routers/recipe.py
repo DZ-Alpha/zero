@@ -9,8 +9,10 @@ from app.models.recipe_ingredient import RecipeIngredient
 from app.services.recipe_store import (
     PAGE_SIZE,
     RecipeNotFoundError,
+    get_recipe,
     get_recipe_with_ingredients,
     list_favorites,
+    list_related_recipes,
     list_recipes_with_total,
     recipe_exists,
     toggle_favorite,
@@ -69,10 +71,11 @@ async def get_recipe_list(
     source: str | None = Query(None, description="출처 필터: 10000recipe | youtube (PRODUCTION_HANDOFF.md P1-2)"),
     sort: str | None = Query(None, description="정렬: sugarReduction(저당 비율순) | 기본(최신 적재순)"),
     search: str | None = Query(None, min_length=1, max_length=80, description="레시피명 검색"),
+    eligible: bool = Query(False, description="영양 비교와 대체 상품 연결이 완료된 레시피만"),
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    recipes, total = await list_recipes_with_total(db, source=source, sort=sort, page=page, search=search)
+    recipes, total = await list_recipes_with_total(db, source=source, sort=sort, page=page, search=search, eligible=eligible)
     response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return {
         "recipes": [_list_item(recipe) for recipe in recipes],
@@ -114,6 +117,21 @@ async def get_recipe_favorite_list(
     user_id: int = payload["user_id"]
     recipes = await list_favorites(db, user_id)
     return {"list-receipe": [{"id": r.id, "name": r.name, "image": _thumbnail_url(r)} for r in recipes]}
+
+
+@router.get("/{recipe_id}/related")
+async def get_related_recipes(
+    recipe_id: int,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    try:
+        recipe = await get_recipe(db, recipe_id)
+    except RecipeNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    related = await list_related_recipes(db, recipe)
+    response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
+    return {"recipes": [_list_item(item) for item in related]}
 
 
 @router.get("/{recipe_id}")

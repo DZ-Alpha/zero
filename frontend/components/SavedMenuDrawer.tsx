@@ -9,7 +9,7 @@ import { getProductFavorites, getRecipeFavorites } from "@/lib/api/zerocheck";
 type SavedMenu = {
   id: string;
   title: string;
-  kind: "레시피" | "저당픽";
+  kind: "레시피" | "저당 제품";
   href: string;
   image?: string | null;
 };
@@ -73,7 +73,7 @@ export function SavedMenuDrawer() {
       nextItems.push(...products.value["list-products"].map((item) => ({
         id: `product-${item.id}`,
         title: item.name,
-        kind: "저당픽" as const,
+        kind: "저당 제품" as const,
         href: `/product/${item.id}`,
         image: item.image,
       })));
@@ -116,7 +116,7 @@ export function SavedMenuDrawer() {
 
   const filteredItems = items.filter((item) => {
     if (filter === "all") return true;
-    return filter === "recipe" ? item.kind === "레시피" : item.kind === "저당픽";
+    return filter === "recipe" ? item.kind === "레시피" : item.kind === "저당 제품";
   });
 
   return (
@@ -134,7 +134,7 @@ export function SavedMenuDrawer() {
             <div className="saved-menu-state">
               <span aria-hidden="true">♥</span>
               <h3>마음에 든 메뉴를 모아보세요</h3>
-              <p>로그인하면 저장한 레시피와 저당픽을 어디서든 바로 열 수 있어요.</p>
+              <p>로그인하면 저장한 레시피와 저당 제품을 어디서든 바로 열 수 있어요.</p>
               <Link href="/login" onClick={() => setOpen(false)}>로그인하기</Link>
             </div>
           ) : loadFailed ? (
@@ -148,13 +148,13 @@ export function SavedMenuDrawer() {
             <div className="saved-menu-state">
               <span aria-hidden="true">♡</span>
               <h3>아직 찜한 메뉴가 없어요</h3>
-              <p>레시피와 저당픽의 하트를 누르면 여기에 모여요.</p>
+              <p>레시피와 저당 제품의 하트를 누르면 여기에 모여요.</p>
               <Link href="/recipes" onClick={() => setOpen(false)}>메뉴 둘러보기</Link>
             </div>
           ) : filteredItems.length === 0 ? (
             <div className="saved-menu-state">
               <span aria-hidden="true">♡</span>
-              <h3>찜한 {filter === "recipe" ? "레시피" : "저당픽"}이 없어요</h3>
+              <h3>찜한 {filter === "recipe" ? "레시피" : "저당 제품"}이 없어요</h3>
               <button type="button" onClick={() => setFilter("all")}>전체 보기</button>
             </div>
           ) : (
@@ -197,7 +197,7 @@ export function SavedMenuDrawer() {
             aria-pressed={filter === "product"}
             onClick={() => setFilter("product")}
           >
-            저당픽
+            저당 제품
           </button>
         </footer>}
       </section>

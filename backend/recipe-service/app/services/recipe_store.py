@@ -1,9 +1,10 @@
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.recipe import Recipe
 from app.models.recipe_favorite import RecipeFavorite
 from app.models.recipe_ingredient import RecipeIngredient
+from app.models.recipe_ingredient_product import RecipeIngredientProduct
 
 PAGE_SIZE = 20
 
@@ -12,11 +13,28 @@ class RecipeNotFoundError(Exception):
     pass
 
 
-def _apply_recipe_filters(stmt, source: str | None, search: str | None = None):
+def _apply_recipe_filters(stmt, source: str | None, search: str | None = None, eligible: bool = False):
     if source:
         stmt = stmt.where(Recipe.source == source)
     if search and search.strip():
         stmt = stmt.where(Recipe.name.ilike(f"%{search.strip()}%"))
+    if eligible:
+        matched_product = (
+            select(1)
+            .select_from(RecipeIngredient)
+            .join(
+                RecipeIngredientProduct,
+                RecipeIngredientProduct.recipe_ingredient_id == RecipeIngredient.id,
+            )
+            .where(RecipeIngredient.recipe_id == Recipe.id)
+        )
+        stmt = stmt.where(
+            Recipe.comparison_status.in_(("ready", "completed")),
+            Recipe.base_sugar_g.is_not(None),
+            Recipe.total_sugar_g.is_not(None),
+            Recipe.base_sugar_g > Recipe.total_sugar_g,
+            exists(matched_product),
+        )
     return stmt
 
 
@@ -43,6 +61,7 @@ async def list_recipes_with_total(
     sort: str | None = None,
     page: int = 1,
     search: str | None = None,
+    eligible: bool = False,
 ) -> tuple[list[Recipe], int]:
     """Return one recipe page and total count with one database round trip.
 
@@ -52,6 +71,7 @@ async def list_recipes_with_total(
         select(Recipe, func.count().over().label("total_count")),
         source,
         search,
+        eligible,
     )
     stmt = stmt.order_by(Recipe.sugar_reduction_pct.desc()) if sort == "sugarReduction" else stmt.order_by(Recipe.id.desc())
     stmt = stmt.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
@@ -60,13 +80,23 @@ async def list_recipes_with_total(
     if rows:
         return [row[0] for row in rows], int(rows[0][1])
     if page > 1:
-        return [], await count_recipes(db, source=source, search=search)
+        return [], await count_recipes(db, source=source, search=search, eligible=eligible)
     return [], 0
 
 
-async def count_recipes(db: AsyncSession, source: str | None = None, search: str | None = None) -> int:
-    stmt = _apply_recipe_filters(select(func.count()).select_from(Recipe), source, search)
+async def count_recipes(db: AsyncSession, source: str | None = None, search: str | None = None, eligible: bool = False) -> int:
+    stmt = _apply_recipe_filters(select(func.count()).select_from(Recipe), source, search, eligible)
     return (await db.execute(stmt)).scalar_one()
+
+
+async def list_related_recipes(db: AsyncSession, recipe: Recipe, limit: int = 3) -> list[Recipe]:
+    """Return useful alternatives from the same category, ranked by sugar reduction."""
+    stmt = select(Recipe).where(Recipe.id != recipe.id)
+    if recipe.category:
+        stmt = stmt.where(Recipe.category == recipe.category)
+    stmt = _apply_recipe_filters(stmt, source=None, eligible=True)
+    stmt = stmt.order_by(Recipe.sugar_reduction_pct.desc().nullslast(), Recipe.id.desc()).limit(limit)
+    return list((await db.execute(stmt)).scalars().all())
 
 
 async def get_recipe(db: AsyncSession, recipe_id: int) -> Recipe:

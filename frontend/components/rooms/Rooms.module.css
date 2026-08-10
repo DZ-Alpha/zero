@@ -4448,3 +4448,19 @@
     font-size: 20px;
   }
 }
+
+/* Final room density and stable settings rail. */
+@media (min-width: 701px) {
+  .roomHeader { padding: 22px 0 13px; align-items: center; }
+  .roomIdentity .roomEmoji { width: 48px; height: 48px; border-radius: 15px; font-size: 23px; }
+  .roomHeader h1 { font-size: clamp(28px, 3vw, 36px); }
+  .roomHeaderMeta { margin-top: 4px; font-size: 12px; }
+  .settingsAside { top: 84px; height: max-content; max-height: calc(100vh - 104px); overflow:auto; overscroll-behavior:contain; }
+}
+
+@media (max-width: 700px) {
+  .roomHeader { padding: 15px 0 10px; }
+  .roomIdentity .roomEmoji { width:42px; height:42px; font-size:20px; }
+  .roomHeader h1 { font-size:25px; }
+  .roomHeaderMeta { font-size:10px; }
+}

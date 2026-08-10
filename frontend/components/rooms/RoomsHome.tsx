@@ -383,7 +383,7 @@ export function RoomsHome() {
                   </label>
                   <div className={styles.privacyNotice}>
                     <strong>참여하면 내 식탁도 함께 보여요</strong>
-                    <p>홈에 남긴 사진과 연결한 레시피·저당픽이 이 모임의 멤버에게 자동으로 공유돼요.</p>
+                    <p>홈에 남긴 사진과 연결한 레시피·저당 제품이 이 모임의 멤버에게 자동으로 공유돼요.</p>
                   </div>
                   <div className={styles.modalActions}>
                     <button type="button" className={styles.secondaryButton} onClick={closeModal}>취소</button>

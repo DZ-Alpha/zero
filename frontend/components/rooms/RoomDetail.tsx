@@ -758,7 +758,7 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                             <div className={styles.sourceSummary} aria-label="한 끼 구성">
                               <span>사진 {photos.length}</span>
                               {recipeCount > 0 && <span>레시피 {recipeCount}</span>}
-                              {foodCount > 0 && <span>저당픽 {foodCount}</span>}
+                              {foodCount > 0 && <span>저당 제품 {foodCount}</span>}
                             </div>
                           </footer>
                         </article>
