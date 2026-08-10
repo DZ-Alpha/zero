@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { RecordMealModal } from "@/components/RecordMealModal";
+import { useAuthSession } from "@/hooks/useAuthSession";
 import { DietRecord, getTodayKey, MealType, useDietRecords } from "@/hooks/useDietRecords";
 import { useUserSettings } from "@/hooks/useUserSettings";
+
+// 서버 기록이 도착하기 전에는 recordedDays가 0이라 "첫 기록" 빈 상태가 잠깐
+// 스쳐 지나갔다. 로그인 상태에서 이번 달 응답이 정리될 때까지는 라우트 로딩
+// 화면(app/loading.tsx와 같은 모양)을 그대로 보여준다. 응답이 영영 안 오는
+// 경우를 대비해 최대 대기 시간을 둔다.
+const BOOTSTRAP_MAX_WAIT_MS = 1500;
 
 type DayStatus = "good" | "near" | "over" | "empty";
 
@@ -53,8 +60,11 @@ function dateKeyFor(option: ReturnType<typeof recentMonths>[number], day: number
 
 // 현재 달을 기준으로 최근 세 달을 구성해 운영 날짜가 바뀌어도 달력이 자연스럽게 이어진다.
 export function CalendarDashboard() {
-  const { recordsByDate, deleteRecord: removeRecord, loadServerMonth, serverLoading, serverError } = useDietRecords();
+  const { ready, recordsByDate, deleteRecord: removeRecord, loadServerMonth, serverLoading, serverError } = useDietRecords();
+  const { ready: authReady, signedIn } = useAuthSession();
   const { goals } = useUserSettings();
+  const [serverSettled, setServerSettled] = useState(false);
+  const sawServerLoading = useRef(false);
   const todayKey = useMemo(() => getTodayKey(), []);
   const monthOptions = useMemo(() => recentMonths(), []);
   const [month, setMonth] = useState(monthOptions.length - 1);
@@ -68,6 +78,21 @@ export function CalendarDashboard() {
   useEffect(() => {
     void loadServerMonth(monthOptions[month].year, monthOptions[month].month);
   }, [loadServerMonth, month, monthOptions]);
+
+  useEffect(() => {
+    if (serverLoading) {
+      sawServerLoading.current = true;
+      return;
+    }
+    if (sawServerLoading.current) setServerSettled(true);
+  }, [serverLoading]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setServerSettled(true), BOOTSTRAP_MAX_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const bootstrapping = !ready || !authReady || (signedIn && !serverSettled);
 
   const monthOption = monthOptions[month];
   const days = monthOption.days;
@@ -177,6 +202,16 @@ export function CalendarDashboard() {
       )}
     </div>
   );
+
+  if (bootstrapping) {
+    return (
+      <main className="route-loading page-wrap" aria-live="polite">
+        <div className="route-loading-mark" aria-hidden="true" />
+        <div><i /><i /><i /></div>
+        <p>기록을 불러오고 있어요.</p>
+      </main>
+    );
+  }
 
   return (
     <main className="calendar-page page-wrap">

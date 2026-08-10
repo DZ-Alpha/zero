@@ -313,7 +313,9 @@ export function HomeDashboard() {
         setProductSignalMode(recommend.personalized ? "personalized" : token ? "general" : "guest");
         return;
       }
-      setProductRanking([]);
+      // 로그인 전에는 추천 근거가 없어 목록이 비기 쉽다 - 그때만 카탈로그로 채워
+      // 둘러볼 거리를 남긴다. 로그인 사용자는 서버 추천 결과를 그대로 따른다.
+      setProductRanking(token ? [] : fallbackProductRanking);
       setProductSignalMode(token ? "general" : "guest");
     });
 
