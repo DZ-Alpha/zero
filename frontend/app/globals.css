@@ -3875,7 +3875,7 @@ body{font-size:17px}
   .bottom-nav a{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border-radius:13px;color:#7b857b;font-size:9px;font-weight:800;transition:background 160ms ease,color 160ms ease}
   .bottom-nav a.is-active{background:#edf6df;color:var(--green)}
   .bottom-nav-icon{position:relative;width:18px;height:18px;display:block;border:1.5px solid currentColor;border-radius:5px}
-  .bottom-nav-icon-오늘{border-radius:50%}.bottom-nav-icon-얌로그{border-radius:50% 50% 5px 5px}.bottom-nav-icon-기록{border-radius:3px}.bottom-nav-icon-레시피{border-radius:50% 3px 50% 3px;transform:rotate(-18deg)}.bottom-nav-icon-저당픽{border-radius:50%}.bottom-nav-icon-MY{border-radius:50%}
+  .bottom-nav-icon-오늘{border-radius:50%}.bottom-nav-icon-얌로그{border-radius:50% 50% 5px 5px}.bottom-nav-icon-기록{border-radius:3px}.bottom-nav-icon-레시피{border-radius:50% 3px 50% 3px;transform:rotate(-18deg)}.bottom-nav-icon-product{border-radius:50%}.bottom-nav-icon-MY{border-radius:50%}
   .bottom-nav-icon::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:4px;border-radius:50%;background:currentColor;transform:translate(-50%,-50%)}
   .bottom-nav-icon-오늘::after{width:5px;height:5px}.bottom-nav-icon-기록::after{width:8px;height:1px;border-radius:0;box-shadow:0 4px currentColor,0 -4px currentColor}.bottom-nav-icon-레시피::after{width:10px;height:1px;border-radius:0;transform:translate(-50%,-50%) rotate(18deg)}
   .home-intro{grid-template-columns:1fr;min-height:0;margin-top:16px;width:calc(100% - 28px)}
@@ -3912,6 +3912,23 @@ body{font-size:17px}
   .home-intro-copy h1{font-size:31px}
   .swap-product-list{grid-template-columns:1fr}
 }
+
+/* Final responsive density: keep MY useful without turning the first card into a full screen. */
+@media(max-width:700px){
+  .personal-page .profile-summary{display:block}
+  .personal-page .profile-person{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:10px;padding:13px 14px}
+  .personal-page .profile-person>span{width:44px;height:44px;font-size:14px}
+  .personal-page .profile-person h2{margin:2px 0 0;font-size:17px}
+  .personal-page .profile-person p{display:none}
+  .personal-page .profile-person button{width:auto;min-height:34px;margin:0;padding:0 10px;white-space:nowrap}
+  .personal-page .profile-goal{min-height:0;grid-template-columns:1fr 1fr auto;align-items:end;gap:6px 10px;padding:13px 14px;border-left:0;border-top:1px solid rgba(255,255,255,.18)}
+  .personal-page .profile-goal>.eyebrow{grid-column:1/-1;margin-bottom:1px}
+  .personal-page .profile-goal>div strong{margin-top:2px;font-size:17px}
+  .personal-page .profile-goal-edit{position:static;align-self:center;margin:0;padding:7px 9px;white-space:nowrap}
+}
+
+/* Let food photography lead while retaining enough contrast for card labels. */
+.recipe-data-cover.has-image::after{background:linear-gradient(180deg,rgba(11,21,14,.32) 0%,rgba(11,21,14,.02) 48%,rgba(11,21,14,.62) 100%)}
 
 /* Catalog and detail hierarchy: the product image and sugar number do the first read. */
 .catalog-page .product-feed-art .product-photo-card{height:248px;background:#f0f4ec}
@@ -4964,4 +4981,93 @@ body{overflow-x:hidden}
   .home-dashboard .reading-grid::-webkit-scrollbar{display:none}
   .home-dashboard .reading-card{flex:0 0 min(76vw,280px);scroll-snap-align:start}
   .home-dashboard .reading-card-copy h3{min-height:40px;font-size:13px}
+}
+
+/* 2026-08-10 final product pass: compact, data-led surfaces shared by web and mobile. */
+.home-dashboard>.service-banner{
+  width:min(var(--content),calc(100% - 64px));
+  min-height:112px;
+  margin:0 auto 4px;
+  overflow:hidden;
+  border:1px solid #dce5d6;
+  border-radius:14px;
+}
+.home-dashboard>.service-banner .service-banner-shell{min-height:112px;padding-inline:58px}
+.home-dashboard>.service-banner .service-banner-message h1{font-size:21px}
+.home-dashboard>.service-banner .service-banner-message p{font-size:11px}
+
+.home-dashboard .reading-card.tone-1{background:#faf7ed;border-color:#e8e0c9}
+.home-dashboard .reading-card.tone-2{background:#f0f7f3;border-color:#d7e5dc}
+.home-dashboard .reading-card.tone-3{background:#f2f7eb;border-color:#dce7d2}
+.home-dashboard .reading-card.tone-4{background:#f5f3f8;border-color:#e2ddea}
+
+.catalog-page .product-photo-card{overflow:hidden}
+.catalog-page .product-photo-card img,
+.catalog-page .product-photo-card .safe-image-fallback{width:100%;height:100%;padding:0;object-fit:cover}
+.catalog-page .product-feed-card>div:nth-child(2)>small:empty{display:none}
+.catalog-recommendation-empty{margin:0;padding:14px 0;color:var(--muted);font-size:12px}
+
+.detail-page .detail-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+.detail-page .recipe-compare-layout{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(320px,.95fr);gap:16px}
+.detail-page .recipe-compare-layout .compare-bars{min-height:100%;display:flex;flex-direction:column;justify-content:center}
+.detail-page .compare-bars>p{margin:18px 0 0;padding-top:15px;border-top:1px solid #d9e3d5;color:#55705c;font-size:12px}
+.detail-page .compare-bars>p b{margin-right:4px;color:var(--green);font-size:22px}
+.recipe-swap-code{padding:8px 20px;border:1px solid #dce4d8;border-radius:16px;background:#1f3026;color:#eef5ed}
+.recipe-swap-code article{padding:15px 0;border-bottom:1px solid rgba(255,255,255,.12)}
+.recipe-swap-code article:last-child{border-bottom:0}
+.recipe-swap-code small{display:block;color:#a9c3ad;font-size:9px}
+.recipe-swap-code strong{display:block;margin-top:5px;font-size:15px}
+.recipe-swap-code p{margin:9px 0 0;display:grid;grid-template-columns:auto 18px minmax(0,1fr) auto;align-items:center;gap:7px;font-size:10px}
+.recipe-swap-code p span{color:#aab5ad;text-decoration:line-through}
+.recipe-swap-code p i{color:#bbeb62;font-style:normal}
+.recipe-swap-code p b{overflow:hidden;color:#fff;text-overflow:ellipsis;white-space:nowrap}
+.recipe-swap-code p em{padding:4px 7px;border-radius:999px;background:#c8f04a;color:#203127;font-style:normal;font-weight:900}
+
+.monthly-insights{padding-top:54px}
+.monthly-insights>header{display:flex;align-items:flex-end;justify-content:space-between;gap:32px;padding:0 0 19px;border-bottom:1px solid #243328}
+.monthly-insights>header h2{margin:0;font-size:27px;letter-spacing:-.055em}
+.monthly-insights>header>p{max-width:430px;margin:0;text-align:right}
+.monthly-insights>header>p strong,.monthly-insights>header>p span{display:block}
+.monthly-insights>header>p strong{font-size:12px}.monthly-insights>header>p span{margin-top:5px;color:var(--muted);font-size:10px}
+.monthly-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-top:14px;background:#dfe5dc}
+.monthly-kpis article{min-height:116px;padding:18px;background:#f7f9f4}
+.monthly-kpis article:nth-child(2){background:#f0f6ea}.monthly-kpis article:nth-child(3){background:#fff8ea}.monthly-kpis article:nth-child(4){background:#eff6f3}
+.monthly-kpis small{color:#637067;font-size:9px}.monthly-kpis strong{display:block;overflow:hidden;margin-top:12px;font-size:21px;line-height:1.18;text-overflow:ellipsis;white-space:nowrap}.monthly-kpis strong span{margin-left:3px;font-size:10px}.monthly-kpis p{margin:7px 0 0;color:var(--muted);font-size:9px}
+.monthly-visuals{display:grid;grid-template-columns:1.25fr .75fr 1.25fr .75fr;gap:12px;margin-top:12px}
+.monthly-visuals>article{min-height:178px;padding:18px;border:1px solid #dfe5dc;border-radius:14px;background:#fff}
+.monthly-visuals header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.monthly-visuals small{color:var(--green-2);font-size:9px;font-weight:850}.monthly-visuals h3{margin:5px 0 0;font-size:16px}.monthly-visuals header>span{color:var(--muted);font-size:8px}
+.habit-map>div{margin-top:22px;display:grid;grid-template-columns:repeat(7,1fr);gap:5px}.habit-map i{aspect-ratio:1;border-radius:4px;background:#edf0ec}.habit-map i.good{background:#bce66c}.habit-map i.near{background:#f1d786}.habit-map i.over{background:#e9a99c}
+.goal-ring-card{display:flex;align-items:center;gap:16px}.goal-ring{--progress:0deg;width:90px;height:90px;flex:0 0 auto;padding:10px;display:grid;place-items:center;border-radius:50%;background:conic-gradient(#88b842 var(--progress),#e8ede5 0)}.goal-ring>span{width:100%;height:100%;display:grid;place-content:center;border-radius:50%;background:#fff;color:var(--muted);font-size:8px;text-align:center}.goal-ring b{display:block;color:var(--green);font-size:19px}.goal-ring-card p{margin:7px 0 0;color:var(--muted);font-size:9px}
+.sugar-trend svg{width:100%;height:95px;margin-top:15px;overflow:visible}.sugar-trend line{stroke:#d9b15f;stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}.sugar-trend polyline{fill:none;stroke:#4f845a;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.growth-card{display:flex;flex-direction:column}.growth-card>div{height:74px;margin:8px 0;display:flex;align-items:flex-end;justify-content:center;gap:7px}.growth-card>div i{width:13px;border-radius:10px 10px 3px 3px;background:#bddf79}.growth-card>div i:nth-child(1){height:25px}.growth-card>div i:nth-child(2){height:45px}.growth-card>div i:nth-child(3){height:65px;background:#7fae56}.growth-card h3{margin-top:auto;font-size:13px;line-height:1.45}
+.monthly-insights .report-archive{padding-top:12px}
+
+.personal-page .profile-links{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.personal-page .profile-links>a,.personal-page .profile-links>div{min-height:64px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);background:#f4f8f0;font-size:12px}
+.personal-page .profile-links>div:nth-child(2){background:#fff8ea}.personal-page .profile-links>div:nth-child(3){background:#f0f6f3}
+.personal-page .profile-links span{font-weight:850}.personal-page .profile-links b{color:var(--muted);font-size:9px;font-weight:700;text-align:right}
+
+@media(max-width:900px){
+  .detail-page .recipe-compare-layout{grid-template-columns:1fr}
+  .monthly-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .monthly-visuals{grid-template-columns:1fr 1fr}
+  .personal-page .profile-links{grid-template-columns:1fr}
+}
+
+@media(max-width:700px){
+  .home-dashboard>.service-banner{width:calc(100% - 36px);min-height:126px;margin-top:2px}
+  .home-dashboard>.service-banner .service-banner-shell{min-height:126px;padding-inline:46px}
+  .home-dashboard>.service-banner .service-banner-message h1{font-size:17px;line-height:1.35}
+  .home-dashboard>.service-banner .service-banner-message p{font-size:9px}
+  .monthly-insights{padding-top:42px}
+  .monthly-insights>header{align-items:flex-start;flex-direction:column;gap:8px}
+  .monthly-insights>header h2{font-size:22px}
+  .monthly-insights>header>p{text-align:left}
+  .monthly-kpis article{min-height:102px;padding:14px}
+  .monthly-kpis strong{font-size:17px}.monthly-kpis p{font-size:8px}
+  .monthly-visuals{grid-template-columns:1fr;gap:9px}
+  .monthly-visuals>article{min-height:150px;padding:15px}
+  .habit-map>div{margin-top:16px}.goal-ring-card{min-height:128px!important}
+  .recipe-swap-code{padding:6px 14px}.recipe-swap-code p{grid-template-columns:1fr 14px 1fr auto}
+  .personal-page .profile-links>a,.personal-page .profile-links>div{min-height:54px;padding:12px 14px}
 }

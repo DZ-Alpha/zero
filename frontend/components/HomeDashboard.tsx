@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { RecordMealModal } from "@/components/RecordMealModal";
 import { SafeImage } from "@/components/SafeImage";
+import { ServiceBanner } from "@/components/ServiceBanner";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
 import { products, recipes } from "@/data/catalog";
 import { mockRoomsHome } from "@/data/mockRooms";
@@ -18,6 +19,7 @@ import {
   getRecipeSwapRanking,
   getHomeArticles,
   getUserRecommendations,
+  searchProducts,
   HomeArticleItem,
   HomeProductItem,
   HomeRecipeRankingItem,
@@ -290,12 +292,15 @@ export function HomeDashboard() {
           matchedPreferenceIds: [],
           reason: "NO_PREFERENCES" as const,
         })
-      : Promise.resolve({
-          listProducts: [],
-          personalized: false,
-          matchedPreferenceIds: [],
-          reason: "NO_PREFERENCES" as const,
-        });
+      : withMockFallback(
+          () => searchProducts({ sort: "rank", page: 1 }).then((result) => ({
+            listProducts: result.items.slice(0, 10).map((item) => ({ id: item.id, name: item.name, brand: item.brand, image: item.image })),
+            personalized: false,
+            matchedPreferenceIds: [],
+            reason: "NO_PREFERENCES" as const,
+          })),
+          { listProducts: [], personalized: false, matchedPreferenceIds: [], reason: "NO_PREFERENCES" as const },
+        );
 
     Promise.all([rankRequest, recommendRequest]).then(([rank, recommend]) => {
       if (!active) return;
@@ -304,9 +309,9 @@ export function HomeDashboard() {
           ? toRecipeRankingItems(rank.listRecipes)
           : [],
       );
-      if (token && recommend.listProducts.length > 0) {
+      if (recommend.listProducts.length > 0) {
         setProductRanking(toRankingItems(recommend.listProducts, recommend.personalized));
-        setProductSignalMode(recommend.personalized ? "personalized" : "general");
+        setProductSignalMode(recommend.personalized ? "personalized" : token ? "general" : "guest");
         return;
       }
       setProductRanking([]);
@@ -425,7 +430,7 @@ export function HomeDashboard() {
   const productSignalTitle = productSignalMode === "personalized"
     ? "내 기준에 맞는 저당 제품"
     : productSignalMode === "guest"
-      ? "로그인하면 내 기준으로 골라드려요"
+      ? "먼저 둘러볼 저당 제품"
       : productSignalMode === "preview"
         ? "내 기준에 맞는 저당 제품"
         : "먼저 둘러볼 저당 제품";
@@ -434,7 +439,7 @@ export function HomeDashboard() {
     : productSignalMode === "preview"
       ? "오늘 추천"
       : productSignalMode === "guest"
-        ? "로그인 필요"
+        ? "전체 제품"
         : "전체 목록";
 
   const myRooms = roomsHome.rooms;
@@ -476,6 +481,8 @@ export function HomeDashboard() {
           <span className="home-intro-bubble">{stateCopy}</span>
         </div>
       </section>
+
+      <ServiceBanner />
 
       {authReady && !signedIn && (
         <aside className="guest-preview-notice wrap" aria-label="로그인 전 미리보기 안내">
@@ -636,15 +643,15 @@ export function HomeDashboard() {
               <div><small>내 기준으로 고르기</small><h3>{productSignalTitle}</h3></div>
               <span>{productSignalBasis}</span>
             </header>
-            <SignalList items={productRanking} emptyMessage={productSignalMode === "guest" ? "로그인하면 관심 기준과 알레르기를 반영한 제품을 볼 수 있어요." : "조건에 맞는 제품을 준비하고 있어요."} />
-            <Link className="home-signal-action" href={productSignalMode === "guest" ? "/login" : "/search"}>{productSignalMode === "guest" ? "로그인하기" : "저당 제품 찾기"} <span aria-hidden="true">→</span></Link>
+            <SignalList items={productRanking} emptyMessage="조건에 맞는 제품을 준비하고 있어요." />
+            <Link className="home-signal-action" href="/search">저당 제품 찾기 <span aria-hidden="true">→</span></Link>
           </article>
         </div>
         <p className="home-signal-note">레시피 수치는 등록 재료 기준 비교이며, 제품 추천은 의료 판단이 아닌 선택 참고 정보예요.</p>
       </section>
 
       <section className="reading-section wrap">
-        <header className="section-line-heading reading-heading"><div><p className="eyebrow">당당 읽을거리</p><h2>고를 때 바로 써먹는 기준</h2></div><p>숫자를 외우기보다, 다음 선택이 쉬워지는 기준만 짧고 정확하게 정리했어요.</p></header>
+        <header className="section-line-heading reading-heading"><div><p className="eyebrow">당당 읽을거리</p><h2>고를 때 바로 써먹는 기준</h2></div></header>
         <div className="reading-grid">
           {readingList.slice(0, 4).map((item, index) => (
             <Link className={`reading-card tone-${(index % 4) + 1}`} href={item.slug ? `/reading/${item.slug}` : "/search"} key={item.title}>

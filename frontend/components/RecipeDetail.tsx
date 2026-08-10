@@ -8,7 +8,7 @@ import { SafeImage } from "@/components/SafeImage";
 import { recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useUserSettings } from "@/hooks/useUserSettings";
-import { getRecipeDetail, getRecipeSubstitutes, RecipeDetailResponse, RecipeSubstituteResponse } from "@/lib/api/zerocheck";
+import { getRecipeDetail, getRecipeSubstitutes, getRelatedRecipes, RecipeDetailResponse, RecipeListItem, RecipeSubstituteResponse } from "@/lib/api/zerocheck";
 
 function normalizeSteps(value: unknown, fallback: { title: string; description: string }[]) {
   if (!Array.isArray(value) || value.length === 0) return fallback;
@@ -38,7 +38,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
     author: "저당 레시피",
     category: "한 끼",
     servings: "분량 정보 준비 중",
-    time: "조리 시간 준비 중",
+    time: "",
     difficulty: "차근차근",
     summary: "재료와 조리 순서를 확인하고 있어요.",
     ingredients: [],
@@ -57,11 +57,13 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
   }), [catalogDetail, recipeId, slug]);
   const [live, setLive] = useState<RecipeDetailResponse | null>(null);
   const [liveSubstitutes, setLiveSubstitutes] = useState<RecipeSubstituteResponse | null>(null);
+  const [relatedLive, setRelatedLive] = useState<RecipeListItem[]>([]);
   const [loading, setLoading] = useState(recipeId !== null);
   const [unavailable, setUnavailable] = useState(!catalogDetail && recipeId === null);
   useEffect(() => {
     setLive(null);
     setLiveSubstitutes(null);
+    setRelatedLive([]);
     if (recipeId === null) {
       setLoading(false);
       setUnavailable(!catalogDetail);
@@ -79,6 +81,9 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
     });
     getRecipeSubstitutes(recipeId).then((value) => {
       if (active) setLiveSubstitutes(value);
+    }).catch(() => undefined);
+    getRelatedRecipes(recipeId).then((value) => {
+      if (active) setRelatedLive(value.recipes);
     }).catch(() => undefined);
     return () => {
       active = false;
@@ -133,8 +138,29 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
       .slice(0, 3);
   }, [liveSubstitutes]);
   const substitutesLoaded = liveSubstitutes !== null;
-  const similar = recipes.filter((recipe) => recipe.slug !== detail.slug).slice(0, 3);
-  const comparisonReady = detail.comparisonStatus === "completed" && detail.comparisonSugar > 0 && detail.comparisonCalories > 0;
+  const similar = useMemo(() => {
+    if (relatedLive.length > 0) {
+      return relatedLive.map((item) => ({
+        ...fallbackDetail,
+        slug: String(item.id),
+        databaseId: String(item.id),
+        title: item.name,
+        category: (item.category as RecipeData["category"]) || detail.category,
+        time: item.cookTimeMin != null ? `${item.cookTimeMin}분` : "",
+        thumbnail: item.thumbnailUrl ?? undefined,
+        estimatedSugar: item.sugar ?? 0,
+        estimatedCalories: item.calories ?? 0,
+        comparisonStatus: "completed" as const,
+      }));
+    }
+    return recipes.filter((recipe) => recipe.slug !== detail.slug && recipe.category === detail.category).slice(0, 3);
+  }, [detail.category, detail.slug, fallbackDetail, relatedLive]);
+  const changedIngredients = (live?.ingredients ?? []).filter((ingredient) =>
+    ingredient.baseSugarG != null && ingredient.sugarG != null && ingredient.baseSugarG > ingredient.sugarG,
+  );
+  const comparisonReady = detail.comparisonStatus === "completed"
+    && detail.comparisonSugar - detail.estimatedSugar >= 0.1
+    && (changedIngredients.length > 0 || (liveSubstitutes?.substitutes.some((group) => group.products.length > 0) ?? false));
   const matchedAllergens = (profile.allergens ?? []).filter((allergen) =>
     detail.ingredients.some((ingredient) =>
       ingredient.replace(/\s/g, "").includes(allergen.replace(/\s/g, "")),
@@ -154,10 +180,10 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
       <section className="detail-hero wrap">
         <div className="detail-hero-image"><RecipeCover recipe={detail} hero /></div>
         <div className="detail-hero-copy">
-          <p className="eyebrow">{detail.category} · {detail.servings} · {detail.time} · {detail.difficulty}</p>
+          <p className="eyebrow">{[detail.category, detail.servings, detail.time, detail.difficulty].filter(Boolean).join(" · ")}</p>
           <h1>{detail.title}</h1>
           <p>{detail.summary}</p>
-          <div className="detail-metrics"><div><span>등록 재료 당류</span><strong>{detail.estimatedSugar}g</strong></div><div><span>등록 재료 열량</span><strong>{detail.estimatedCalories}kcal</strong></div><div><span>영양 계산률</span><strong>{detail.nutritionCoverage ?? 100}%</strong></div></div>
+          <div className="detail-metrics"><div><span>당류</span><strong>{detail.estimatedSugar}g</strong></div><div><span>열량</span><strong>{detail.estimatedCalories}kcal</strong></div></div>
           <FavoriteButton label={detail.title} id={recipeId} kind="recipe" checkInitial />
           {detail.sourceUrl && <a className="source-link" href={detail.sourceUrl} target="_blank" rel="noreferrer">원본 레시피 보기 ↗</a>}
         </div>
@@ -170,16 +196,23 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
         </section>
       )}
 
-      <section className="recipe-compare wrap">
-        {comparisonReady ? <>
+      {comparisonReady && <section className="recipe-compare wrap">
           <header className="section-line-heading"><div><p className="eyebrow">일반 조리와 비교</p><h2>바꾼 재료가 수치에 어떻게 보이는지 확인해요</h2></div></header>
-          <div className="compare-bars">
-            <div><span>일반 조리</span><i><b style={{ width: "100%" }} /></i><strong>당류 {detail.comparisonSugar}g · {detail.comparisonCalories}kcal</strong></div>
-            <div className="better"><span>이 레시피</span><i><b style={{ width: `${Math.round((detail.estimatedSugar / detail.comparisonSugar) * 100)}%` }} /></i><strong>당류 {detail.estimatedSugar}g · {detail.estimatedCalories}kcal</strong></div>
+          <div className="recipe-compare-layout">
+            <div className="compare-bars">
+              <div><span>일반 조리</span><i><b style={{ width: "100%" }} /></i><strong>당류 {detail.comparisonSugar}g · {detail.comparisonCalories}kcal</strong></div>
+              <div className="better"><span>이 레시피</span><i><b style={{ width: `${Math.max(4, Math.round((detail.estimatedSugar / detail.comparisonSugar) * 100))}%` }} /></i><strong>당류 {detail.estimatedSugar}g · {detail.estimatedCalories}kcal</strong></div>
+              <p><b>{Math.round(((detail.comparisonSugar - detail.estimatedSugar) / detail.comparisonSugar) * 100)}%</b> 당류를 덜었어요</p>
+            </div>
+            <div className="recipe-swap-code" aria-label="당류를 줄인 재료 선택">
+              {(liveSubstitutes?.substitutes ?? []).filter((group) => group.products.length > 0).slice(0, 3).map((group) => {
+                const ingredient = live?.ingredients?.find((item) => item.id === group.ingredientId);
+                const product = group.products[0];
+                return <article key={group.ingredientId}><small>바꿔 담은 재료</small><strong>{group.ingredientName}</strong><p><span>일반 {ingredient?.baseSugarG ?? "-"}g</span><i aria-hidden="true">→</i><b>{product.name}</b><em>{ingredient?.sugarG ?? product.sugar ?? 0}g</em></p></article>;
+              })}
+            </div>
           </div>
-        </> : <div className="recipe-data-status"><div><p className="eyebrow">영양 비교</p><h2>등록된 재료의 합계를 먼저 확인해보세요</h2><p>일반 조리법과 비교할 수 있는 값이 준비되면 당류와 열량 차이도 함께 알려드릴게요.</p></div><span><b>{detail.nutritionCoverage ?? 100}%</b>재료 영양 연결</span></div>}
-        <p>영양값은 등록된 재료를 합산한 값이에요. 실제 섭취량과 사용한 제품에 따라 달라질 수 있어요.</p>
-      </section>
+        </section>}
 
       <section className="recipe-body wrap">
         <aside><p className="eyebrow">재료 · {detail.servings}</p>{detail.ingredients.map((item) => <div key={item}><span>{item}</span><i>✓</i></div>)}</aside>
@@ -188,7 +221,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
 
       <section className="detail-products-band">
         <div className="used-products wrap">
-          <header className="section-line-heading"><div><p className="eyebrow">이 요리에 활용할 수 있는 제품</p><h2>재료를 바꿀 때 함께 살펴보세요</h2></div><Link href="/search">저당픽 전체 보기 →</Link></header>
+          <header className="section-line-heading"><div><p className="eyebrow">이 요리에 활용할 수 있는 제품</p><h2>재료를 바꿀 때 함께 살펴보세요</h2></div><Link href="/search">저당 제품 전체 보기 →</Link></header>
           {relatedProducts.length > 0 && <div className="compact-recommendations">{relatedProducts.map((product) => <Link href={`/product/${product.id}`} key={product.id}><div className="compact-product-photo"><SafeImage src={product.image} alt={`${product.title} 제품`} /></div><h3>{product.title}</h3><p>{product.serving} 기준 당류 {product.sugar}g · {product.calories}kcal</p><b>♥</b></Link>)}</div>}
           {substitutesLoaded && relatedProducts.length === 0 && <p className="used-products-empty">아직 매칭된 상품이 없어요.</p>}
         </div>
@@ -196,7 +229,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
 
       <section className="similar-section wrap">
         <header className="section-line-heading"><div><p className="eyebrow">비슷한 저당 레시피</p><h2>다음 메뉴도 이어서 살펴보세요</h2></div></header>
-        <div className="similar-grid">{similar.map((recipe) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><RecipeCover recipe={recipe} /><small>{recipe.category}</small><h3>{recipe.title}</h3><p>등록 재료 당류 {recipe.estimatedSugar}g</p></Link>)}</div>
+        <div className="similar-grid">{similar.map((recipe) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><RecipeCover recipe={recipe} /><small>{recipe.category}</small><h3>{recipe.title}</h3><p>당류 {recipe.estimatedSugar}g · {recipe.estimatedCalories}kcal</p></Link>)}</div>
       </section>
     </main>
   );

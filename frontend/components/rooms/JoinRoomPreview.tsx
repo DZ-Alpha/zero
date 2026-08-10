@@ -122,7 +122,7 @@ export function JoinRoomPreview({ code }: { code: string }) {
 
         <div className={styles.privacyNotice}>
           <strong>참여하면 오늘 식탁을 함께 봐요</strong>
-          <p>홈에 남긴 식사와 연결한 레시피·저당픽이 이 모임에도 함께 보여요. 전체 랭킹에는 팀 평균과 기록률만 공개돼요.</p>
+          <p>홈에 남긴 식사와 연결한 레시피·저당 제품이 이 모임에도 함께 보여요. 전체 랭킹에는 팀 평균과 기록률만 공개돼요.</p>
         </div>
 
         {!canJoin && (

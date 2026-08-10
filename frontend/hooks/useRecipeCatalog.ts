@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RecipeData } from "@/data/catalog";
 import { getRecipes, type RecipeDetailResponse, type RecipeListItem } from "@/lib/api/zerocheck";
 
@@ -56,7 +56,7 @@ function toRecipeData(item: RecipeListItem, detail: RecipeDetailResponse | null,
     author: detail?.source || matched?.author || "저당 레시피",
     category: item.category ? recipeCategory(item.category, item.name) : matched?.category ?? inferCategory(item.name),
     servings: matched?.servings ?? "분량 정보 준비 중",
-    time: item.cookTimeMin != null ? `${item.cookTimeMin}분` : matched?.time ?? "조리 시간 준비 중",
+    time: item.cookTimeMin != null ? `${item.cookTimeMin}분` : matched?.time === "조리 시간 준비 중" ? "" : matched?.time ?? "",
     difficulty: matched?.difficulty ?? "차근차근",
     summary: matched?.summary ?? "재료와 조리 순서를 확인하고 식단에 가볍게 더해보세요.",
     ingredients: ingredients.length > 0 ? ingredients : matched?.ingredients ?? [],
@@ -77,34 +77,46 @@ function toRecipeData(item: RecipeListItem, detail: RecipeDetailResponse | null,
   };
 }
 
-export function useRecipeCatalog(fallback: RecipeData[]) {
+export function useRecipeCatalog(fallback: RecipeData[], values: { search?: string; sort?: string; eligible?: boolean } = {}) {
+  const fallbackRef = useRef(fallback);
+  fallbackRef.current = fallback;
   const [items, setItems] = useState<RecipeData[]>([]);
   const [source, setSource] = useState<"mock" | "api">("mock");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    const timeout = new Promise<never>((_, reject) => {
-      window.setTimeout(() => reject(new Error("RECIPE_CATALOG_MOCK_FALLBACK")), 3500);
-    });
-    Promise.race([getRecipes(1), timeout])
-      .then(({ recipes, hasNext }) => {
+    const fallbackTimer = window.setTimeout(() => {
+      if (!active) return;
+      setItems(fallbackRef.current);
+      setTotal(fallbackRef.current.length);
+      setSource("mock");
+      setHasMore(false);
+      setLoading(false);
+    }, 3500);
+    getRecipes(1, values.search, values.sort, values.eligible)
+      .then(({ recipes, hasNext, total: nextTotal }) => {
         if (!active) return;
+        window.clearTimeout(fallbackTimer);
         // 목록 응답만으로 카드를 만들고 상세 정보는 상세 페이지에 들어갔을 때만 호출한다.
         // 전체 레시피마다 상세 API를 호출하면 DB 데이터가 늘수록 요청이 폭증한다.
-        setItems(recipes.map((recipe) => toRecipeData(recipe, null, fallback)));
+        setItems(recipes.map((recipe) => toRecipeData(recipe, null, fallbackRef.current)));
         setSource("api");
         setPage(1);
         setHasMore(hasNext);
+        setTotal(nextTotal);
       })
       .catch(() => {
         if (!active) return;
-        setItems(fallback);
+        window.clearTimeout(fallbackTimer);
+        setItems(fallbackRef.current);
+        setTotal(fallbackRef.current.length);
         setSource("mock");
         setHasMore(false);
       })
@@ -114,22 +126,24 @@ export function useRecipeCatalog(fallback: RecipeData[]) {
 
     return () => {
       active = false;
+      window.clearTimeout(fallbackTimer);
     };
-  }, [fallback, revision]);
+  }, [revision, values.search, values.sort, values.eligible]);
 
   const loadMore = useCallback(() => {
     if (source !== "api" || loadingMore || !hasMore) return;
     setLoadingMore(true);
     const nextPage = page + 1;
-    getRecipes(nextPage)
-      .then(({ recipes, hasNext }) => {
-        setItems((current) => [...current, ...recipes.map((recipe) => toRecipeData(recipe, null, fallback))]);
+    getRecipes(nextPage, values.search, values.sort, values.eligible)
+      .then(({ recipes, hasNext, total: nextTotal }) => {
+        setItems((current) => [...current, ...recipes.map((recipe) => toRecipeData(recipe, null, fallbackRef.current))]);
         setPage(nextPage);
         setHasMore(hasNext);
+        setTotal(nextTotal);
       })
       .catch(() => setHasMore(false))
       .finally(() => setLoadingMore(false));
-  }, [source, loadingMore, hasMore, page, fallback]);
+  }, [source, loadingMore, hasMore, page, values.search, values.sort, values.eligible]);
 
   return {
     recipes: items,
@@ -137,6 +151,7 @@ export function useRecipeCatalog(fallback: RecipeData[]) {
     loading,
     loadingMore,
     hasMore,
+    total,
     loadMore,
     retry: () => setRevision((current) => current + 1),
   };

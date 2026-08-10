@@ -4,6 +4,8 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
+# Service entrypoint kept explicit so deployment health checks remain easy to audit.
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

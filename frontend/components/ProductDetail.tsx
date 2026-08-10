@@ -36,7 +36,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     slug,
     foodCode: productId?.slice(0, 13).toUpperCase() ?? "",
     title: "상품 정보를 불러오고 있어요",
-    brand: "브랜드 정보 준비 중",
+    brand: "",
     maker: "",
     category: "가공식품",
     serving: "100g",
@@ -135,7 +135,13 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     .concat(products.filter((product) => product.slug !== detail.slug))
     .slice(0, 3);
   const hasAlternatives = alternativeResult?.status === "AVAILABLE" && alternativeResult.alternatives.length > 0;
-  const sweetenerTitle = detail.sweeteners.length > 0 ? `${detail.sweeteners[0]}을(를) 사용했어요.` : "원재료를 한 번 더 확인해보세요.";
+  const sweetenerTitle = detail.sweeteners.length > 0 ? `${detail.sweeteners[0]}을(를) 사용했어요.` : "비슷한 제품과 성분을 나란히 볼까요?";
+  const encouragements = [
+    ["오늘도 건강한 선택!", "내 몸이 가벼워지는 시간이에요 🌱"],
+    ["잘 골랐어요!", "작은 선택 하나가 오늘의 좋은 흐름을 만들어요."],
+    ["가볍게 이어가는 중!", "완벽함보다 꾸준한 선택이 더 오래 남아요."],
+  ] as const;
+  const encouragement = encouragements[[...detail.title].reduce((sum, char) => sum + char.charCodeAt(0), 0) % encouragements.length];
   const todayRecords = recordsByDate[getTodayKey()] ?? [];
   const currentSugar = Math.round((todayRecords.filter((item) => item.source !== "server").reduce((sum, item) => sum + item.sugar, 0) + Number(remoteGauge?.sugar ?? 0) + Number.EPSILON) * 100) / 100;
   const currentCalories = todayRecords.filter((item) => item.source !== "server").reduce((sum, item) => sum + item.calories, 0) + Number(remoteGauge?.cal ?? 0);
@@ -181,11 +187,11 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
       <section className="personal-ai-note wrap">
         {token ? (
           <>
-            <div><p className="eyebrow">오늘 기록에 더하면</p><h2>오늘 당류가 {format(todaySugar)}g이 돼요.</h2></div>
-            <div><p>현재 기록 {format(currentSugar)}g · {currentCalories.toLocaleString()}kcal에 이 제품의 {detail.serving} 기준 영양값을 더했어요. 실제로 먹은 양을 바꾸면 수치도 다시 계산돼요.</p><div className="personal-ai-metrics"><span>당류 목표 {format(goals.sugar)}g 중 {todayRate}%</span><span>칼로리 목표 {goals.calories.toLocaleString()}kcal 중 {calorieRate}%</span></div></div>
+            <div><p className="eyebrow">{encouragement[0]}</p><h2>{encouragement[1]}</h2></div>
+            <div><p>{detail.title}을 선택하면 오늘 당류는 {format(todaySugar)}g이에요. 먹은 양에 맞춰 기록하면 내 흐름을 더 정확히 볼 수 있어요.</p><div className="personal-ai-metrics"><span>당류 목표의 {todayRate}%</span><span>칼로리 목표의 {calorieRate}%</span></div></div>
           </>
         ) : (
-          <div><p className="eyebrow">오늘 기록에 더하면</p><h2>로그인하면 오늘 기록에 더한 당류를 볼 수 있어요.</h2><p><Link href="/login">로그인하기 →</Link></p></div>
+          <div><p className="eyebrow">가볍게 고르는 습관</p><h2>제품을 비교한 것부터 좋은 시작이에요.</h2><p><Link href="/login">내 기록과 함께 보기 →</Link></p></div>
         )}
       </section>
 
@@ -193,7 +199,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
         <article>
           <p className="eyebrow">단맛을 낸 원재료</p>
           <h2>{sweetenerTitle}</h2>
-          <p>{renderInlineMarkdown(detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "원재료명에서 특정 대체 감미료를 바로 확인하기 어려워요. 구매한 제품의 최신 원재료명을 한 번 더 확인해 주세요.")}</p>
+          <p>{renderInlineMarkdown(detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "같은 종류의 제품을 열어 당류와 원재료 구성을 함께 비교해보세요.")}</p>
           <Link href="/search">다른 제품과 비교하기 →</Link>
         </article>
         <div className="personal-product-analysis">

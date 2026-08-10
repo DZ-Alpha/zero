@@ -1,17 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { RecordMealModal } from "@/components/RecordMealModal";
 import { DietRecord, getTodayKey, MealType, useDietRecords } from "@/hooks/useDietRecords";
 import { useUserSettings } from "@/hooks/useUserSettings";
 
 type DayStatus = "good" | "near" | "over" | "empty";
 
-const monthNames = ["2026년 6월", "2026년 7월", "2026년 8월"];
-const monthLengths = [30, 31, 31];
-const leadingDays = [1, 3, 6];
 const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
 const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
+
+function recentMonths() {
+  const today = new Date();
+  return [-2, -1, 0].map((offset) => {
+    const date = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      label: `${date.getFullYear()}년 ${date.getMonth() + 1}월`,
+      days: new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate(),
+      leading: date.getDay(),
+    };
+  });
+}
 
 function roundOne(value: number) {
   return Math.round((value + Number.EPSILON) * 10) / 10;
@@ -36,25 +47,18 @@ function statusTitle(status: DayStatus) {
   return "이날은 기록이 없어요";
 }
 
-function dateKeyFor(monthIndex: number, day: number) {
-  return `2026-${String(monthIndex + 6).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+function dateKeyFor(option: ReturnType<typeof recentMonths>[number], day: number) {
+  return `${option.year}-${String(option.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-// 캘린더 데모 데이터가 2026년 6~8월(monthIndex 0~2)만 다루므로, 실제 오늘 날짜가
-// 그 범위 밖이면(개발 환경 등) 예전 하드코딩값(7월 16일)으로 되돌아간다.
-function defaultMonthAndDay() {
-  const [year, monthNum, day] = getTodayKey().split("-").map(Number);
-  const monthIndex = monthNum - 6;
-  if (year === 2026 && monthIndex >= 0 && monthIndex < monthNames.length) return { month: monthIndex, day };
-  return { month: 1, day: 16 };
-}
-
+// 현재 달을 기준으로 최근 세 달을 구성해 운영 날짜가 바뀌어도 달력이 자연스럽게 이어진다.
 export function CalendarDashboard() {
   const { recordsByDate, deleteRecord: removeRecord, loadServerMonth, serverLoading, serverError } = useDietRecords();
   const { goals } = useUserSettings();
   const todayKey = useMemo(() => getTodayKey(), []);
-  const [month, setMonth] = useState(() => defaultMonthAndDay().month);
-  const [selectedDay, setSelectedDay] = useState(() => defaultMonthAndDay().day);
+  const monthOptions = useMemo(() => recentMonths(), []);
+  const [month, setMonth] = useState(monthOptions.length - 1);
+  const [selectedDay, setSelectedDay] = useState(() => Number(getTodayKey().slice(-2)));
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState("");
   const [entryMeal, setEntryMeal] = useState<MealType | null>(null);
@@ -62,18 +66,19 @@ export function CalendarDashboard() {
   const sugarGoal = goals.sugar;
 
   useEffect(() => {
-    void loadServerMonth(2026, month + 6);
-  }, [loadServerMonth, month]);
+    void loadServerMonth(monthOptions[month].year, monthOptions[month].month);
+  }, [loadServerMonth, month, monthOptions]);
 
-  const days = monthLengths[month];
+  const monthOption = monthOptions[month];
+  const days = monthOption.days;
   const monthData = useMemo(() => Array.from({ length: days }, (_, index) => {
     const day = index + 1;
-    const items = recordsByDate[dateKeyFor(month, day)] ?? [];
+    const items = recordsByDate[dateKeyFor(monthOption, day)] ?? [];
     return { day, items, sugar: getDaySugar(items), status: getDayStatus(items, sugarGoal) };
-  }), [days, month, recordsByDate, sugarGoal]);
+  }), [days, monthOption, recordsByDate, sugarGoal]);
 
   const selected = monthData.find((item) => item.day === selectedDay) ?? monthData[0];
-  const selectedDateKey = dateKeyFor(month, selected.day);
+  const selectedDateKey = dateKeyFor(monthOption, selected.day);
   const hasRecord = selected.items.length > 0;
   const canAddRecord = selectedDateKey <= todayKey;
   const recordedDays = monthData.filter((item) => item.status !== "empty").length;
@@ -85,10 +90,11 @@ export function CalendarDashboard() {
 
   const previousWithinGoalDays = useMemo(() => {
     if (month === 0) return 0;
-    const comparisonLength = month === 1 ? 16 : monthLengths[month - 1];
-    return Array.from({ length: comparisonLength }, (_, index) => recordsByDate[dateKeyFor(month - 1, index + 1)] ?? [])
+    const previous = monthOptions[month - 1];
+    const comparisonLength = month === monthOptions.length - 1 ? Math.min(Number(todayKey.slice(-2)), previous.days) : previous.days;
+    return Array.from({ length: comparisonLength }, (_, index) => recordsByDate[dateKeyFor(previous, index + 1)] ?? [])
       .filter((items) => ["good", "near"].includes(getDayStatus(items, sugarGoal))).length;
-  }, [month, recordsByDate, sugarGoal]);
+  }, [month, monthOptions, recordsByDate, sugarGoal, todayKey]);
   const withinGoalDifference = withinGoalDays - previousWithinGoalDays;
 
   const allItems = monthData.flatMap((item) => item.items);
@@ -97,11 +103,30 @@ export function CalendarDashboard() {
     allItems.forEach((item) => counts.set(item.name, (counts.get(item.name) ?? 0) + 1));
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["아직 기록이 없어요", 0];
   }, [allItems]);
+  const savedSugar = roundOne(Math.max(0, recordedDays * sugarGoal - totalSugar));
+  const longestStreak = monthData.reduce((result, item) => {
+    const current = item.status === "empty" ? 0 : result.current + 1;
+    return { current, best: Math.max(result.best, current) };
+  }, { current: 0, best: 0 }).best;
+  const bestFood = allItems.length > 0
+    ? [...allItems].sort((a, b) => a.sugar - b.sugar)[0]
+    : null;
+  const bestMeal = meals.map((meal) => {
+    const items = allItems.filter((item) => item.meal === meal);
+    return { meal, average: items.length > 0 ? items.reduce((sum, item) => sum + item.sugar, 0) / items.length : Number.POSITIVE_INFINITY };
+  }).sort((a, b) => a.average - b.average)[0];
+  const progress = recordedDays > 0 ? Math.round((withinGoalDays / recordedDays) * 100) : 0;
+  const level = recordedDays >= 24 ? "꾸준한 정원사" : recordedDays >= 14 ? "습관을 키우는 중" : recordedDays >= 7 ? "새싹 기록가" : "첫잎을 틔우는 중";
+  const chartPoints = monthData.filter((item) => item.status !== "empty").map((item) => {
+    const x = days <= 1 ? 0 : ((item.day - 1) / (days - 1)) * 100;
+    const y = 96 - Math.min(90, (item.sugar / Math.max(sugarGoal * 1.25, 1)) * 82);
+    return `${x},${y}`;
+  }).join(" ");
 
   function moveMonth(direction: number) {
-    const nextMonth = Math.min(monthNames.length - 1, Math.max(0, month + direction));
+    const nextMonth = Math.min(monthOptions.length - 1, Math.max(0, month + direction));
     setMonth(nextMonth);
-    setSelectedDay(nextMonth === 1 ? 15 : 1);
+    setSelectedDay(nextMonth === monthOptions.length - 1 ? Number(todayKey.slice(-2)) : 1);
     setPendingDeleteId(null);
     setActionMessage("");
   }
@@ -119,9 +144,9 @@ export function CalendarDashboard() {
   }
 
   function handleRecordSaved(dateKey: string, record: DietRecord) {
-    const [, savedMonth, savedDay] = dateKey.split("-").map(Number);
-    const monthIndex = savedMonth - 6;
-    if (monthIndex >= 0 && monthIndex < monthNames.length) {
+    const [savedYear, savedMonth, savedDay] = dateKey.split("-").map(Number);
+    const monthIndex = monthOptions.findIndex((item) => item.year === savedYear && item.month === savedMonth);
+    if (monthIndex >= 0) {
       setMonth(monthIndex);
       setSelectedDay(savedDay);
     }
@@ -176,22 +201,22 @@ export function CalendarDashboard() {
         <div className="calendar-panel">
           <header className="calendar-toolbar">
             <button type="button" onClick={() => moveMonth(-1)} disabled={month === 0} aria-label="이전 달">←</button>
-            <h2>{monthNames[month]}</h2>
-            <button type="button" onClick={() => moveMonth(1)} disabled={month === monthNames.length - 1} aria-label="다음 달">→</button>
+            <h2>{monthOption.label}</h2>
+            <button type="button" onClick={() => moveMonth(1)} disabled={month === monthOptions.length - 1} aria-label="다음 달">→</button>
           </header>
           {serverLoading && <p className="calendar-server-status" role="status">서버 기록을 불러오는 중이에요.</p>}
-          {serverError && <div className="calendar-server-error" role="alert"><span>{serverError} 현재 기기에 저장된 기록은 그대로 볼 수 있어요.</span><button type="button" onClick={() => void loadServerMonth(2026, month + 6)}>다시 불러오기</button></div>}
+          {serverError && <div className="calendar-server-error" role="alert"><span>{serverError} 현재 기기에 저장된 기록은 그대로 볼 수 있어요.</span><button type="button" onClick={() => void loadServerMonth(monthOption.year, monthOption.month)}>다시 불러오기</button></div>}
           <div className="calendar-legend"><span><i className="good" />여유 있음</span><span><i className="near" />목표에 가까움</span><span><i className="over" />목표를 넘음</span><span><i className="empty" />기록 없음</span></div>
           <div className="calendar-weekdays">{weekdays.map((day) => <span key={day}>{day}</span>)}</div>
           <div className="month-grid">
-            {Array.from({ length: leadingDays[month] }).map((_, index) => <i key={`blank-${index}`} />)}
+            {Array.from({ length: monthOption.leading }).map((_, index) => <i key={`blank-${index}`} />)}
             {monthData.map((item) => (
               <button
                 type="button"
                 className={`${item.status} ${selectedDay === item.day ? "is-selected" : ""}`}
                 onClick={() => selectDay(item.day)}
                 aria-pressed={selectedDay === item.day}
-                aria-label={`${month + 6}월 ${item.day}일, ${item.status === "empty" ? "기록 없음" : `당류 ${item.sugar}g`}`}
+                aria-label={`${monthOption.month}월 ${item.day}일, ${item.status === "empty" ? "기록 없음" : `당류 ${item.sugar}g`}`}
                 key={item.day}
               >
                 <span>{item.day}</span>
@@ -203,7 +228,7 @@ export function CalendarDashboard() {
 
         <aside className={`selected-day-panel ${hasRecord ? `status-${selected.status}` : "is-empty"}`}>
           <div className="selected-day-content" key={`${month}-${selected.day}-${selected.items.length}`}>
-            <p className="eyebrow">{month + 6}월 {selected.day}일 기록</p>
+            <p className="eyebrow">{monthOption.month}월 {selected.day}일 기록</p>
             {actionMessage && <p className="record-action-message" role="status">{actionMessage}</p>}
 
             {hasRecord ? (
@@ -250,29 +275,28 @@ export function CalendarDashboard() {
         </aside>
       </section>
 
-      {recordedDays > 0 && (
-        <>
-          <section className="month-summary wrap">
-            <header className="section-line-heading"><div><p className="eyebrow">지난달과 비교</p><h2>{monthNames[month]} 기록 요약</h2></div><p>{comparisonCopy}</p></header>
-            <div className="summary-grid">
-              <article><small>기록한 날</small><strong>{recordedDays}<span>일</span></strong><p>기록이 없는 날 {emptyDays}일</p></article>
-              <article><small>목표 안의 날</small><strong>{withinGoalDays}<span>일</span></strong><p>설정한 하루 목표 이하</p></article>
-              <article><small>이번 달 당류</small><strong>{totalSugar.toLocaleString()}<span>g</span></strong><p>각설탕 약 {cubes}개 분량</p></article>
-              <article><small>기록한 날 평균</small><strong>{averageSugar}<span>g</span></strong><p>기록이 있는 날만 계산했어요</p></article>
-            </div>
-          </section>
+      <section className="monthly-insights wrap" aria-labelledby="monthly-report-title">
+            <header>
+              <div><p className="eyebrow">월간 리포트</p><h2 id="monthly-report-title">{monthOption.label}, 기록이 만든 변화</h2></div>
+              <p><strong>{comparisonCopy}</strong><span>빈 날도 흐름의 일부예요. 다시 기록한 오늘부터 이어가면 돼요.</span></p>
+            </header>
 
-          <section className="monthly-report wrap">
-            <header><div><p className="eyebrow">월간 리포트</p><h2>이번 달 기록에서 보인 흐름이에요</h2></div><span>{monthNames[month]} 기록</span></header>
-            <div className="report-grid">
-              <article className="report-main"><small>이번 달 흐름</small><h3>{`${recordedDays}일 중 ${withinGoalDays}일은\n목표 안에 있었어요.`}</h3><p>기록을 이어간 흐름을 확인해보세요. 날짜를 누르면 그날의 식단을 다시 볼 수 있어요.</p></article>
-              <article><small>가장 자주 기록한 메뉴</small><h3>{mostFrequentFood[0]}</h3><strong>{mostFrequentFood[1]}<span>회</span></strong><p>식사 기록에 가장 많이 등장했어요.</p></article>
-              <article><small>기록이 없는 날</small><h3>{emptyDays > 0 ? `${emptyDays}일은 비어 있어요` : "모든 날을 기록했어요"}</h3><strong>{emptyDays}<span>일</span></strong><p>회색 날짜를 누르면 비어 있는 날을 확인할 수 있어요.</p></article>
+            <div className="monthly-kpis">
+              <article><small>목표에서 아낀 당류</small><strong>{savedSugar}<span>g</span></strong><p>기록한 날의 하루 목표와 비교</p></article>
+              <article><small>이어 쓴 기록</small><strong>{longestStreak}<span>일</span></strong><p>{level}</p></article>
+              <article><small>가장 가벼운 한 끼</small><strong>{bestFood?.name ?? "한 끼씩 찾는 중"}</strong><p>{bestFood ? `당류 ${roundOne(bestFood.sugar)}g` : "첫 기록부터 함께 찾아봐요"}</p></article>
+              <article><small>편안했던 시간대</small><strong>{Number.isFinite(bestMeal.average) ? bestMeal.meal : "기록을 기다려요"}</strong><p>{Number.isFinite(bestMeal.average) ? `평균 당류 ${roundOne(bestMeal.average)}g` : "식사별 흐름을 모으고 있어요"}</p></article>
             </div>
-            <div className="report-archive"><span>다른 달 기록</span>{month !== 0 && <button type="button" onClick={() => { setMonth(0); setSelectedDay(1); }}>2026년 6월 보기</button>}{month !== 1 && <button type="button" onClick={() => { setMonth(1); setSelectedDay(15); }}>2026년 7월 보기</button>}{month !== 2 && <button type="button" onClick={() => { setMonth(2); setSelectedDay(1); }}>2026년 8월 보기</button>}</div>
-          </section>
-        </>
-      )}
+
+            <div className="monthly-visuals">
+              <article className="habit-map"><header><div><small>기록 습관</small><h3>{recordedDays}일의 발자국</h3></div><span>{emptyDays}일은 쉬어간 날</span></header><div>{monthData.map((item) => <i className={item.status} title={`${item.day}일 ${item.status === "empty" ? "기록 없음" : `당류 ${item.sugar}g`}`} key={item.day} />)}</div></article>
+              <article className="goal-ring-card"><div className="goal-ring" style={{ "--progress": `${progress * 3.6}deg` } as CSSProperties}><span><b>{progress}%</b>목표 안</span></div><div><small>기록한 날 중</small><h3>{withinGoalDays}일은 목표 안</h3><p>평균 {averageSugar}g · 각설탕 약 {cubes}개 분량</p></div></article>
+              <article className="sugar-trend"><header><div><small>당류 흐름</small><h3>하루 목표와 나란히 봐요</h3></div><span>목표 {sugarGoal}g</span></header><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="이번 달 당류 변화"><line x1="0" y1="30.4" x2="100" y2="30.4" /><polyline points={chartPoints} /></svg></article>
+              <article className="growth-card"><small>이번 달 한마디</small><div aria-hidden="true"><i /><i /><i /></div><h3>{mostFrequentFood[1] > 1 ? `${mostFrequentFood[0]}와 함께 습관이 자랐어요.` : "다시 적은 하루가 가장 좋은 시작이에요."}</h3></article>
+            </div>
+
+            <div className="report-archive"><span>다른 달 기록</span>{monthOptions.map((item, index) => index !== month ? <button type="button" key={item.label} onClick={() => { setMonth(index); setSelectedDay(1); }}>{item.label} 보기</button> : null)}</div>
+      </section>
 
       {entryMeal && (
         <RecordMealModal

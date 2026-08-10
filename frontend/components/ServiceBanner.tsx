@@ -9,7 +9,7 @@ const slides = [
   {
     label: "오늘 기록",
     title: "먹은 걸 기록하면 오늘의 당과 칼로리가 보여요.",
-    description: "레시피·저당픽·사진 중 편한 방법으로 기록해보세요.",
+    description: "레시피·저당 제품·사진 중 편한 방법으로 기록해보세요.",
     href: null,
     action: null,
     background: "#eef8d8",
@@ -19,7 +19,7 @@ const slides = [
     title: "‘제로’라는 말보다 성분표를 쉽게 읽어드려요.",
     description: "당류와 감미료 정보를 어려운 용어 없이 정리해요.",
     href: "/search",
-    action: "저당픽 찾아보기",
+    action: "저당 제품 찾아보기",
     background: "#e7f2ec",
   },
   {

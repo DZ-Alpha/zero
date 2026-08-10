@@ -18,7 +18,7 @@ function productCategory(value?: string | null, fallback?: ProductCategory): Pro
 
 function toProductCard(item: ProductSearchItem): ProductData {
   const fallback = mockProducts.find((product) => product.backendId === item.id);
-  const brand = item.brand || item.desc || fallback?.brand || "브랜드 정보 준비 중";
+  const brand = item.brand || item.desc || fallback?.brand || "";
   const nutritionAvailable = item.sugar != null && item.calories != null;
   const sweeteners = (item.tags ?? []).filter((tag) =>
     SWEETENER_FILTERS.some((filter) => tag.includes(filter) || filter.includes(tag)),
@@ -56,6 +56,7 @@ async function loadProductPage(values: { query?: string; category?: string; warn
   return {
     cards,
     hasMore: response.hasNext ?? response.items.length === PAGE_SIZE,
+    total: response.total ?? response.items.length,
   };
 }
 
@@ -65,6 +66,7 @@ export function useProductCatalog(values: { query?: string; category?: string; s
   const [status, setStatus] = useState<"loading" | "api" | "mock">("loading");
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [revision, setRevision] = useState(0);
   const warning = (profile.allergenCodes ?? []).join(",") || undefined;
@@ -81,15 +83,17 @@ export function useProductCatalog(values: { query?: string; category?: string; s
 
     const timeout = window.setTimeout(() => {
       loadProductPage({ ...requestValues, page: 1 })
-        .then(({ cards, hasMore: nextHasMore }) => {
+        .then(({ cards, hasMore: nextHasMore, total: nextTotal }) => {
           if (!active) return;
           setItems(cards);
           setHasMore(nextHasMore);
+          setTotal(nextTotal);
           setStatus("api");
         })
         .catch(() => {
           if (!active) return;
           setItems(mockProducts);
+          setTotal(mockProducts.length);
           setHasMore(false);
           setStatus("mock");
         });
@@ -107,7 +111,7 @@ export function useProductCatalog(values: { query?: string; category?: string; s
     const keyAtStart = activeKey.current;
     setLoadingMore(true);
     loadProductPage({ ...requestValues, page: nextPage })
-      .then(({ cards, hasMore: nextHasMore }) => {
+      .then(({ cards, hasMore: nextHasMore, total: nextTotal }) => {
         if (activeKey.current !== keyAtStart) return;
         setItems((current) => {
           const known = new Set(current.map((item) => item.backendId));
@@ -115,11 +119,12 @@ export function useProductCatalog(values: { query?: string; category?: string; s
         });
         setPage(nextPage);
         setHasMore(nextHasMore);
+        setTotal(nextTotal);
       })
       .catch(() => setHasMore(false))
       .finally(() => setLoadingMore(false));
   }, [hasMore, loadingMore, page, requestKey, status]);
 
   const retry = useCallback(() => setRevision((current) => current + 1), []);
-  return { products: items, status, hasMore, loadingMore, loadMore, retry };
+  return { products: items, status, total, hasMore, loadingMore, loadMore, retry };
 }

@@ -5,19 +5,13 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { SafeImage } from "@/components/SafeImage";
 import { FavoriteIconButton } from "@/components/FavoriteButton";
-import { products as mockProducts } from "@/data/catalog";
+import { products as fallbackProducts } from "@/data/catalog";
 import { PRODUCT_CATEGORIES, SWEETENER_FILTERS } from "@/data/taxonomy";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useProductCatalog } from "@/hooks/useProductCatalog";
-import { getProductFavorites, getSearchRecommendations } from "@/lib/api/zerocheck";
+import { getProductFavorites, getSearchRecommendations, getUserRecommendations, searchProducts } from "@/lib/api/zerocheck";
 
-const personalSlugs = new Set([
-  "lalasweet-low-sugar-soymilk",
-  "fermented-konjac-rice",
-  "low-sugar-wholewheat-konjac-bagel",
-  "konjac-peach-zero-jelly",
-]);
-const personalIds = new Set(mockProducts.filter((product) => personalSlugs.has(product.slug)).map((product) => product.backendId).filter(Boolean));
+type RecommendationCard = { id: string; title: string; brand?: string | null };
 
 function ProductFeedContent() {
   const searchParams = useSearchParams();
@@ -33,6 +27,8 @@ function ProductFeedContent() {
   const resultsRef = useRef<HTMLDivElement>(null);
   const { ready: authReady, signedIn, token } = useAuthSession();
   const [favoriteProductIds, setFavoriteProductIds] = useState<Set<string>>(new Set());
+  const [recommendationItems, setRecommendationItems] = useState<RecommendationCard[]>([]);
+  const [recommendationPersonalized, setRecommendationPersonalized] = useState(false);
 
   // /search?query=... 로 직접 들어오거나 다른 query값으로 링크를 다시 눌렀을 때도
   // 검색창과 실제 검색 요청에 반영되어야 한다 - 이전엔 query state가 항상 빈
@@ -64,7 +60,7 @@ function ProductFeedContent() {
     : sort === "열량 낮은순"
       ? "calorie_asc"
       : "rank";
-  const { products, status, hasMore, loadingMore, loadMore, retry } = useProductCatalog({
+  const { products, status, total, hasMore, loadingMore, loadMore, retry } = useProductCatalog({
     query: query.trim() || undefined,
     category: categoryCode,
     sort: apiSort,
@@ -74,10 +70,39 @@ function ProductFeedContent() {
       const hasNutrition = product.nutritionAvailable !== false;
       const sugarMatch = sugarFilter === "전체" || (hasNutrition && (sugarFilter === "당류 0g" ? product.sugar === 0 : sugarFilter === "당류 3g 이하" ? product.sugar <= 3 : product.calories <= 100));
       const sweetenerMatch = sweetener === "전체" || (hasNutrition && product.sweeteners.some((item) => item.includes(sweetener)));
-      return sugarMatch && sweetenerMatch && (!personalOnly || personalIds.has(product.backendId));
+      return sugarMatch && sweetenerMatch && (!personalOnly || recommendationItems.some((item) => item.id === product.backendId));
     });
     return list;
-  }, [personalOnly, products, sugarFilter, sweetener]);
+  }, [personalOnly, products, recommendationItems, sugarFilter, sweetener]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    let active = true;
+    const request = signedIn && token
+      ? getUserRecommendations(token).then((result) => ({
+          personalized: result.personalized,
+          items: result.listProducts.map((item) => ({ id: String(item.id ?? ""), title: item.name, brand: item.brand })),
+        }))
+      : searchProducts({ sort: "rank", page: 1 }).then((result) => ({
+          personalized: false,
+          items: result.items.map((item) => ({ id: item.id, title: item.name, brand: item.brand })),
+        }));
+    request.then((result) => {
+      if (!active) return;
+      setRecommendationPersonalized(result.personalized);
+      setRecommendationItems(result.items.filter((item) => item.id).slice(0, 3));
+    }).catch(() => {
+      if (!active) return;
+      setRecommendationPersonalized(false);
+      setRecommendationItems(
+        [...fallbackProducts]
+          .sort((a, b) => b.savedDemo - a.savedDemo)
+          .slice(0, 3)
+          .map((item) => ({ id: String(item.backendId ?? item.slug), title: item.title, brand: item.brand })),
+      );
+    });
+    return () => { active = false; };
+  }, [authReady, signedIn, token]);
 
   useEffect(() => {
     const keyword = query.trim();
@@ -101,12 +126,6 @@ function ProductFeedContent() {
     return () => observer.disconnect();
   }, [loadMore]);
 
-  const recommendations = products.filter((product) => personalIds.has(product.backendId)).slice(0, 3);
-  const recommendationItems = recommendations.length > 0
-    ? recommendations
-    : products.length > 0
-      ? products.slice(0, 3)
-      : mockProducts.filter((product) => personalSlugs.has(product.slug)).slice(0, 3);
   const activeFilters = [category !== "전체" ? category : "", sugarFilter !== "전체" ? sugarFilter : "", sweetener !== "전체" ? sweetener : "", personalOnly ? "추천 제품" : ""].filter(Boolean);
 
   // 검색은 이미 query state로 실시간 반영되지만, 카테고리 필터 영역이 화면
@@ -132,8 +151,8 @@ function ProductFeedContent() {
       </section>
 
       <section className="catalog-recommendation personal-products wrap">
-        <header><div><span>기록에 맞춘 추천</span><h2>오늘 남은 당류에 맞는 제품</h2></div></header>
-        <div>{recommendationItems.map((product, index) => <Link href={`/product/${product.backendId ?? product.slug}`} key={product.backendId ?? product.slug}><span className="recommendation-rank">0{index + 1}</span><div><h3>{product.title}</h3><p>{product.nutritionAvailable === false ? "상세에서 영양정보 확인" : `${product.serving} 기준 당류 ${product.sugar}g · ${product.calories}kcal`}</p></div></Link>)}</div>
+        <header><div><span>{recommendationPersonalized ? "내 관심 기준 반영" : "지금 많이 찾는 제품"}</span><h2>{recommendationPersonalized ? "내 기준에 맞춰 골랐어요" : "가볍게 둘러볼 만한 제품"}</h2></div></header>
+        {recommendationItems.length > 0 ? <div>{recommendationItems.map((product, index) => <Link href={`/product/${product.id}`} key={product.id}><span className="recommendation-rank">0{index + 1}</span><div><h3>{product.title}</h3>{product.brand ? <p>{product.brand}</p> : null}</div></Link>)}</div> : <p className="catalog-recommendation-empty">추천할 제품을 고르고 있어요.</p>}
       </section>
 
       <section className="product-results-band">
@@ -151,10 +170,10 @@ function ProductFeedContent() {
           </aside>
 
         <section className="catalog-list" ref={resultsRef}>
-          <header className="catalog-tools"><p>{status === "loading" ? "저당 제품을 불러오는 중" : <><b>{filtered.length}</b>개의 저당 제품</>}</p><div className="catalog-sort"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="제품 정렬"><option>추천순</option><option>당류 낮은순</option><option>열량 낮은순</option></select></div></header>
+          <header className="catalog-tools"><p>{status === "loading" ? "저당 제품을 불러오는 중" : status === "mock" ? "저당 제품 목록" : sugarFilter !== "전체" || sweetener !== "전체" || personalOnly ? "선택한 조건의 제품" : <><b>{total.toLocaleString()}</b>개의 저당 제품</>}</p><div className="catalog-sort"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="제품 정렬"><option>추천순</option><option>당류 낮은순</option><option>열량 낮은순</option></select></div></header>
           {activeFilters.length > 0 && <div className="active-filter-summary" aria-label="적용된 필터"><span>적용한 조건</span>{activeFilters.map((item) => <b key={item}>{item}</b>)}<button type="button" onClick={resetFilters}>모두 지우기</button></div>}
-          {status === "mock" && <div className="inline-service-notice" role="status"><div><b>서버에서 제품을 불러오지 못했어요.</b><span>지금은 준비된 제품 목록을 보여드려요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
-          {status === "loading" && <div className="catalog-loading" aria-live="polite"><i /><i /><i /><span>저당픽을 불러오고 있어요.</span></div>}
+          {status === "mock" && <div className="inline-service-notice" role="status"><div><b>제품 목록을 잠시 불러오지 못했어요.</b><span>잠시 후 다시 시도해 주세요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
+          {status === "loading" && <div className="catalog-loading" aria-live="polite"><i /><i /><i /><span>저당 제품을 불러오고 있어요.</span></div>}
           <div className="product-feed">
             {status !== "loading" && filtered.map((product) => {
               const key = product.backendId ?? product.slug;
@@ -178,7 +197,7 @@ function ProductFeedContent() {
 
 export function ProductFeed() {
   return (
-    <Suspense fallback={<main className="catalog-page product-catalog page-wrap"><div className="catalog-loading" aria-live="polite"><i /><i /><i /><span>저당픽을 불러오고 있어요.</span></div></main>}>
+    <Suspense fallback={<main className="catalog-page product-catalog page-wrap"><div className="catalog-loading" aria-live="polite"><i /><i /><i /><span>저당 제품을 불러오고 있어요.</span></div></main>}>
       <ProductFeedContent />
     </Suspense>
   );

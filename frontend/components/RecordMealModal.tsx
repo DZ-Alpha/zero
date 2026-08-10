@@ -71,7 +71,7 @@ const mockVisionFood: FoodItem = {
   category: "사진으로 계산",
   sugar: 18.5,
   calories: 430,
-  note: "개발 목업에서 사진 속 제품을 인식한 결과예요.",
+  note: "사진에서 가까운 음식을 찾은 결과예요.",
   href: "/diet",
   nutritionAvailable: true,
 };
@@ -120,7 +120,7 @@ const meals: MealType[] = ["아침", "점심", "저녁", "간식"];
 const sourceTabs: { id: Source; label: string }[] = [
   { id: "photo", label: "사진 입력" },
   { id: "recipe", label: "레시피" },
-  { id: "product", label: "저당제품" },
+  { id: "product", label: "저당 제품" },
   { id: "favorite", label: "즐겨찾기" },
 ];
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -139,7 +139,7 @@ function sugarText(value: number) {
 }
 
 function visibleKind(kind: FoodItem["kind"]) {
-  return kind === "식품" ? "저당제품" : kind;
+  return kind === "식품" ? "저당 제품" : kind;
 }
 
 export function RecordMealModal({

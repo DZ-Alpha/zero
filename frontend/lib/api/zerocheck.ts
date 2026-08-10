@@ -45,6 +45,8 @@ export type RecipeDetailResponse = RecipeListItem & {
     type?: string;
     sugarG?: number | null;
     kcal?: number | null;
+    baseSugarG?: number | null;
+    baseKcal?: number | null;
   }>;
 };
 
@@ -401,20 +403,24 @@ export function replaceUserPreferences(token: string, payload: {
   });
 }
 
-export function getRecipes(page = 1, search?: string) {
+export function getRecipes(page = 1, search?: string, sort?: string, eligible = false) {
   // 백엔드가 페이지네이션을 도입한 뒤에도(page/pageSize/total/hasNext) 이 함수는
   // page 파라미터 없이 항상 1페이지(20건)만 불러왔다 - 전체 1700여 건 중 20건만
   // 보이고 나머지는 화면에 절대 안 나오던 원인 (무한스크롤은 이미 받아온 20건
   // 안에서만 더 보여주는 클라이언트 로직이라, 서버에 다음 페이지를 요청하지
   // 않았다). useRecipeCatalog가 hasNext를 보고 다음 page를 이 함수로 다시 부른다.
   return apiRequest<{ recipes: RecipeListItem[]; page: number; pageSize: number; total: number; hasNext: boolean }>(
-    query("/recipes", { page, search: search?.trim() || undefined }),
+    query("/recipes", { page, search: search?.trim() || undefined, sort, eligible }),
     { cache: "default" },
   );
 }
 
 export function getRecipeDetail(id: number) {
   return apiRequest<RecipeDetailResponse>(`/recipes/${id}`, { cache: "default" });
+}
+
+export function getRelatedRecipes(id: number) {
+  return apiRequest<{ recipes: RecipeListItem[] }>(`/recipes/${id}/related`, { cache: "default" });
 }
 
 export function searchProducts(values: {
