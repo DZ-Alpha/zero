@@ -23,6 +23,7 @@ from app.services.user_store import (
 
 logger = logging.getLogger("app.user")
 
+# 사용자 라우트는 인증 상태와 계정 정리 흐름의 단일 진입점이다.
 router = APIRouter(prefix="/user")
 
 

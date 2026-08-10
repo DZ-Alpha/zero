@@ -236,6 +236,7 @@ function MealSymbol({ meal }: { meal: MealType }) {
   );
 }
 
+// 홈 화면은 로그인·목업 상태를 같은 흐름에서 다뤄 웹과 모바일을 함께 유지한다.
 export function HomeDashboard() {
   const { ready: authReady, signedIn, token, isMockSession } = useAuthSession();
   const remoteGauge = useDailyGauge(token);
