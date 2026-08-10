@@ -180,7 +180,7 @@ function ProductFeedContent() {
               return (
               <article className="product-feed-card" key={key}>
                 <Link href={`/product/${key}`} className="product-feed-art"><div className="product-photo-card"><SafeImage src={product.image} alt={`${product.title} 제품 이미지`} fallbackLabel="제품 이미지 준비 중" /></div><span>{product.category}</span></Link>
-                <div><small>{product.brand}{product.nutritionAvailable === false ? "" : ` · ${product.serving} 기준`}</small><h2><Link href={`/product/${key}`}>{product.title}</Link></h2>{product.nutritionAvailable === false ? <p>영양정보는 상세에서 확인해 주세요.</p> : <p>당류 <b>{product.sugar}g</b> · {product.calories}kcal</p>}<em>{product.sweeteners[0] ?? "원재료 확인"}</em></div>
+                <div>{product.brand ? <small>{product.brand}</small> : null}<h2><Link href={`/product/${key}`}>{product.title}</Link></h2>{product.nutritionAvailable === false ? <p>영양정보는 상세에서 확인해 주세요.</p> : <p>당류 <b>{product.sugar}g</b> · {product.calories}kcal</p>}<em>{product.sweeteners[0] ?? "원재료 확인"}</em></div>
                 <FavoriteIconButton label={product.title} id={product.backendId} kind="product" initial={favoriteProductIds.has(String(product.backendId))} />
               </article>
             )})}

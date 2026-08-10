@@ -8,12 +8,14 @@ import { productBySlug, products, type ProductData } from "@/data/catalog";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useDailyGauge } from "@/hooks/useDailyGauge";
 import { getTodayKey, useDietRecords } from "@/hooks/useDietRecords";
+import { withParticle } from "@/lib/korean";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import {
   getProductAiSummary,
   getProductAlternatives,
   getProductDetail,
   getProductReviews,
+  getProductSweetenerInfo,
   ProductAlternativesResponse,
   ProductDetailResponse,
   ProductReviewsResponse,
@@ -22,6 +24,10 @@ import { renderInlineMarkdown } from "@/lib/inlineMarkdown";
 
 function format(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function normalizeServing(value: string) {
+  return value.replace(/(\d+)\.0+(\s*(?:g|mL|ml)\b)/g, "$1$2");
 }
 
 export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: string }) {
@@ -53,6 +59,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
   }), [catalogDetail, productId, slug]);
   const [liveDetail, setLiveDetail] = useState<ProductDetailResponse | null>(null);
   const [liveSummary, setLiveSummary] = useState<string | null>(null);
+  const [liveSweetenerInfo, setLiveSweetenerInfo] = useState<string | null>(null);
   const [alternativeResult, setAlternativeResult] = useState<ProductAlternativesResponse | null>(null);
   const [reviewResult, setReviewResult] = useState<ProductReviewsResponse | null>(null);
   const [loading, setLoading] = useState(Boolean(productId));
@@ -101,13 +108,15 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
 
   useEffect(() => {
     setLiveSummary(null);
+    setLiveSweetenerInfo(null);
     if (!productId) return;
     let active = true;
 
-    // 단맛을 낸 원재료 섹션은 AI 요약(gammi-info)을 뺐다(2026-07-31 요청) -
-    // 원재료명 기반 고정 문구만 쓰므로 더 이상 호출하지 않는다.
     getProductAiSummary(productId).then((summary) => {
       if (active) setLiveSummary(summary?.["ai-oneline"] ?? null);
+    }).catch(() => {});
+    getProductSweetenerInfo(productId).then((summary) => {
+      if (active) setLiveSweetenerInfo(summary?.["gammi-info"] ?? null);
     }).catch(() => {});
 
     return () => {
@@ -120,7 +129,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     title: liveDetail?.name || fallbackDetail.title,
     brand: liveDetail?.brand || fallbackDetail.brand,
     category: liveDetail?.category || fallbackDetail.category,
-    serving: liveDetail?.serving || fallbackDetail.serving,
+    serving: normalizeServing(liveDetail?.serving || fallbackDetail.serving),
     calories: liveDetail?.cal ?? fallbackDetail.calories,
     sugar: liveDetail?.dang ?? fallbackDetail.sugar,
     protein: liveDetail?.danb ?? fallbackDetail.protein,
@@ -135,13 +144,24 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
     .concat(products.filter((product) => product.slug !== detail.slug))
     .slice(0, 3);
   const hasAlternatives = alternativeResult?.status === "AVAILABLE" && alternativeResult.alternatives.length > 0;
-  const sweetenerTitle = detail.sweeteners.length > 0 ? `${detail.sweeteners[0]}을(를) 사용했어요.` : "비슷한 제품과 성분을 나란히 볼까요?";
+  const hasSweetenerInfo = Boolean(liveSweetenerInfo || detail.sweeteners.length > 0);
+  const sweetenerTitle = detail.sweeteners.length > 0 ? `${withParticle(detail.sweeteners[0], "을")} 사용했어요.` : "이 제품에 사용된 감미료를 확인했어요.";
   const encouragements = [
     ["오늘도 건강한 선택!", "내 몸이 가벼워지는 시간이에요 🌱"],
     ["잘 골랐어요!", "작은 선택 하나가 오늘의 좋은 흐름을 만들어요."],
     ["가볍게 이어가는 중!", "완벽함보다 꾸준한 선택이 더 오래 남아요."],
   ] as const;
   const encouragement = encouragements[[...detail.title].reduce((sum, char) => sum + char.charCodeAt(0), 0) % encouragements.length];
+  const productInsight = detail.sugar === 0
+    ? `${detail.serving} 기준 당류 0g이에요. 같은 종류의 제품과 열량·원재료까지 나란히 보면 선택이 더 또렷해져요.`
+    : detail.sugar <= 3
+      ? `${detail.serving} 기준 당류 ${format(detail.sugar)}g으로 확인돼요. 먹는 양을 함께 기록하면 내 하루 기준에서 더 정확하게 볼 수 있어요.`
+      : `${detail.serving} 기준 당류 ${format(detail.sugar)}g이에요. 한 번에 먹는 양과 오늘 기록을 함께 보면 부담을 가늠하기 쉬워요.`;
+  const promotionHeadline = liveSummary || (detail.sugar === 0
+    ? "단맛은 즐기고, 당류는 0g으로 가볍게."
+    : detail.sugar <= 3
+      ? "맛의 만족은 그대로, 당류 부담은 한결 가볍게."
+      : "먹는 만큼 알고, 오늘의 선택은 더 가볍게.");
   const todayRecords = recordsByDate[getTodayKey()] ?? [];
   const currentSugar = Math.round((todayRecords.filter((item) => item.source !== "server").reduce((sum, item) => sum + item.sugar, 0) + Number(remoteGauge?.sugar ?? 0) + Number.EPSILON) * 100) / 100;
   const currentCalories = todayRecords.filter((item) => item.source !== "server").reduce((sum, item) => sum + item.calories, 0) + Number(remoteGauge?.cal ?? 0);
@@ -171,7 +191,7 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
         <div className="product-detail-photo"><SafeImage src={detail.image} alt={`${detail.title} 제품 이미지`} loading="eager" fallbackLabel="제품 이미지 준비 중" /></div>
         <div className="product-detail-copy">
           <h1>{detail.title}</h1>
-          <p>{liveSummary && <span className="ai-summary-badge">AI 요약</span>}{renderInlineMarkdown(detail.summary)}</p>
+          <p>{renderInlineMarkdown(fallbackDetail.summary)}</p>
           <div className="product-key-nutrients"><div><span>당류</span><strong>{format(detail.sugar)}g</strong></div><div><span>열량</span><strong>{format(detail.calories)}kcal</strong></div><div><span>단백질</span><strong>{format(detail.protein)}g</strong></div><div><span>탄수화물</span><strong>{format(detail.carbs)}g</strong></div></div>
           <FavoriteButton label={detail.title} id={productId} kind="product" checkInitial />
         </div>
@@ -187,21 +207,23 @@ export function ProductDetail({ slug = "lotte-cinema-zero-popcorn" }: { slug?: s
       <section className="personal-ai-note wrap">
         {token ? (
           <>
-            <div><p className="eyebrow">{encouragement[0]}</p><h2>{encouragement[1]}</h2></div>
+            <div><p className="eyebrow">{liveSummary ? "당당 AI가 읽은 한마디" : encouragement[0]}</p><h2>{renderInlineMarkdown(promotionHeadline)}</h2></div>
             <div><p>{detail.title}을 선택하면 오늘 당류는 {format(todaySugar)}g이에요. 먹은 양에 맞춰 기록하면 내 흐름을 더 정확히 볼 수 있어요.</p><div className="personal-ai-metrics"><span>당류 목표의 {todayRate}%</span><span>칼로리 목표의 {calorieRate}%</span></div></div>
           </>
         ) : (
-          <div><p className="eyebrow">가볍게 고르는 습관</p><h2>제품을 비교한 것부터 좋은 시작이에요.</h2><p><Link href="/login">내 기록과 함께 보기 →</Link></p></div>
+          <>
+            <div><p className="eyebrow">{liveSummary ? "당당 AI가 읽은 한마디" : "당당이 고른 한마디"}</p><h2>{renderInlineMarkdown(promotionHeadline)}</h2></div>
+            <div><p>{productInsight}</p><p><Link href="/login">로그인하고 내 하루 기준으로 보기 →</Link></p></div>
+          </>
         )}
       </section>
 
-      <section className="ingredient-story wrap">
-        <article>
+      <section className={`ingredient-story wrap${hasSweetenerInfo ? "" : " is-analysis-only"}`}>
+        {hasSweetenerInfo && <article>
           <p className="eyebrow">단맛을 낸 원재료</p>
           <h2>{sweetenerTitle}</h2>
-          <p>{renderInlineMarkdown(detail.sweeteners.length > 0 ? `${detail.sweeteners.join(", ")}이(가) 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.` : "같은 종류의 제품을 열어 당류와 원재료 구성을 함께 비교해보세요.")}</p>
-          <Link href="/search">다른 제품과 비교하기 →</Link>
-        </article>
+          <p>{renderInlineMarkdown(liveSweetenerInfo || `${withParticle(detail.sweeteners.join(", "), "이")} 원재료명에 들어 있어요. 이름만 보기보다 먹는 양과 전체 영양성분을 함께 확인해 주세요.`)}</p>
+        </article>}
         <div className="personal-product-analysis">
           <p className="eyebrow">오늘 기록을 바탕으로 한 안내</p>
           {token ? (

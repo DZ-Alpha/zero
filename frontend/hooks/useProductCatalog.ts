@@ -16,6 +16,10 @@ function productCategory(value?: string | null, fallback?: ProductCategory): Pro
   return matched?.label ?? fallback ?? "가공식품";
 }
 
+function normalizeServing(value: string) {
+  return value.replace(/(\d+)\.0+(\s*(?:g|mL|ml)\b)/g, "$1$2");
+}
+
 function toProductCard(item: ProductSearchItem): ProductData {
   const fallback = mockProducts.find((product) => product.backendId === item.id);
   const brand = item.brand || item.desc || fallback?.brand || "";
@@ -32,7 +36,7 @@ function toProductCard(item: ProductSearchItem): ProductData {
     brand,
     maker: fallback?.maker ?? brand,
     category: productCategory(item.category, fallback?.category),
-    serving: item.serving ?? fallback?.serving ?? "제품 표시량",
+    serving: normalizeServing(item.serving ?? fallback?.serving ?? "제품 표시량"),
     calories: item.calories ?? fallback?.calories ?? 0,
     sugar: item.sugar ?? fallback?.sugar ?? 0,
     protein: fallback?.protein ?? 0,

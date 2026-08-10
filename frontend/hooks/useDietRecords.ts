@@ -26,6 +26,7 @@ export type DietRecord = {
 export type DietRecordsByDate = Record<string, DietRecord[]>;
 
 export const DIET_RECORDS_KEY = "dangdang-diet-records-v1";
+const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === "1";
 const LEGACY_CALENDAR_KEY = "dangdang-calendar-records";
 const RECORDS_CHANGED_EVENT = "dangdang-diet-records-change";
 // 저장/삭제가 서버에 실제로 반영된 뒤 쏘는 신호 — Home/캘린더처럼 각자 별도
@@ -77,7 +78,7 @@ function createDayRecords(monthIndex: number, day: number): DietRecord[] {
     ? day % 8 === 0 || day === 13
     : monthIndex === 1
       ? day > 16 || [3, 9, 12].includes(day)
-      : true;
+      : day > 10 || [4, 7].includes(day);
 
   if (isEmpty) return [];
 
@@ -138,19 +139,26 @@ function readStoredRecords() {
   const storageKey = subject ? `${DIET_RECORDS_KEY}:user:${String(subject)}` : DIET_RECORDS_KEY;
 
   // 실제 계정이 없는 상태에서는 과거 데모·게스트 기록을 사용자 기록처럼 보여주지 않는다.
-  if (!subject) return {};
+  if (!subject && !MOCK_MODE) return {};
 
   const stored = window.localStorage.getItem(storageKey);
   if (stored) {
     try {
-      return JSON.parse(stored) as DietRecordsByDate;
+      const parsed = JSON.parse(stored) as DietRecordsByDate;
+      if (MOCK_MODE && !Object.values(parsed).some((items) => items.length > 0)) {
+        const seeded = createSeedRecords();
+        window.localStorage.setItem(storageKey, JSON.stringify(seeded));
+        return seeded;
+      }
+      return parsed;
     } catch {
       window.localStorage.removeItem(storageKey);
     }
   }
 
-  window.localStorage.setItem(storageKey, JSON.stringify({}));
-  return {};
+  const initial = MOCK_MODE ? createSeedRecords() : {};
+  window.localStorage.setItem(storageKey, JSON.stringify(initial));
+  return initial;
 }
 
 function recordsStorageKey() {

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { RecipeCover } from "@/components/RecipeCover";
 import { SafeImage } from "@/components/SafeImage";
-import { recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
+import { productBySlug, recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { getRecipeDetail, getRecipeSubstitutes, getRelatedRecipes, RecipeDetailResponse, RecipeListItem, RecipeSubstituteResponse } from "@/lib/api/zerocheck";
@@ -124,7 +124,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
     // 필요한 필드(image/sugar/calories)를 다 주므로 카탈로그 조회 없이 바로 쓰고,
     // 매칭이 진짜 없으면(재료 자체에 대체 상품이 없는 레시피) 빈 상태를 그대로 보여준다
     // — 무관한 고정 상품 3개를 계속 채워 넣는 게 오히려 혼란을 줬다.
-    return (liveSubstitutes?.substitutes ?? [])
+    const liveProducts = (liveSubstitutes?.substitutes ?? [])
       .flatMap((group) => group.products)
       .filter((item, index, list) => list.findIndex((other) => other.productId === item.productId) === index)
       .map((item) => ({
@@ -136,7 +136,11 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
         calories: item.calories ?? 0,
       }))
       .slice(0, 3);
-  }, [liveSubstitutes]);
+    if (liveProducts.length > 0) return liveProducts;
+    if (process.env.NEXT_PUBLIC_MOCK_MODE !== "1" || live || detail.slug !== "perilla-low-sugar-jeyuk") return [];
+    const product = productBySlug["nuts-green-low-sugar-gochujang"];
+    return product ? [{ id: product.backendId ?? product.slug, title: product.title, image: product.image, serving: product.serving, sugar: product.sugar, calories: product.calories }] : [];
+  }, [detail.slug, live, liveSubstitutes]);
   const substitutesLoaded = liveSubstitutes !== null;
   const similar = useMemo(() => {
     if (relatedLive.length > 0) {
@@ -158,9 +162,19 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
   const changedIngredients = (live?.ingredients ?? []).filter((ingredient) =>
     ingredient.baseSugarG != null && ingredient.sugarG != null && ingredient.baseSugarG > ingredient.sugarG,
   );
-  const comparisonReady = detail.comparisonStatus === "completed"
+  const mockComparison = process.env.NEXT_PUBLIC_MOCK_MODE === "1" && !live && detail.slug === "perilla-low-sugar-jeyuk";
+  const comparisonRows = (liveSubstitutes?.substitutes ?? []).filter((group) => group.products.length > 0).slice(0, 3).map((group) => {
+    const ingredient = live?.ingredients?.find((item) => item.id === group.ingredientId);
+    const product = group.products[0];
+    return { key: group.ingredientId, ingredientName: group.ingredientName, baseSugar: ingredient?.baseSugarG ?? null, productName: product.name, sugar: ingredient?.sugarG ?? product.sugar ?? 0, image: product.image ?? "" };
+  });
+  if (mockComparison && comparisonRows.length === 0) {
+    const product = productBySlug["nuts-green-low-sugar-gochujang"];
+    comparisonRows.push({ key: -1, ingredientName: "볶음고추장", baseSugar: 9.5, productName: "넛츠그린 저당 고추장", sugar: 3, image: product?.image ?? "" });
+  }
+  const comparisonReady = mockComparison || (detail.comparisonStatus === "completed"
     && detail.comparisonSugar - detail.estimatedSugar >= 0.1
-    && (changedIngredients.length > 0 || (liveSubstitutes?.substitutes.some((group) => group.products.length > 0) ?? false));
+    && (changedIngredients.length > 0 || (liveSubstitutes?.substitutes.some((group) => group.products.length > 0) ?? false)));
   const matchedAllergens = (profile.allergens ?? []).filter((allergen) =>
     detail.ingredients.some((ingredient) =>
       ingredient.replace(/\s/g, "").includes(allergen.replace(/\s/g, "")),
@@ -202,14 +216,12 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
             <div className="compare-bars">
               <div><span>일반 조리</span><i><b style={{ width: "100%" }} /></i><strong>당류 {detail.comparisonSugar}g · {detail.comparisonCalories}kcal</strong></div>
               <div className="better"><span>이 레시피</span><i><b style={{ width: `${Math.max(4, Math.round((detail.estimatedSugar / detail.comparisonSugar) * 100))}%` }} /></i><strong>당류 {detail.estimatedSugar}g · {detail.estimatedCalories}kcal</strong></div>
-              <p><b>{Math.round(((detail.comparisonSugar - detail.estimatedSugar) / detail.comparisonSugar) * 100)}%</b> 당류를 덜었어요</p>
             </div>
             <div className="recipe-swap-code" aria-label="당류를 줄인 재료 선택">
-              {(liveSubstitutes?.substitutes ?? []).filter((group) => group.products.length > 0).slice(0, 3).map((group) => {
-                const ingredient = live?.ingredients?.find((item) => item.id === group.ingredientId);
-                const product = group.products[0];
-                return <article key={group.ingredientId}><small>바꿔 담은 재료</small><strong>{group.ingredientName}</strong><p><span>일반 {ingredient?.baseSugarG ?? "-"}g</span><i aria-hidden="true">→</i><b>{product.name}</b><em>{ingredient?.sugarG ?? product.sugar ?? 0}g</em></p></article>;
-              })}
+              {comparisonRows.map((row) => <article key={row.key}>
+                <div className="recipe-swap-photo"><SafeImage src={row.image} alt={`${row.productName} 제품`} fallbackLabel="제품" /></div>
+                <div><small>바꿔 담은 재료</small><strong>{row.ingredientName}</strong><p><span>일반 {row.baseSugar ?? "-"}g</span><i aria-hidden="true">→</i><b>{row.productName}</b><em>{row.sugar}g</em></p></div>
+              </article>)}
             </div>
           </div>
         </section>}

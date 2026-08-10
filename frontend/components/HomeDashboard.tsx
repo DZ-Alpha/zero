@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { RecordMealModal } from "@/components/RecordMealModal";
 import { SafeImage } from "@/components/SafeImage";
-import { ServiceBanner } from "@/components/ServiceBanner";
 import { LoginPromptDialog } from "@/components/SystemFeedback";
 import { products, recipes } from "@/data/catalog";
 import { mockRoomsHome } from "@/data/mockRooms";
@@ -482,7 +481,6 @@ export function HomeDashboard() {
         </div>
       </section>
 
-      <ServiceBanner />
 
       {authReady && !signedIn && (
         <aside className="guest-preview-notice wrap" aria-label="로그인 전 미리보기 안내">

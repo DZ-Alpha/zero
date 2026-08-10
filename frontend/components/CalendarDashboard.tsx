@@ -84,6 +84,9 @@ export function CalendarDashboard() {
   const recordedDays = monthData.filter((item) => item.status !== "empty").length;
   const withinGoalDays = monthData.filter((item) => item.status === "good" || item.status === "near").length;
   const emptyDays = days - recordedDays;
+  const goodDays = monthData.filter((item) => item.status === "good").length;
+  const nearDays = monthData.filter((item) => item.status === "near").length;
+  const overDays = monthData.filter((item) => item.status === "over").length;
   const totalSugar = roundOne(monthData.reduce((sum, item) => sum + item.sugar, 0));
   const averageSugar = recordedDays > 0 ? Math.round(totalSugar / recordedDays) : 0;
   const cubes = Math.round(totalSugar / 5);
@@ -289,10 +292,10 @@ export function CalendarDashboard() {
             </div>
 
             <div className="monthly-visuals">
-              <article className="habit-map"><header><div><small>기록 습관</small><h3>{recordedDays}일의 발자국</h3></div><span>{emptyDays}일은 쉬어간 날</span></header><div>{monthData.map((item) => <i className={item.status} title={`${item.day}일 ${item.status === "empty" ? "기록 없음" : `당류 ${item.sugar}g`}`} key={item.day} />)}</div></article>
-              <article className="goal-ring-card"><div className="goal-ring" style={{ "--progress": `${progress * 3.6}deg` } as CSSProperties}><span><b>{progress}%</b>목표 안</span></div><div><small>기록한 날 중</small><h3>{withinGoalDays}일은 목표 안</h3><p>평균 {averageSugar}g · 각설탕 약 {cubes}개 분량</p></div></article>
-              <article className="sugar-trend"><header><div><small>당류 흐름</small><h3>하루 목표와 나란히 봐요</h3></div><span>목표 {sugarGoal}g</span></header><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="이번 달 당류 변화"><line x1="0" y1="30.4" x2="100" y2="30.4" /><polyline points={chartPoints} /></svg></article>
-              <article className="growth-card"><small>이번 달 한마디</small><div aria-hidden="true"><i /><i /><i /></div><h3>{mostFrequentFood[1] > 1 ? `${mostFrequentFood[0]}와 함께 습관이 자랐어요.` : "다시 적은 하루가 가장 좋은 시작이에요."}</h3></article>
+              <article className="habit-map"><header><div><small>언제 기록했는지</small><h3>{recordedDays}일의 기록이 모였어요</h3></div><span>최장 {longestStreak}일 연속</span></header><div>{monthData.map((item) => <i className={item.status} title={`${item.day}일 ${item.status === "empty" ? "기록 없음" : `당류 ${item.sugar}g`}`} key={item.day} />)}</div><ul className="habit-legend"><li><i className="good" />목표 안<b>{goodDays}일</b></li><li><i className="near" />아슬했던 날<b>{nearDays}일</b></li><li><i className="over" />넘긴 날<b>{overDays}일</b></li><li><i />아직 빈 날<b>{emptyDays}일</b></li></ul><p>빈칸을 채우는 것보다 다시 이어 쓴 날을 기억해요.</p></article>
+              <article className="goal-ring-card"><div className="goal-ring" style={{ "--progress": `${progress * 3.6}deg` } as CSSProperties}><span><b>{progress}%</b>목표 안</span></div><div><small>기록한 날의 결과</small><h3>{withinGoalDays}일 모두 목표 안</h3><p>하루 평균 {averageSugar}g, 목표보다 {Math.max(0, roundOne(sugarGoal - averageSugar))}g 가벼웠어요.</p><dl className="goal-ring-stats"><div><dt>기록한 날</dt><dd>{recordedDays}일</dd></div><div><dt>하루 평균</dt><dd>{averageSugar}g</dd></div><div><dt>하루 목표</dt><dd>{sugarGoal}g</dd></div></dl></div></article>
+              <article className="sugar-trend"><header><div><small>날짜별 당류</small><h3>오르내려도 목표선 안이에요</h3></div><span>하루 목표 {sugarGoal}g</span></header><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="이번 달 당류 변화"><line x1="0" y1="30.4" x2="100" y2="30.4" /><polyline points={chartPoints} /></svg><p>기록한 날 평균은 {averageSugar}g이에요. 높은 날 다음에도 기록을 이어간 점이 좋아요.</p></article>
+              <article className="growth-card"><small>다음 기록 제안</small><strong>{bestMeal.meal}</strong><h3>{Number.isFinite(bestMeal.average) ? `${bestMeal.meal}은 평균 ${roundOne(bestMeal.average)}g이었어요.` : "한 끼부터 가볍게 기록해보세요."}</h3><p>{mostFrequentFood[1] > 1 ? `${mostFrequentFood[0]} 메뉴처럼 자주 먹는 것부터 적으면 변화가 더 잘 보여요.` : "완벽하게 적기보다 오늘 먹은 한 가지부터 남겨보세요."}</p></article>
             </div>
 
             <div className="report-archive"><span>다른 달 기록</span>{monthOptions.map((item, index) => index !== month ? <button type="button" key={item.label} onClick={() => { setMonth(index); setSelectedDay(1); }}>{item.label} 보기</button> : null)}</div>

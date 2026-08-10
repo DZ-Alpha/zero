@@ -296,7 +296,9 @@ const fallbackRecipes: RecipeData[] = [
 ];
 
 export const recipes: RecipeData[] = generatedRecipeDatabase.length > 0
-  ? generatedRecipeDatabase as RecipeData[]
+  ? process.env.NEXT_PUBLIC_MOCK_MODE === "1"
+    ? [fallbackRecipes[0], ...(generatedRecipeDatabase as RecipeData[])]
+    : generatedRecipeDatabase as RecipeData[]
   : fallbackRecipes;
 
 export type ProductData = {
