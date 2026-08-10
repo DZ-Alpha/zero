@@ -5368,3 +5368,20 @@ body{overflow-x:hidden}
   .detail-products-band .compact-product-photo,
   .product-similar-band .compact-product-photo{height:104px}
 }
+
+/* 9. "당당 AI가 읽은 한마디"가 백엔드에서 내려오면 한 줄짜리 기본 문구보다 훨씬
+      길다. 그런데 헤드라인에 white-space:nowrap이 걸려 있어 1,150px짜리 한 줄이
+      되어 초록 배너를 뚫고 나갔다. 줄바꿈을 허용하고 한글 어절 단위로 끊는다. */
+.personal-ai-note h2{
+  white-space:normal;
+  word-break:keep-all;
+  overflow-wrap:break-word;
+  text-wrap:pretty;
+  font-size:clamp(20px,2.1vw,27px);
+  line-height:1.4;
+}
+.personal-ai-note>div:first-child{min-width:0}
+
+@media(max-width:700px){
+  .personal-ai-note h2{font-size:19px}
+}
