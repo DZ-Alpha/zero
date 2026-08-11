@@ -34,14 +34,18 @@ class FakeMember:
 
 
 class CallCounter:
-    """get_meal_records 호출 횟수와 넘어온 user_ids를 기록한다."""
+    """get_meal_records 호출 횟수와 넘어온 user_ids·include_photos를 기록한다."""
 
     def __init__(self, records: list[dict[str, object]] | None = None):
         self.calls: list[list[int]] = []
+        self.photo_flags: list[bool] = []
         self._records = records or []
 
-    async def __call__(self, user_ids: list[int], record_date: date) -> list[dict[str, object]]:
+    async def __call__(
+        self, user_ids: list[int], record_date: date, *, include_photos: bool = True
+    ) -> list[dict[str, object]]:
         self.calls.append(list(user_ids))
+        self.photo_flags.append(include_photos)
         return [r for r in self._records if r["userId"] in set(user_ids)]
 
 
@@ -190,6 +194,45 @@ async def test_summary_uses_this_rooms_own_week_slots(monkeypatch, three_rooms):
     # 다른 방은 이 방의 슬롯을 물려받지 않는다.
     assert summaries[1]["myParticipationDays"] == 0
     assert summaries[1]["monthlyRecordRate"] == 0.0
+
+
+async def test_home_summaries_do_not_ask_diet_to_sign_photos(monkeypatch, three_rooms):
+    """홈 방 요약은 "오늘 기록한 사람 집합"과 사람별 당류만 쓴다 - 사진 서명
+    URL은 한 장도 안 쓰면서 받아왔다. 왕복을 한 번으로 줄인 뒤로는 그 한 번에
+    모든 방의 멤버가 몰리므로, 사진을 켜두면 오히려 한 응답에 실리는 사진 수가
+    방 수만큼 늘어난다 - 배치와 이 플래그를 같이 가야 하는 이유."""
+    counter = CallCounter([{"userId": uid, "sugar": 10.0} for uid in range(1, 10)])
+    members_by_room = {room.id: members for room, members in three_rooms}
+
+    monkeypatch.setattr(room_aggregation, "_INCLUDE_PHOTOS_WHERE_UNUSED", False)
+    monkeypatch.setattr(room_aggregation, "get_meal_records", counter)
+    monkeypatch.setattr(room_aggregation, "_active_members_by_room", _fake_members(members_by_room))
+    monkeypatch.setattr(room_aggregation, "_record_slots_by_room", _fake_slots({}))
+    monkeypatch.setattr(room_aggregation.room_store, "get_member_invite_enabled_bulk", _fake_invite_flags())
+
+    my_rooms = [(room, members[0]) for room, members in three_rooms]
+    await room_aggregation.compute_room_summaries(None, my_rooms, viewer_id=1)
+
+    assert counter.photo_flags == [False], "홈 요약이 안 쓰는 사진 서명을 여전히 요청하고 있다"
+
+
+async def test_photo_skipping_can_be_switched_back_off(monkeypatch, three_rooms):
+    """ROOMS_SKIP_UNUSED_PHOTOS를 끄면 예전처럼 전부 사진을 받아온다 -
+    모니터링팀이 부하테스트에서 이 값만 뒤집어 A/B를 재기로 했으므로, 되돌리는
+    쪽도 실제로 동작해야 한다."""
+    counter = CallCounter([])
+    members_by_room = {room.id: members for room, members in three_rooms}
+
+    monkeypatch.setattr(room_aggregation, "_INCLUDE_PHOTOS_WHERE_UNUSED", True)
+    monkeypatch.setattr(room_aggregation, "get_meal_records", counter)
+    monkeypatch.setattr(room_aggregation, "_active_members_by_room", _fake_members(members_by_room))
+    monkeypatch.setattr(room_aggregation, "_record_slots_by_room", _fake_slots({}))
+    monkeypatch.setattr(room_aggregation.room_store, "get_member_invite_enabled_bulk", _fake_invite_flags())
+
+    my_rooms = [(room, members[0]) for room, members in three_rooms]
+    await room_aggregation.compute_room_summaries(None, my_rooms, viewer_id=1)
+
+    assert counter.photo_flags == [True]
 
 
 def test_average_sugar_ignores_non_numeric_and_other_rooms():

@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.room import Room
 from app.models.room_member import RoomMember
 from app.models.room_meal_thread import RoomMealThread
@@ -26,6 +27,16 @@ from app.services import room_store
 from app.services.diet_client import get_meal_records
 
 _KST = ZoneInfo("Asia/Seoul")
+
+# 이 모듈은 diet-service를 7곳에서 부르는데, 그중 사진을 실제로 화면에 쓰는 건
+# list_recent_activities(카드 대표 사진 1장)와 build_meal_slots(넘겨보기 캐러셀)
+# 두 곳뿐이다. 나머지 5곳(홈 방 요약 배치/단건 방 요약/멤버 목록/주간 랭킹/배지)은
+# sugar나 connectedItems만 읽으면서도 "사람 수 x 사진 수"만큼의 SigV4 서명 URL을
+# 받아 그대로 버리고 있었다. 홈 배치와 주간 랭킹은 여러 방의 멤버를 합쳐서 한 번에
+# 묻기 때문에(부하테스트 픽스처 기준 랭킹 77명) 인원이 가장 많이 몰리는 호출이면서
+# sugar 하나만 쓴다 - 왕복 횟수를 줄인 만큼 한 응답에 실리는 사진 수는 늘어난다.
+# 설정을 끄면 이 값이 True가 되어 예전 동작(전부 사진 포함)으로 되돌아간다.
+_INCLUDE_PHOTOS_WHERE_UNUSED = not settings.rooms_skip_unused_photos
 MEAL_TYPES_UPPER = ["BREAKFAST", "LUNCH", "DINNER", "SNACK"]
 _TO_FRONTEND_MEAL_TYPE = {"BREAKFAST": "breakfast", "LUNCH": "lunch", "DINNER": "dinner", "SNACK": "snack"}
 _TO_DB_MEAL_TYPE = {v: k for k, v in _TO_FRONTEND_MEAL_TYPE.items()}
@@ -153,8 +164,10 @@ async def compute_room_summaries(
     invite_enabled_by_room = await room_store.get_member_invite_enabled_bulk(db, room_ids)
 
     # 한 사용자가 여러 방에 속해도 오늘 기록은 같으므로 합쳐서 한 번만 묻는다.
+    # 이 응답에서 쓰는 건 "오늘 기록한 사람 집합"과 사람별 당류뿐이라 사진은 필요 없다 -
+    # 방을 합쳐 부르는 만큼 여기 실리는 인원이 가장 많아서 끄는 효과도 그만큼 크다.
     all_user_ids = sorted({m.user_id for members in members_by_room.values() for m in members})
-    records_today = await get_meal_records(all_user_ids, today)
+    records_today = await get_meal_records(all_user_ids, today, include_photos=_INCLUDE_PHOTOS_WHERE_UNUSED)
     sugars_by_user = _sugars_by_user(records_today)
     recorded_user_ids = {r["userId"] for r in records_today}
 
@@ -192,7 +205,8 @@ async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMem
     # 상세를 열지 않고도 "오늘 몇 명 기록했는지"를 보여줘야 하므로, 오늘 하루는
     # diet-service 원본을 직접 조회해 정확한 값을 쓴다(주간 기록률은 기존처럼
     # thread 근사치를 유지 - 매번 diet-service를 왕복하면 느려짐).
-    records_today = await get_meal_records(user_ids, today)
+    # 배치 경로와 같은 이유로 사진은 안 쓴다(아래 _build_room_summary 인자 참고).
+    records_today = await get_meal_records(user_ids, today, include_photos=_INCLUDE_PHOTOS_WHERE_UNUSED)
 
     return _build_room_summary(
         room=room,
@@ -257,7 +271,8 @@ async def build_room_members(db: AsyncSession, room: Room, members: list[RoomMem
     week_days_elapsed = (min(today, week_end) - week_start).days + 1
     thread_map = await _record_counts_for_range(db, room.id, user_ids, week_start, week_end)
 
-    records_today = await get_meal_records(user_ids, today)
+    # 멤버 목록은 사람별 오늘 당류 합계만 쓴다 - 사진은 방 상세의 끼니 슬롯에서 따로 받는다.
+    records_today = await get_meal_records(user_ids, today, include_photos=_INCLUDE_PHOTOS_WHERE_UNUSED)
     sugar_today_by_user: dict[int, float] = {}
     for record in records_today:
         uid = record["userId"]
@@ -486,7 +501,8 @@ async def list_weekly_ranking(
     # 오늘 기록은 같으므로 중복 호출할 이유가 없다.
     all_user_ids = sorted({m.user_id for _, members in qualified for m in members})
     sugars_by_user: dict[int, list[float]] = {}
-    for record in await get_meal_records(all_user_ids, today):
+    # 랭킹은 sugar 하나만 쓰는데 인원은 가장 많이 몰린다(부하테스트 픽스처 기준 77명).
+    for record in await get_meal_records(all_user_ids, today, include_photos=_INCLUDE_PHOTOS_WHERE_UNUSED):
         sugar = record.get("sugar")
         if isinstance(sugar, (int, float)):
             sugars_by_user.setdefault(record["userId"], []).append(float(sugar))
@@ -602,7 +618,9 @@ async def build_room_badges(
 
     records_by_date: dict[date, list[dict[str, object]]] = {}
     for d in {d for (_uid, d, _mt) in thread_map}:
-        records_by_date[d] = await get_meal_records(user_ids, d)
+        # 배지는 connectedItems의 source="recipe" 개수만 센다 - connectedItems는
+        # includePhotos와 무관하게 항상 내려오므로(서명 대상이 아님) 끌 수 있다.
+        records_by_date[d] = await get_meal_records(user_ids, d, include_photos=_INCLUDE_PHOTOS_WHERE_UNUSED)
 
     record_count_by_user: dict[int, int] = {uid: len(dates) for uid, dates in recorded_dates_by_user.items()}
     recipe_count_by_user: dict[int, int] = {}
