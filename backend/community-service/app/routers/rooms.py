@@ -63,10 +63,7 @@ async def get_rooms_home(
 ) -> dict[str, object]:
     my_rooms = await room_store.list_rooms_for_user(db, user.user_id)
     room_by_id = {room.id: room for room, _membership in my_rooms}
-    summaries = []
-    for room, membership in my_rooms:
-        summary = await room_aggregation.compute_room_summary(db, room, membership, user.user_id)
-        summaries.append(summary)
+    summaries = await room_aggregation.compute_room_summaries(db, my_rooms, user.user_id)
 
     activities, activities_cursor = await room_aggregation.list_recent_activities(db, user.user_id, None, today_only=True)
     # recentActivities는 "다른 멤버가 새로 올린 사진" 전용이라 내 기록을 뺀다 -

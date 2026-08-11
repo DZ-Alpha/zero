@@ -3,7 +3,7 @@ import secrets
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -147,6 +147,30 @@ async def get_member_invite_enabled(db: AsyncSession, room_id: uuid.UUID) -> boo
         return bool(value) if value is not None else False
     except DBAPIError:
         return False
+
+
+async def get_member_invite_enabled_bulk(
+    db: AsyncSession, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, bool]:
+    """여러 방의 member_invite_enabled를 한 문장으로 읽는다 - 방 목록 화면이
+    방마다 위 함수를 부르면 방 수만큼 쿼리가 난다. 컬럼이 아직 없는 배포에서는
+    위 함수와 동일하게 전부 "꺼짐"으로 폴백하고, SAVEPOINT로 감싸 실패가 세션
+    나머지에 번지지 않게 한다(위 주석의 2026-07-31 장애 참고)."""
+    if not room_ids:
+        return {}
+    try:
+        async with db.begin_nested():
+            # IN + expanding bindparam - 배열 타입 추론에 기대지 않는다(asyncpg에서
+            # UUID 배열 바인딩이 어긋나면 DBAPIError로 떨어져 초대 권한이 조용히
+            # 전부 꺼진다).
+            stmt = text(
+                "SELECT id, member_invite_enabled FROM community.rooms WHERE id IN :room_ids"
+            ).bindparams(bindparam("room_ids", expanding=True))
+            result = await db.execute(stmt, {"room_ids": list(room_ids)})
+            enabled = {row.id: bool(row.member_invite_enabled) for row in result.all()}
+    except DBAPIError:
+        return {room_id: False for room_id in room_ids}
+    return {room_id: enabled.get(room_id, False) for room_id in room_ids}
 
 
 async def set_member_invite_enabled(db: AsyncSession, room_id: uuid.UUID, value: bool) -> bool:
