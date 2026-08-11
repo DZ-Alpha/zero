@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # diet-service의 동일 이름 설정과 값이 같아야 한다 — 그쪽 config.py 주석 참고.
     internal_service_secret: str = ""
 
+    # 2026-08-04 부하테스트 — 사진을 안 쓰는 호출부에서 includePhotos=false로
+    # diet-service를 부를지 여부. 끄면 예전처럼 모든 호출이 사진 서명 URL을
+    # 받아온다. 부하테스트에서 이 값만 뒤집어 A/B(rps·p95)를 재려고 남겨둔
+    # 스위치이고, 사진 서명이 병목이 아니라는 결과가 나오면 그때 스위치째
+    # 걷어내면 된다. 기본값 True — 실측 전이라도 안 쓰는 데이터를 만들 이유는 없다.
+    rooms_skip_unused_photos: bool = True
+
     @property
     def database_url(self) -> str:
         user = quote_plus(self.postgres_user)

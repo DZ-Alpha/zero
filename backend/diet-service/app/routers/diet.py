@@ -76,6 +76,30 @@ async def _photo_entry(log_id: uuid.UUID, object_key: str, photo_item_names: dic
     return {"imageUrl": image_url, "name": ", ".join(photo_item_names.get(log_id, [])) or "사진으로 기록한 식사"}
 
 
+async def _resolve_photo_entries(
+    photo_object_keys: dict[uuid.UUID, str],
+    photo_item_names: dict[uuid.UUID, list[str]],
+    include_photos: bool,
+) -> list[dict[str, str]]:
+    """includePhotos=false면 서명을 아예 건너뛴다 - 이 파라미터의 존재 이유다.
+    얌로그가 이 엔드포인트를 부르는 6곳 중 4곳(방 요약/멤버 목록/주간 랭킹/
+    배지 - community-service room_aggregation.py)은 사진을 한 장도 안 쓰고
+    sugar와 connectedItems만 읽는데, 그동안 그 4곳도 "사람 수 x 사진 수"만큼
+    SigV4 서명을 하고 그 URL을 JSON에 실어 보내고 있었다. 특히 주간 랭킹은
+    방 하나에 77명을 한 번에 넘기면서 sugar 하나만 쓴다.
+
+    connectedItems(레시피/저당픽 썸네일)는 서명 대상이 아니라 DB에 있는 값
+    그대로라 비용이 없으므로 includePhotos와 무관하게 항상 내려준다 - 배지
+    집계가 connectedItems의 source="recipe"를 세기 때문에, 이걸 같이 빼면
+    배지 호출부는 이 파라미터를 못 쓴다."""
+    if not include_photos:
+        return []
+    return list(await asyncio.gather(*(
+        _photo_entry(log_id, object_key, photo_item_names)
+        for log_id, object_key in photo_object_keys.items()
+    )))
+
+
 def _to_uuid(value: str, label: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
@@ -673,6 +697,7 @@ def _verify_internal_secret(x_internal_service_secret: str | None) -> None:
 async def internal_meal_records(
     userIds: str = Query(..., description="콤마로 구분된 user_id 목록"),
     date: str = Query(..., description="YYYY-MM-DD (Asia/Seoul 기준 날짜)"),
+    includePhotos: bool = Query(True, description="false면 업로드 사진 서명 URL을 만들지도, 내려주지도 않는다"),
     db: AsyncSession = Depends(get_db),
     x_internal_service_secret: str | None = Header(None),
 ) -> dict[str, object]:
@@ -751,10 +776,7 @@ async def internal_meal_records(
         # 사진 넘겨보기 캐러셀이 사진마다 맞는 이름을 보여줄 수 있게, 사진
         # 하나하나에 그 사진에서 인식된 음식 이름을 같이 실어 보낸다(이전엔
         # imageUrl만 있어서 프론트가 전부 같은 이름 하나로만 보여줬다).
-        photo_entries = await asyncio.gather(*(
-            _photo_entry(log_id, object_key, photo_item_names)
-            for log_id, object_key in photo_object_keys.items()
-        ))
+        photo_entries = await _resolve_photo_entries(photo_object_keys, photo_item_names, includePhotos)
         photo_urls = [entry["imageUrl"] for entry in photo_entries]
         ordered_photos: list[dict[str, object]] = (
             [{"source": "photo", "imageUrl": entry["imageUrl"], "name": entry["name"]} for entry in photo_entries]
