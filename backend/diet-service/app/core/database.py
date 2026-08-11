@@ -41,7 +41,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 # 2026-08-02 부하테스트 인계 — 컨테이너 재시작 구간(배포/재시작 직후 DB가 아직
 # 안 받는 순간)에 시작 시점 DB 연결이 한 번이라도 실패하면 그대로 죽어 fatal
-# CrashLoopBackOff가 됐다. 지수 백오프(1→2→4→8→16초, 5회)로 재시도한다 - DB
+# CrashLoopBackOff가 됐다. 지수 백오프(5회 시도, 사이 대기 1→2→4→8초 = 총 15초)로 재시도한다 - DB
 # 자체는 병목이 아니었음이 실측으로 확인됐고(최대 부하에서도 CPU 11.96m,
 # 연결 1/100), 문제는 순전히 타이밍이었다.
 async def run_with_retry(
