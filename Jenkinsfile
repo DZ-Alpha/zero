@@ -1,5 +1,12 @@
 pipeline {
     agent any
+    // 동시 빌드 금지. 같은 job이 겹쳐 돌면 Jenkins가 workspace를 복제(dang-backend-ci@2)하는데,
+    // 그 사본이 @tmp의 Trivy 캐시까지 통째로 복제해 디스크를 갉아먹었다(2026-08-11 루트 95%,
+    // @2@tmp만 6.9GB). 겹친 트리거는 큐에서 대기하고, 변경감지가 GIT_PREVIOUS_COMMIT 기준이라
+    // 다음 빌드가 그 사이 커밋까지 함께 처리한다 — 빌드 누락은 생기지 않는다.
+    options {
+        disableConcurrentBuilds()
+    }
     environment {
         REGISTRY = 'harbor.hizero.local'
         PROJECT  = 'dangdang-backend'
@@ -114,14 +121,38 @@ pipeline {
                             sh '''
                                 SHA=$(git rev-parse --short HEAD)
                                 docker build -t backend-${SVC}:${SHA} backend/${SVC}
-                                # backend/frontend/pipeline job이 동시에 전역 Trivy 캐시를
-                                # 열면 BoltDB lock timeout이 난다. Jenkins workspace별,
-                                # 서비스별 캐시로 분리해 실제 취약점만 게이트 실패로 본다.
-                                TRIVY_CACHE_DIR="${WORKSPACE}@tmp/trivy-cache/${SVC}"
+                                # backend/frontend/pipeline job이 동시에 같은 Trivy 캐시를 열면
+                                # "cache may be in use by another process"로 죽는다(2026-08-03 실제 발생).
+                                # 그래서 job 단위(=workspace 단위)로 캐시를 격리한다.
+                                # 서비스 단위로 더 쪼개지 않는 이유: 위 for 루프가 순차라 job 안에서는
+                                # 동시 접근이 구조적으로 없는데, ${SVC}로 나누면 1.2GB짜리 취약점 DB가
+                                # 서비스 수만큼 복제돼 9.2GB를 먹었다(2026-08-11 루트 95%).
+                                TRIVY_CACHE_DIR="${WORKSPACE}@tmp/trivy-cache"
                                 mkdir -p "${TRIVY_CACHE_DIR}"
-                                trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
-                                    --severity CRITICAL,HIGH --exit-code 1 \
-                                    --ignorefile .trivyignore --scanners vuln --quiet backend-${SVC}:${SHA}
+                                # 캐시 이상으로 죽은 경우에만 캐시를 버리고 1회 재시도한다.
+                                # 취약점 발견(exit 1)까지 재시도하면 1.2GB DB를 매번 다시 받게 되므로
+                                # 에러 문구로 구분한다. 재시도 후에도 실패하면 그게 진짜 결과.
+                                # 로그는 캐시 디렉터리 '밖'에 둔다 — 재시도 때 rm -rf에 같이 지워지면 안 됨.
+                                TRIVY_OUT="${WORKSPACE}@tmp/trivy-scan-${SVC}.log"
+                                if trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
+                                        --severity CRITICAL,HIGH --exit-code 1 \
+                                        --ignorefile .trivyignore --scanners vuln --quiet \
+                                        backend-${SVC}:${SHA} > "${TRIVY_OUT}" 2>&1; then
+                                    cat "${TRIVY_OUT}"
+                                else
+                                    cat "${TRIVY_OUT}"
+                                    if grep -qE 'unable to initialize .*cache|in use by another process' "${TRIVY_OUT}"; then
+                                        echo "Trivy 캐시 이상 감지 — 캐시를 버리고 1회 재시도한다"
+                                        rm -rf "${TRIVY_CACHE_DIR}"
+                                        mkdir -p "${TRIVY_CACHE_DIR}"
+                                        trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
+                                            --severity CRITICAL,HIGH --exit-code 1 \
+                                            --ignorefile .trivyignore --scanners vuln --quiet \
+                                            backend-${SVC}:${SHA}
+                                    else
+                                        exit 1
+                                    fi
+                                fi
                             '''
 
                             // 3) Harbor push
@@ -135,6 +166,11 @@ pipeline {
                                     docker push ${IMAGE}:${SHA}
                                     docker logout ${REGISTRY}
                                     echo "push 완료: ${IMAGE}:${SHA}"
+                                    # push가 끝나면 로컬 사본은 불필요하다 — 아래 승격 단계는 manifest의
+                                    # 태그만 바꾸고 로컬 이미지를 참조하지 않으며, 배포는 Harbor에서 pull한다.
+                                    # 안 지우면 커밋 SHA마다 350~400MB가 영구히 쌓인다(2026-08-11 이미지만 12.9GB).
+                                    # 레이어 캐시는 buildkit이 따로 들고 있어 다음 빌드 속도에는 영향이 없다.
+                                    docker rmi backend-${SVC}:${SHA} ${IMAGE}:${SHA} || true
                                 '''
                             }
 
@@ -408,6 +444,18 @@ pipeline {
                     }
                 } catch (err) {
                     echo "Slack 알림 스킵: credential 'slack-webhook' 없음 또는 오류(${err.message})"
+                }
+            }
+            // 빌드가 남긴 dangling 이미지와 오래된 빌드 캐시 정리. push 직후 rmi가 태그는 지우지만
+            // 실패한 빌드가 남긴 중간 레이어는 그대로 쌓인다(2026-08-11 빌드캐시 7.3GB).
+            // -a는 쓰지 않는다 — base 이미지까지 지워져 다음 빌드가 매번 재pull한다.
+            // try/catch는 위 ZAP archive와 같은 이유(체크아웃 실패 시 workspace 컨텍스트 없음).
+            script {
+                try {
+                    sh 'docker image prune -f || true'
+                    sh 'docker builder prune -f --filter "until=168h" || true'
+                } catch (err) {
+                    echo "Docker 정리 스킵: ${err.message}"
                 }
             }
         }
