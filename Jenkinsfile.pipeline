@@ -1,5 +1,10 @@
 pipeline {
     agent any
+    // 동시 빌드 금지(백엔드 Jenkinsfile과 같은 이유). 겹쳐 돌면 Jenkins가 workspace를 복제하면서
+    // @tmp의 Trivy 캐시까지 통째로 복제한다(2026-08-11 루트 95%).
+    options {
+        disableConcurrentBuilds()
+    }
     environment {
         REGISTRY = 'harbor.hizero.local'
     }
@@ -89,12 +94,32 @@ pipeline {
                         docker run --rm \
                             -v "$WORKSPACE/event-pipeline/tests:/app/tests:ro" \
                             ${LOCAL_IMAGE} python -m unittest discover -s tests -v
-                        # 다른 Jenkins job과 전역 Trivy 캐시 lock을 공유하지 않는다.
-                        TRIVY_CACHE_DIR="${WORKSPACE}@tmp/trivy-cache/event-pipeline"
+                        # 다른 Jenkins job과 Trivy 캐시 lock을 공유하지 않는다(job 단위 격리).
+                        # 경로에 대상 이름을 넣지 않는다 — 이 job은 대상이 하나뿐이고,
+                        # 대상별로 쪼개는 습관이 1.2GB DB 중복을 만든다(2026-08-11 루트 95%).
+                        TRIVY_CACHE_DIR="${WORKSPACE}@tmp/trivy-cache"
                         mkdir -p "${TRIVY_CACHE_DIR}"
-                        trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
-                            --severity CRITICAL,HIGH --exit-code 1 \
-                            --ignorefile .trivyignore --scanners vuln --quiet ${LOCAL_IMAGE}
+                        # 캐시 이상일 때만 캐시를 버리고 1회 재시도(취약점 발견까지 재시도하면
+                        # 1.2GB DB를 매번 다시 받게 되므로 에러 문구로 구분).
+                        TRIVY_OUT="${WORKSPACE}@tmp/trivy-scan-event-pipeline.log"
+                        if trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
+                                --severity CRITICAL,HIGH --exit-code 1 \
+                                --ignorefile .trivyignore --scanners vuln --quiet \
+                                ${LOCAL_IMAGE} > "${TRIVY_OUT}" 2>&1; then
+                            cat "${TRIVY_OUT}"
+                        else
+                            cat "${TRIVY_OUT}"
+                            if grep -qE 'unable to initialize .*cache|in use by another process' "${TRIVY_OUT}"; then
+                                echo "Trivy 캐시 이상 감지 — 캐시를 버리고 1회 재시도한다"
+                                rm -rf "${TRIVY_CACHE_DIR}"
+                                mkdir -p "${TRIVY_CACHE_DIR}"
+                                trivy image --cache-dir "${TRIVY_CACHE_DIR}" \
+                                    --severity CRITICAL,HIGH --exit-code 1 \
+                                    --ignorefile .trivyignore --scanners vuln --quiet ${LOCAL_IMAGE}
+                            else
+                                exit 1
+                            fi
+                        fi
                     '''
 
                     withCredentials([usernamePassword(credentialsId: 'harbor-cred',
@@ -110,6 +135,9 @@ pipeline {
                             docker push ${IMAGE}:${SHA}
                             docker logout ${REGISTRY}
                             echo "push 완료: ${IMAGE}:${SHA}"
+                            # push 후 로컬 사본은 불필요 — 아래 manifest 갱신은 태그 문자열만 바꾸고
+                            # 배포는 Harbor에서 pull한다. 안 지우면 SHA마다 영구히 쌓인다.
+                            docker rmi ${LOCAL_IMAGE} ${IMAGE}:${SHA} || true
                         '''
                     }
 
@@ -184,6 +212,16 @@ pipeline {
                     }
                 } catch (err) {
                     echo "Slack 알림 스킵: credential 'slack-webhook' 없음 또는 오류(${err.message})"
+                }
+            }
+            // 빌드가 남긴 dangling 이미지와 오래된 빌드 캐시 정리(백엔드 Jenkinsfile과 동일 정책).
+            // -a는 쓰지 않는다 — base 이미지까지 지워져 다음 빌드가 매번 재pull한다.
+            script {
+                try {
+                    sh 'docker image prune -f || true'
+                    sh 'docker builder prune -f --filter "until=168h" || true'
+                } catch (err) {
+                    echo "Docker 정리 스킵: ${err.message}"
                 }
             }
         }
