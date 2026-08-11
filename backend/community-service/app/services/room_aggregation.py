@@ -74,41 +74,41 @@ async def _record_counts_for_range(
     return {(row.user_id, row.record_date, row.meal_type): True for row in result.all()}
 
 
-async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMember, viewer_id: int) -> dict[str, object]:
-    members = await room_store.list_active_members(db, room.id)
-    member_count = len(members)
-    today = today_kst()
-    days_since_start = max(0, (today - room.started_at.astimezone(_KST).date()).days)
+def _sugars_by_user(records: list[dict[str, object]]) -> dict[int, list[float]]:
+    """diet-service 응답을 userId별 당류 목록으로 접어둔다 - 여러 방이 한 응답을
+    나눠 쓰기 위한 인덱스."""
+    by_user: dict[int, list[float]] = {}
+    for record in records:
+        sugar = record.get("sugar")
+        if isinstance(sugar, (int, float)):
+            by_user.setdefault(record["userId"], []).append(float(sugar))
+    return by_user
 
+
+def _average_sugar(user_ids: list[int], sugars_by_user: dict[int, list[float]]) -> float:
+    sugars = [s for uid in user_ids for s in sugars_by_user.get(uid, [])]
+    return round(sum(sugars) / len(sugars), 1) if sugars else 0.0
+
+
+def _build_room_summary(
+    *,
+    room: Room,
+    membership: RoomMember,
+    viewer_id: int,
+    members: list[RoomMember],
+    week_slots: set[tuple[int, date, str]],
+    recorded_today: int,
+    average_sugar: float,
+    member_invite_enabled: bool,
+    today: date,
+) -> dict[str, object]:
+    member_count = len(members)
+    days_since_start = max(0, (today - room.started_at.astimezone(_KST).date()).days)
     week_start, week_end = week_range_kst(today)
     week_days_elapsed = (min(today, week_end) - week_start).days + 1
     slot_target = member_count * len(MEAL_TYPES_UPPER) * max(week_days_elapsed, 1)
-
-    user_ids = await _member_user_ids(members)
-    thread_map = await _record_counts_for_range(db, room.id, user_ids, week_start, week_end)
-
-    # room_meal_thread는 누군가 방 화면을 열어야만 생기는 근사치라(위 주석 참고),
-    # 아직 아무도 방을 안 열어본 오늘 기록은 여기 안 잡힌다 - 홈 화면은 방
-    # 상세를 열지 않고도 "오늘 몇 명 기록했는지"를 보여줘야 하므로, 오늘 하루는
-    # diet-service 원본을 직접 조회해 정확한 값을 쓴다(주간 기록률은 기존처럼
-    # thread 근사치를 유지 - 매번 diet-service를 왕복하면 느려짐).
-    records_today = await get_meal_records(user_ids, today)
-    recorded_today = len({r["userId"] for r in records_today})
-    week_record_count = len(thread_map)
-    my_participation_days = len({d for (uid, d, _mt) in thread_map if uid == viewer_id})
-
-    # hydrate_average_sugar가 따로 있던 이유는 "room 목록 화면에서 방마다
-    # diet-service를 왕복하면 느려진다"였는데(과거 주석), 정작 모든 호출부가
-    # compute_room_summary 바로 뒤에서 hydrate_average_sugar를 불러 같은
-    # user_ids/오늘 날짜로 get_meal_records를 한 번 더(중복) 왕복하고 있었다
-    # (2026-07-26 실사용 중 "얌로그 진입 시 버퍼링" 재현 - 방마다 diet-service
-    # 왕복이 2번씩이었음). 위에서 이미 받아온 records_today를 그대로 써서
-    # 왕복 횟수를 절반으로 줄인다.
-    sugars_today = [r["sugar"] for r in records_today if isinstance(r.get("sugar"), (int, float))]
-    average_sugar = round(sum(sugars_today) / len(sugars_today), 1) if sugars_today else 0.0
-
+    my_participation_days = len({d for (uid, d, _mt) in week_slots if uid == viewer_id})
     eligible = member_count >= 3 and days_since_start >= 7 and room.ranking_opt_in
-    member_invite_enabled = await room_store.get_member_invite_enabled(db, room.id)
 
     return {
         "id": str(room.id),
@@ -120,7 +120,7 @@ async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMem
         "daysSinceStart": days_since_start,
         # 이번 주 기록 개수 대비 기록률(§8 권장 분모 - slot_target=0 방지).
         "averageSugar": average_sugar,
-        "monthlyRecordRate": round(week_record_count / slot_target * 100, 1) if slot_target else 0.0,
+        "monthlyRecordRate": round(len(week_slots) / slot_target * 100, 1) if slot_target else 0.0,
         "myParticipationDays": my_participation_days,
         "rankingOptIn": room.ranking_opt_in,
         "rank": None,
@@ -131,6 +131,80 @@ async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMem
         },
         "permissions": room_store.compute_permissions(room, membership, member_count, member_invite_enabled),
     }
+
+
+async def compute_room_summaries(
+    db: AsyncSession, my_rooms: list[tuple[Room, RoomMember]], viewer_id: int
+) -> list[dict[str, object]]:
+    """방 목록(홈)용 - 방마다 compute_room_summary를 부르면 방 수만큼
+    (멤버 쿼리 + 스레드 쿼리 + 초대설정 쿼리 + diet-service 왕복)이 반복된다.
+    2026-08-10 부하테스트에서 /rooms 1건이 내부 HTTP 19회 · SQL 173회를 순차로
+    실행하는 게 확인됐다 - 개별 작업은 0~6ms인데 횟수 때문에 무부하에서도
+    1.3초가 걸렸다. 랭킹(list_weekly_ranking)과 같은 방식으로, 필요한 데이터를
+    방 전체분 한 번에 모아두고 방별로 나눠 쓴다."""
+    if not my_rooms:
+        return []
+    room_ids = [room.id for room, _membership in my_rooms]
+    today = today_kst()
+    week_start, week_end = week_range_kst(today)
+
+    members_by_room = await _active_members_by_room(db, room_ids)
+    slots_by_room = await _record_slots_by_room(db, members_by_room, week_start, week_end)
+    invite_enabled_by_room = await room_store.get_member_invite_enabled_bulk(db, room_ids)
+
+    # 한 사용자가 여러 방에 속해도 오늘 기록은 같으므로 합쳐서 한 번만 묻는다.
+    all_user_ids = sorted({m.user_id for members in members_by_room.values() for m in members})
+    records_today = await get_meal_records(all_user_ids, today)
+    sugars_by_user = _sugars_by_user(records_today)
+    recorded_user_ids = {r["userId"] for r in records_today}
+
+    summaries = []
+    for room, membership in my_rooms:
+        members = members_by_room.get(room.id, [])
+        member_ids = [m.user_id for m in members]
+        summaries.append(
+            _build_room_summary(
+                room=room,
+                membership=membership,
+                viewer_id=viewer_id,
+                members=members,
+                week_slots=slots_by_room.get(room.id, set()),
+                recorded_today=len(set(member_ids) & recorded_user_ids),
+                average_sugar=_average_sugar(member_ids, sugars_by_user),
+                member_invite_enabled=invite_enabled_by_room.get(room.id, False),
+                today=today,
+            )
+        )
+    return summaries
+
+
+async def compute_room_summary(db: AsyncSession, room: Room, membership: RoomMember, viewer_id: int) -> dict[str, object]:
+    """방 하나짜리 경로(방 상세, 방 생성 직후)용 - 목록 화면은 방 수만큼 왕복이
+    나지 않도록 compute_room_summaries를 쓴다."""
+    members = await room_store.list_active_members(db, room.id)
+    today = today_kst()
+    week_start, week_end = week_range_kst(today)
+    user_ids = await _member_user_ids(members)
+    thread_map = await _record_counts_for_range(db, room.id, user_ids, week_start, week_end)
+
+    # room_meal_thread는 누군가 방 화면을 열어야만 생기는 근사치라(위 주석 참고),
+    # 아직 아무도 방을 안 열어본 오늘 기록은 여기 안 잡힌다 - 홈 화면은 방
+    # 상세를 열지 않고도 "오늘 몇 명 기록했는지"를 보여줘야 하므로, 오늘 하루는
+    # diet-service 원본을 직접 조회해 정확한 값을 쓴다(주간 기록률은 기존처럼
+    # thread 근사치를 유지 - 매번 diet-service를 왕복하면 느려짐).
+    records_today = await get_meal_records(user_ids, today)
+
+    return _build_room_summary(
+        room=room,
+        membership=membership,
+        viewer_id=viewer_id,
+        members=members,
+        week_slots=set(thread_map),
+        recorded_today=len({r["userId"] for r in records_today}),
+        average_sugar=_average_sugar(user_ids, _sugars_by_user(records_today)),
+        member_invite_enabled=await room_store.get_member_invite_enabled(db, room.id),
+        today=today,
+    )
 
 
 _MEMBER_COLORS = ["#F4A261", "#2A9D8F", "#E76F51", "#457B9D", "#8D5A97", "#A3B18A"]
@@ -342,13 +416,14 @@ async def _active_members_by_room(
     return grouped
 
 
-async def _record_counts_by_room(
+async def _record_slots_by_room(
     db: AsyncSession, members_by_room: dict[uuid.UUID, list[RoomMember]], start: date, end: date
-) -> dict[uuid.UUID, int]:
-    """방별 주간 기록 슬롯 수를 한 번에 센다 - _record_counts_for_range의 배치판.
+) -> dict[uuid.UUID, set[tuple[int, date, str]]]:
+    """방별 주간 기록 슬롯을 한 번에 읽는다 - _record_counts_for_range의 배치판.
 
     _record_counts_for_range가 user_ids로 걸러내던 것과 같게, 지금 활성 멤버가
-    아닌 사용자(탈퇴자)의 과거 기록은 세지 않는다."""
+    아닌 사용자(탈퇴자)의 과거 기록은 세지 않는다. 랭킹은 개수만 쓰지만 방 목록은
+    "내가 참여한 날" 계산에 슬롯 자체가 필요해서 집합 그대로 돌려준다."""
     room_ids = list(members_by_room)
     if not room_ids:
         return {}
@@ -361,11 +436,18 @@ async def _record_counts_by_room(
         )
     )
     active_ids = {room_id: {m.user_id for m in members} for room_id, members in members_by_room.items()}
-    counts: dict[uuid.UUID, set[tuple[int, date, str]]] = {room_id: set() for room_id in room_ids}
+    slots: dict[uuid.UUID, set[tuple[int, date, str]]] = {room_id: set() for room_id in room_ids}
     for row in result.all():
         if row.user_id in active_ids[row.room_id]:
-            counts[row.room_id].add((row.user_id, row.record_date, row.meal_type))
-    return {room_id: len(slots) for room_id, slots in counts.items()}
+            slots[row.room_id].add((row.user_id, row.record_date, row.meal_type))
+    return slots
+
+
+async def _record_counts_by_room(
+    db: AsyncSession, members_by_room: dict[uuid.UUID, list[RoomMember]], start: date, end: date
+) -> dict[uuid.UUID, int]:
+    slots = await _record_slots_by_room(db, members_by_room, start, end)
+    return {room_id: len(room_slots) for room_id, room_slots in slots.items()}
 
 
 async def list_weekly_ranking(
