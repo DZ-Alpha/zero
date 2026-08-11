@@ -325,6 +325,49 @@ async def build_incoming_nudges(
     return items
 
 
+async def _active_members_by_room(
+    db: AsyncSession, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[RoomMember]]:
+    """여러 방의 활성 멤버를 한 번에 읽는다 - 정렬 기준은 list_active_members와 동일."""
+    if not room_ids:
+        return {}
+    result = await db.execute(
+        select(RoomMember)
+        .where(RoomMember.room_id.in_(room_ids), RoomMember.left_at.is_(None))
+        .order_by((RoomMember.role != "owner"), RoomMember.joined_at, RoomMember.user_id)
+    )
+    grouped: dict[uuid.UUID, list[RoomMember]] = {room_id: [] for room_id in room_ids}
+    for member in result.scalars().all():
+        grouped[member.room_id].append(member)
+    return grouped
+
+
+async def _record_counts_by_room(
+    db: AsyncSession, members_by_room: dict[uuid.UUID, list[RoomMember]], start: date, end: date
+) -> dict[uuid.UUID, int]:
+    """방별 주간 기록 슬롯 수를 한 번에 센다 - _record_counts_for_range의 배치판.
+
+    _record_counts_for_range가 user_ids로 걸러내던 것과 같게, 지금 활성 멤버가
+    아닌 사용자(탈퇴자)의 과거 기록은 세지 않는다."""
+    room_ids = list(members_by_room)
+    if not room_ids:
+        return {}
+    result = await db.execute(
+        select(RoomMealThread.room_id, RoomMealThread.user_id,
+               RoomMealThread.record_date, RoomMealThread.meal_type).where(
+            RoomMealThread.room_id.in_(room_ids),
+            RoomMealThread.record_date >= start,
+            RoomMealThread.record_date <= end,
+        )
+    )
+    active_ids = {room_id: {m.user_id for m in members} for room_id, members in members_by_room.items()}
+    counts: dict[uuid.UUID, set[tuple[int, date, str]]] = {room_id: set() for room_id in room_ids}
+    for row in result.all():
+        if row.user_id in active_ids[row.room_id]:
+            counts[row.room_id].add((row.user_id, row.record_date, row.meal_type))
+    return {room_id: len(slots) for room_id, slots in counts.items()}
+
+
 async def list_weekly_ranking(
     db: AsyncSession, viewer_id: int, cursor: str | None, limit: int = 20
 ) -> tuple[list[dict[str, object]], str | None]:
@@ -337,20 +380,41 @@ async def list_weekly_ranking(
 
     my_room_ids = {room.id for room, _m in await room_store.list_rooms_for_user(db, viewer_id)}
 
-    entries = []
+    # 예전에는 방 하나마다 (멤버 조회 + 스레드 집계 + diet-service 왕복)을 순차로
+    # 돌았다. 랭킹 대상 방이 늘수록 요청 시간이 그대로 비례해서 늘었고, 특히
+    # diet-service 왕복(방당 200~700ms)이 지배적이었다 - 실측(2026-08-11)에서
+    # 자격 방 15개일 때 /rooms 가 p50 2.5s, p95 8.5s 였고 로그상 한 요청이
+    # diet-service 를 12회 이상 순차 호출했다. 방 수와 무관하게 왕복 1회로
+    # 고정되도록 아래 3단계로 나눈다.
+    members_by_room = await _active_members_by_room(db, [room.id for room in candidate_rooms])
+
+    qualified: list[tuple[Room, list[RoomMember]]] = []
     for room in candidate_rooms:
-        members = await room_store.list_active_members(db, room.id)
+        members = members_by_room.get(room.id, [])
         days_since_start = max(0, (today - room.started_at.astimezone(_KST).date()).days)
         if len(members) < 3 or days_since_start < 7:
             continue
+        qualified.append((room, members))
 
-        user_ids = [m.user_id for m in members]
-        thread_map = await _record_counts_for_range(db, room.id, user_ids, week_start, week_end)
+    recorded_slots = await _record_counts_by_room(
+        db, {room.id: members for room, members in qualified}, week_start, week_end
+    )
+
+    # 자격 방 전체의 멤버를 합쳐 한 번만 조회한다. 한 사용자가 여러 방에 속해도
+    # 오늘 기록은 같으므로 중복 호출할 이유가 없다.
+    all_user_ids = sorted({m.user_id for _, members in qualified for m in members})
+    sugars_by_user: dict[int, list[float]] = {}
+    for record in await get_meal_records(all_user_ids, today):
+        sugar = record.get("sugar")
+        if isinstance(sugar, (int, float)):
+            sugars_by_user.setdefault(record["userId"], []).append(float(sugar))
+
+    entries = []
+    for room, members in qualified:
         slot_target = len(members) * len(MEAL_TYPES_UPPER) * max(week_days_elapsed, 1)
-        record_rate = round(len(thread_map) / slot_target * 100, 1) if slot_target else 0.0
+        record_rate = round(recorded_slots.get(room.id, 0) / slot_target * 100, 1) if slot_target else 0.0
 
-        records_today = await get_meal_records(user_ids, today)
-        sugars = [r["sugar"] for r in records_today if isinstance(r.get("sugar"), (int, float))]
+        sugars = [s for m in members for s in sugars_by_user.get(m.user_id, [])]
         average_sugar = round(sum(sugars) / len(sugars), 1) if sugars else 0.0
 
         entries.append({
