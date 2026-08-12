@@ -23,7 +23,15 @@ SUPPORTED_SORTS = {"rank", "abc", "sugar_asc", "calorie_asc"}
 
 def _search_item(p: ProductRead, tags: list[Tag]) -> dict[str, object]:
     category_tags = [t for t in tags if t.tag_type == "CATEGORY"]
-    serving = f"{p.serving_value}{p.serving_unit}" if p.serving_value is not None and p.serving_unit else None
+    # product.py의 _product_detail과 같은 :g 포맷 - 예전엔 Decimal이 그대로 찍혀
+    # "100.000g"이 나왔고, VisionSwapCard가 /search의 current.serving과 /product의
+    # product.serving을 한 카드에 나란히 그려서 "100.000g"과 "100g"이 같이 보였다
+    # (2026-08-12 운영 확인). 매칭은 serving_key()가 양쪽을 정규화하므로 무관하다.
+    serving = (
+        f"{float(p.serving_value):g}{p.serving_unit}"
+        if p.serving_value is not None and p.serving_unit
+        else None
+    )
     return {
         "id": str(p.product_id),
         "name": p.product_name,

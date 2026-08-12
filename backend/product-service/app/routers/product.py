@@ -44,7 +44,11 @@ logger = logging.getLogger("product_service.product")
 router = APIRouter(prefix="/product")
 
 PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=300"
-_LOW_SUGAR_TAG_CODES = {"SUGAR_FREE", "ZERO_SUGAR", "LOW_SUGAR", "ZERO_GENERAL"}
+# LOW_SUGAR는 카탈로그 91.5%(2,221/2,427)에 부착되어 있어 판정 기준으로 쓸 수 없다.
+# 당류 13.4g 상품까지 ALREADY_LOW로 분류돼 SwapCard가 전면 미노출됐다(2026-08-12).
+# 태깅 기준 자체를 고치는 것이 근본 해결이며 별도 티켓으로 진행한다.
+# 이 상수는 대안 판정 전용 - LOW_SUGAR를 쓰는 필터/뱃지 쪽은 건드리지 않는다.
+_LOW_SUGAR_TAG_CODES = {"SUGAR_FREE", "ZERO_SUGAR", "ZERO_GENERAL"}
 _LOW_SUGAR_NAME_MARKERS = ("저당", "제로", "무가당", "무설탕", "sugarfree", "sugar-free")
 
 _KST = ZoneInfo("Asia/Seoul")
