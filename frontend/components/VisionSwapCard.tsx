@@ -15,38 +15,35 @@ function number(value: number) {
   return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }).format(value);
 }
 
-export function VisionSwapCard({ recommendation, recipes = [] }: {
+export function VisionSwapCard({ recommendation, recipes = [], recipesAreFallback = false }: {
   recommendation?: DietSwapRecommendationResponse | null;
   recipes?: VisionRecipeSuggestion[];
+  /* 레시피를 인식한 이름 그대로가 아니라 토큰·요리 접미사로 넓혀서 찾았는지.
+     넓혀 찾은 결과를 "가까운 선택"이라고 부르면 안 된다 - 제육볶음이 "볶음"으로
+     넓혀지면 양배추볶음이 잡힌다(2026-08-12 추가 지시서 §4). */
+  recipesAreFallback?: boolean;
 }) {
   const current = recommendation?.status === "AVAILABLE" ? recommendation.current : null;
   const alternatives = current ? recommendation?.alternatives ?? [] : [];
-  // 조회 자체를 안 한 경우(추천 응답 없음)에는 아무것도 그리지 않는다.
-  if (!recommendation && recipes.length === 0) return null;
-  // 응답은 받았는데 보여줄 게 없으면 카드를 통째로 지우지 않고 그 사실을 말한다 -
-  // 예전에는 null이라 "대안이 없음"과 "연동이 깨짐"이 화면상 똑같았고, 그래서
-  // product-service가 500을 내던 2026-08-12 장애가 늦게 발견됐다.
-  if (alternatives.length === 0 && recipes.length === 0) {
-    return (
-      <section className="vision-swap is-empty" aria-label="사진 분석 결과와 연결되는 추천">
-        <header>
-          <p className="eyebrow">사진과 함께 연결하기</p>
-          <h3>지금은 추천할 만한 대안을 찾지 못했어요</h3>
-          <p>같은 종류·같은 단위에서 당류가 더 낮은 제품이 있을 때만 보여드려요. 기록은 그대로 저장돼요.</p>
-        </header>
-      </section>
-    );
-  }
+  // 조리 음식 사진에서 NO_MATCH는 정상 경로라(2026-08-12 추가 지시서 §3) 안내
+  // 문구를 상시 노출하면 카탈로그 커버리지 한계를 광고하는 꼴이 된다 - 화면은
+  // 조용히 두고, 관측 책임은 diet-service의 drops 카운터 로그가 전부 진다.
+  if (alternatives.length === 0 && recipes.length === 0) return null;
+  // 제품 대안 없이 폴백 레시피만 남은 경우엔 카드 제목까지 낮춘다 - 정확 매칭인
+  // 척하는 카피 위에 넓혀 찾은 결과만 놓이면 안 된다.
+  const onlyFallbackRecipes = recipesAreFallback && alternatives.length === 0;
 
   return (
     <section className="vision-swap" aria-label="사진 분석 결과와 연결되는 추천">
       <header>
         <p className="eyebrow">사진과 함께 연결하기</p>
-        <h3>인식한 음식과 가까운 선택이에요</h3>
-        <p>레시피는 음식명을 기준으로, 제품은 같은 종류와 같은 단위일 때만 보여드려요.</p>
+        <h3>{onlyFallbackRecipes ? "이런 저당 레시피는 어때요?" : "인식한 음식과 가까운 선택이에요"}</h3>
+        <p>{onlyFallbackRecipes
+          ? "정확히 같은 메뉴는 아니지만, 같은 종류에서 당류를 확인한 레시피예요."
+          : "레시피는 음식명을 기준으로, 제품은 같은 종류와 같은 단위일 때만 보여드려요."}</p>
       </header>
       {recipes.length > 0 && <div className="vision-swap-group">
-        <h4>비슷한 레시피</h4>
+        <h4>{recipesAreFallback ? "이런 저당 레시피는 어때요?" : "비슷한 레시피"}</h4>
         <div className="vision-swap-list is-recipes">
           {recipes.slice(0, 2).map((recipe) => (
             <Link href={`/recipes/${recipe.id}`} key={recipe.id}>

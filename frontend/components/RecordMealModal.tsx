@@ -16,6 +16,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { getAccessToken } from "@/lib/api/client";
 import { convertHeicToJpeg, isHeicFile, optimizePhotoForVision } from "@/lib/heic";
+import { isFallbackQuery, recipeQueryCandidates } from "@/lib/recipeQueryFallback";
 import {
   confirmDietPhoto,
   DietAnalysisItem,
@@ -182,6 +183,7 @@ export function RecordMealModal({
   const [serverMealLogId, setServerMealLogId] = useState<string | null>(null);
   const [visionSwap, setVisionSwap] = useState<DietSwapRecommendationResponse | null>(mockPreview ? mockVisionSwap : null);
   const [visionRecipes, setVisionRecipes] = useState<VisionRecipeSuggestion[]>(mockPreview ? mockVisionRecipes : []);
+  const [visionRecipesFallback, setVisionRecipesFallback] = useState(false);
   const [visionAllergens, setVisionAllergens] = useState<string[]>([]);
   const [draftItems, setDraftItems] = useState<DietAnalysisItem[] | null>(null);
   const [draftConfidence, setDraftConfidence] = useState<number | null>(null);
@@ -299,6 +301,7 @@ export function RecordMealModal({
     setSelectionError("");
     setVisionSwap(null);
     setVisionRecipes([]);
+    setVisionRecipesFallback(false);
     if (item.nutritionAvailable) {
       setSelected(item);
       return;
@@ -337,14 +340,27 @@ export function RecordMealModal({
     }
   }
 
+  /* 통짜 → 공백 토큰 → 요리 접미사 순으로 넓혀가며 레시피를 찾는다. 히트하면
+     즉시 멈춘다. eligible=true를 걸어 저당 적격 레시피만 받는다 - 예전엔 이
+     조건이 없어서 당류가 더 높은 레시피도 "대안"으로 나올 수 있었다. */
+  async function searchRecipesWithFallback(name: string) {
+    const candidates = recipeQueryCandidates(name);
+    for (let index = 0; index < candidates.length; index += 1) {
+      const { recipes: found } = await getRecipes(1, candidates[index], undefined, true);
+      if (found.length > 0) return { recipes: found, usedFallback: isFallbackQuery(index) };
+    }
+    return { recipes: [], usedFallback: false };
+  }
+
   async function loadVisionRecommendations(token: string, mealLogId: string, itemNames: string[]) {
     setVisionSwap(null);
     setVisionRecipes([]);
+    setVisionRecipesFallback(false);
     setVisionAllergens([]);
 
     const swapRequest = getDietSwapRecommendation(token, mealLogId);
     const recipeRequest = Promise.all(
-      itemNames.filter(Boolean).slice(0, 2).map((name) => getRecipes(1, name)),
+      itemNames.filter(Boolean).slice(0, 2).map((name) => searchRecipesWithFallback(name)),
     );
     const [swapResult, recipeResult] = await Promise.allSettled([swapRequest, recipeRequest]);
 
@@ -368,6 +384,10 @@ export function RecordMealModal({
 
     if (recipeResult.status === "fulfilled") {
       const unique = new Map<number, VisionRecipeSuggestion>();
+      // 하나라도 폴백 질의어로 찾았으면 "가까운 선택"이라고 말하지 않는다 -
+      // 제육볶음이 "볶음"으로 넓혀져 양배추볶음을 물어오는 식이라, 정확 매칭인
+      // 척하면 "근거 있는 저당 대안"이라는 정체성이 무너진다.
+      setVisionRecipesFallback(recipeResult.value.some((result) => result.usedFallback));
       recipeResult.value.flatMap((result) => result.recipes).forEach((recipe) => {
         if (!unique.has(recipe.id)) unique.set(recipe.id, {
           id: recipe.id,
@@ -398,6 +418,7 @@ export function RecordMealModal({
     setAnalysisError("");
     setVisionSwap(null);
     setVisionRecipes([]);
+    setVisionRecipesFallback(false);
     setIsAnalyzing(true);
     setAnalysisDelayed(false);
     setUploadProgress(18);
@@ -626,6 +647,7 @@ export function RecordMealModal({
     setServerMealLogId(null);
     setVisionSwap(null);
     setVisionRecipes([]);
+    setVisionRecipesFallback(false);
     setVisionAllergens([]);
     if (photoInput.current) photoInput.current.value = "";
   }
@@ -815,7 +837,7 @@ export function RecordMealModal({
               <div className="projected-row calorie"><div><span>선택한 날 칼로리</span><strong>{totals.calories.toLocaleString()} → {(totals.calories + selected.calories).toLocaleString()}kcal</strong></div><div className="projected-bar"><i style={{ clipPath: `inset(0 ${100 - percent(totals.calories + selected.calories, goals.calories)}% 0 0)` }} /></div><p>설정한 하루 목표 {goals.calories.toLocaleString()}kcal와 함께 계산했어요.</p></div>
             </div> : <div className="projected-change"><p className="eyebrow">분석 대기 중</p><p>아직 영양 수치를 계산하지 않았어요. 완료되면 캘린더와 오늘 기록에 반영돼요.</p></div>}
             {selected.kind === "사진 분석" && visionAllergens.length > 0 && <div className="allergen-user-warning" role="alert"><div><strong>사진 속 상품이 내 주의 성분과 겹쳐요</strong><span>{visionAllergens.join(", ")}</span></div><p>인식 결과에 기반한 참고 정보예요. 섭취 전 제품 포장의 원재료명과 알레르기 표시를 반드시 확인해 주세요.</p></div>}
-            {selected.kind === "사진 분석" && (visionSwap != null || visionRecipes.length > 0) && <VisionSwapCard recommendation={visionSwap} recipes={visionRecipes} />}
+            {selected.kind === "사진 분석" && (visionSwap?.status === "AVAILABLE" || visionRecipes.length > 0) && <VisionSwapCard recommendation={visionSwap} recipes={visionRecipes} recipesAreFallback={visionRecipesFallback} />}
             <footer className={`mini-detail-actions save-${saveState}`}><p>{saveState === "saved" ? "기록을 저장했어요." : saveState === "error" ? "저장하지 못했어요. 다시 시도해 주세요." : selected.kind === "사진 분석" && serverMealLogId ? "서버에 등록한 사진을 선택한 식사에 표시해둘게요." : <>저장한 다음에는 <b>{nextMeal}</b> 기록을 이어볼 수 있어요.</>}</p><button type="button" className="solid-button" onClick={saveItem} disabled={saveState === "saving" || saveState === "saved"}>{saveState === "saving" ? "저장하고 있어요" : saveState === "saved" ? "저장했어요" : saveState === "error" ? "다시 저장하기" : selected.kind === "사진 분석" && serverMealLogId ? "사진 등록 마치기" : `${meal}에 저장하기`}</button></footer>
           </div>
         )}
