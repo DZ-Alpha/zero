@@ -82,11 +82,24 @@ async def test_alternative_query_rechecks_food_type_serving_and_reduction() -> N
 
 def test_low_sugar_or_zero_labeled_source_does_not_offer_swap() -> None:
     product = SimpleNamespace(product_name="일반 카라멜 팝콘", sugars=18.5)
-    low_tag = SimpleNamespace(tag_type="HEALTH_LABEL", tag_code="LOW_SUGAR")
+    zero_tag = SimpleNamespace(tag_type="HEALTH_LABEL", tag_code="ZERO_SUGAR")
 
-    assert _is_already_low_sugar_product(product, [low_tag])
+    assert _is_already_low_sugar_product(product, [zero_tag])
     assert _is_already_low_sugar_product(
         SimpleNamespace(product_name="제로 팝콘", sugars=3.0),
         [],
     )
     assert not _is_already_low_sugar_product(product, [])
+
+
+def test_low_sugar_tag_alone_no_longer_blocks_swap() -> None:
+    """LOW_SUGAR는 카탈로그 91.5%에 붙어 있어 판정에서 뺐다(2026-08-12).
+    이 태그만 달린 당류 13.4g 상품은 대안 계산 대상이어야 한다."""
+    product = SimpleNamespace(product_name="고고단 다이어트 단백질쉐이크 모카초코프라페맛", sugars=13.4)
+    low_tag = SimpleNamespace(tag_type="HEALTH_LABEL", tag_code="LOW_SUGAR")
+
+    assert not _is_already_low_sugar_product(product, [low_tag])
+    # 이름 마커는 그대로 살아 있어야 한다 - 이쪽은 정상 동작한다.
+    assert _is_already_low_sugar_product(
+        SimpleNamespace(product_name="저당 초코쉐이크", sugars=13.4), [low_tag]
+    )

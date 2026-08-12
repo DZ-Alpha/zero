@@ -21,7 +21,22 @@ export function VisionSwapCard({ recommendation, recipes = [] }: {
 }) {
   const current = recommendation?.status === "AVAILABLE" ? recommendation.current : null;
   const alternatives = current ? recommendation?.alternatives ?? [] : [];
-  if (alternatives.length === 0 && recipes.length === 0) return null;
+  // 조회 자체를 안 한 경우(추천 응답 없음)에는 아무것도 그리지 않는다.
+  if (!recommendation && recipes.length === 0) return null;
+  // 응답은 받았는데 보여줄 게 없으면 카드를 통째로 지우지 않고 그 사실을 말한다 -
+  // 예전에는 null이라 "대안이 없음"과 "연동이 깨짐"이 화면상 똑같았고, 그래서
+  // product-service가 500을 내던 2026-08-12 장애가 늦게 발견됐다.
+  if (alternatives.length === 0 && recipes.length === 0) {
+    return (
+      <section className="vision-swap is-empty" aria-label="사진 분석 결과와 연결되는 추천">
+        <header>
+          <p className="eyebrow">사진과 함께 연결하기</p>
+          <h3>지금은 추천할 만한 대안을 찾지 못했어요</h3>
+          <p>같은 종류·같은 단위에서 당류가 더 낮은 제품이 있을 때만 보여드려요. 기록은 그대로 저장돼요.</p>
+        </header>
+      </section>
+    );
+  }
 
   return (
     <section className="vision-swap" aria-label="사진 분석 결과와 연결되는 추천">

@@ -357,6 +357,76 @@ async def other_foods(
     }
 
 
+async def _swap_sources_for_item(
+    client: httpx.AsyncClient,
+    product_service: str,
+    meal_item,
+    recognized_name: str,
+    drop,
+) -> list[dict[str, object]]:
+    """스왑 비교의 기준이 될 "지금 먹은 제품"을 확보한다.
+
+    vision 아이템의 94.7%는 이미 meal_item.product_id를 갖고 있는데도(2026-08-12
+    운영 실측) 예전에는 인식된 이름으로 /search를 다시 뒤졌다. 그 경로는
+    is_credible_product_match의 양방향 부분문자열 게이트와 search_items[:5]
+    절단을 함께 통과해야 해서, 정작 아는 제품이 탈락하곤 했다. product_id가
+    있으면 상세를 직접 읽고, 없을 때만 예전 이름 검색으로 폴백한다."""
+    product_id = str(getattr(meal_item, "product_id", None) or "").strip()
+    if product_id:
+        detail_response = await client.get(f"{product_service}/product", params={"id": product_id})
+        detail_response.raise_for_status()
+        return [_source_from_product_detail(product_id, detail_response.json())]
+
+    if not recognized_name:
+        drop("item_without_product_id_and_name")
+        return []
+
+    search_response = await client.get(
+        f"{product_service}/search",
+        params={"query": recognized_name, "page": 1},
+    )
+    search_response.raise_for_status()
+    search_items = search_response.json().get("items", [])
+    if not search_items:
+        drop("search_empty")
+        return []
+
+    matched = [
+        item for item in search_items[:5]
+        if is_credible_product_match(recognized_name, item.get("name"))
+    ]
+    if not matched:
+        drop("name_match_failed")
+    return matched
+
+
+def _source_from_product_detail(product_id: str, detail: dict[str, object]) -> dict[str, object]:
+    """/product 상세 응답을 /search 항목과 같은 모양으로 맞춘다.
+
+    두 응답은 키가 다르다(당류 dang↔sugar, 열량 cal↔calories). 매핑을 빠뜨리면
+    is_already_low_sugar가 sugar를 None으로 읽어 float(None or 0) <= 0이 참이
+    되고, 모든 소스가 조용히 걸러진다 - 2026-08-12 장애와 똑같은 증상이 된다.
+    응답의 current 필드는 프론트 DietSwapProduct 타입이 그대로 소비하므로
+    /search 형태를 유지해야 한다(상세 응답에는 id가 없어 인자로 받는다)."""
+    return {
+        "id": product_id,
+        "name": detail.get("name"),
+        "desc": detail.get("brand") or "",
+        "url": detail.get("imageUrl") or "",
+        "brand": detail.get("brand"),
+        "category": detail.get("category"),
+        "foodType": detail.get("foodType"),
+        "serving": detail.get("serving"),
+        "sugar": detail.get("dang"),
+        "calories": detail.get("cal"),
+        "image": detail.get("imageUrl"),
+        # 상세 응답의 allerg는 알레르기 태그라 저당 판정에 쓸 수 없다. 이름
+        # 마커 검사와 sugar 값만으로 판정하고, 태그 기반 판정은 이어지는
+        # /product/alternatives(ALREADY_LOW)가 맡는다.
+        "tags": [],
+    }
+
+
 # RC-0105: 사진 분석 결과에 연결되는 대체 제품 추천
 @router.get("/recommend-alt")
 async def recommend_alt(
@@ -383,27 +453,28 @@ async def recommend_alt(
 
     meal_items = await get_meal_items(db, log_id)
     product_service = settings.product_service_url.rstrip("/")
+    # 어느 단계에서 후보가 떨어졌는지 남긴다 - 예전에는 모든 실패가 똑같이
+    # NO_MATCH로 접혀서, product-service가 500을 내던 2026-08-12 장애를
+    # 사용자도 모니터링도 알아채지 못했다.
+    drops: dict[str, int] = {}
+
+    def drop(reason: str) -> None:
+        drops[reason] = drops.get(reason, 0) + 1
 
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
             for meal_item in meal_items:
                 recognized_name = str(meal_item.item_name or "").strip()
-                if not recognized_name:
-                    continue
-
-                search_response = await client.get(
-                    f"{product_service}/search",
-                    params={"query": recognized_name, "page": 1},
+                sources = await _swap_sources_for_item(
+                    client, product_service, meal_item, recognized_name, drop
                 )
-                search_response.raise_for_status()
-                search_items = search_response.json().get("items", [])
 
-                for source in search_items[:5]:
-                    if not is_credible_product_match(recognized_name, source.get("name")):
-                        continue
+                for source in sources:
                     if is_already_low_sugar(source):
+                        drop("source_already_low_sugar")
                         continue
                     if not source.get("foodType") or not serving_key(source.get("serving")):
+                        drop("source_missing_food_type_or_serving")
                         continue
 
                     alternatives_response = await client.get(
@@ -412,7 +483,10 @@ async def recommend_alt(
                     )
                     alternatives_response.raise_for_status()
                     alternatives_payload = alternatives_response.json()
-                    if alternatives_payload.get("status") != "AVAILABLE":
+                    alternatives_status = alternatives_payload.get("status")
+                    if alternatives_status != "AVAILABLE":
+                        # ALREADY_LOW가 비정상적으로 높으면 태깅 문제를 의심해야 한다.
+                        drop(f"alternatives_{str(alternatives_status or 'UNKNOWN').lower()}")
                         continue
 
                     valid: list[dict[str, object]] = []
@@ -428,6 +502,7 @@ async def recommend_alt(
                         detail_response.raise_for_status()
                         detail = detail_response.json()
                         if not is_valid_swap_candidate(source, candidate, detail):
+                            drop("candidate_failed_final_check")
                             continue
                         seen_ids.add(candidate_id)
                         valid.append(
@@ -443,13 +518,21 @@ async def recommend_alt(
                         return {
                             "status": "AVAILABLE",
                             "mealLogId": str(log_id),
-                            "recognizedItem": recognized_name,
+                            "recognizedItem": recognized_name or str(source.get("name") or ""),
                             "current": source,
                             "alternatives": valid[:2],
                         }
     except (httpx.HTTPError, TypeError, ValueError, AttributeError):
         logger.exception("product swap lookup failed for meal_log_id=%s", log_id)
+        drop("exception")
 
+    # 정상 흐름으로 NO_MATCH가 나온 경우에도 사유별 카운터를 남긴다.
+    logger.info(
+        "swap NO_MATCH meal_log_id=%s items=%d drops=%s",
+        log_id,
+        len(meal_items),
+        drops or {"no_meal_items": len(meal_items) == 0},
+    )
     return {"status": "NO_MATCH", "mealLogId": str(log_id), "alternatives": []}
 
 
