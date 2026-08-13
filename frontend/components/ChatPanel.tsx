@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { getAccessToken } from "@/lib/api/client";
 import { getChatHistory, sendChatbotMessage, streamChatbotMessage } from "@/lib/api/zerocheck";
 import { convertHeicToJpeg, isHeicFile } from "@/lib/heic";
@@ -11,6 +11,15 @@ type ChatMessage = { role: "question" | "answer"; text: string; imageUrl?: strin
 const fallbackAnswer = "질문을 기준으로 성분표를 쉽게 풀어드릴게요. 지금은 상담 기능을 준비하고 있어서, 제품 검색과 레시피에서 성분 정보를 먼저 확인해 주세요.";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+// 상담이 실제로 처리할 수 있는 갈래(일반 지식 / 상품 비교 / 레시피 대체)를
+// 하나씩 고른 예시다. 빈 화면을 채우는 게 아니라 "여기서 뭘 물어볼 수 있는지"를
+// 보여주는 게 목적이라, 답변이 잘 나오는 질문으로만 둔다.
+const SUGGESTED_QUESTIONS = [
+  "하루 당류 권장량이 얼마나 돼요?",
+  "제로 콜라가 다이어트에 도움이 되나요?",
+  "떡볶이 대신 먹을 저당 메뉴 알려줘",
+];
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -58,6 +67,17 @@ export function ChatPanel() {
     fileInputRef.current?.click();
   }
 
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") return;
+    // 한글 IME 조합 중에 누른 Enter는 "전송"이 아니라 "조합 확정"이다.
+    // 이걸 구분하지 않고 send()를 부르면, 입력값을 비운 직후에 브라우저가
+    // 조합 중이던 글자를 확정하면서 입력창에 도로 넣는다 — "안녕"을 보내면
+    // 다음 입력창에 "녕"이 남아 있던 게 이거였다(2026-08-13 제보).
+    // isComposing은 조합이 끝나는 Enter에서 true, 그 다음 Enter에서 false다.
+    if (event.nativeEvent.isComposing) return;
+    send();
+  }
+
   async function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
     const rawFile = event.target.files?.[0];
     event.target.value = "";
@@ -81,8 +101,8 @@ export function ChatPanel() {
     }
   }
 
-  async function send() {
-    const question = value.trim();
+  async function send(preset?: string) {
+    const question = (preset ?? value).trim();
     const image = attachedImage;
     if ((!question && !image) || pending) return;
     setValue("");
@@ -143,9 +163,26 @@ export function ChatPanel() {
 
   return (
     <section className="chat-panel">
-      <div className="chat-head"><span className="brand-mark"><i /></span><div><b>당당 상담</b><small>영양·성분 질문과 사진 검색</small></div></div>
+      {/* brand-mark는 `img` 자식에만 스타일이 걸려 있다 — 예전엔 빈 `<i/>`를 넣어서
+          31px짜리 투명한 칸만 남고 아이콘이 안 보였다(Shell.tsx와 같은 방식으로 맞춤). */}
+      <div className="chat-head"><span className="brand-mark"><img src="/icon.svg" alt="" width={32} height={32} /></span><div><b>당당 상담</b><small>영양·성분 질문과 사진 검색</small></div></div>
       <div className="chat-log" ref={logRef}>
-        {messages.length === 0 && !pending && <p className="answer chat-empty-hint">무엇을 도와드릴까요?</p>}
+        {messages.length === 0 && !pending && (
+          <div className="chat-empty">
+            <p className="chat-empty-hint">무엇을 도와드릴까요?</p>
+            {/* 상담이 뭘 할 수 있는지 화면에 단서가 없어서 빈 영역만 400px 남아 있었다.
+                누르면 바로 질문이 나가고, 동시에 지원하는 기능을 알려주는 역할. */}
+            <ul className="chat-suggestions">
+              {SUGGESTED_QUESTIONS.map((suggestion) => (
+                <li key={suggestion}>
+                  <button type="button" onClick={() => send(suggestion)} disabled={pending}>
+                    {suggestion}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {messages.map((message, index) => (
           <p className={message.role} key={`${message.role}-${index}`}>
             {message.imageUrl && (
@@ -189,8 +226,15 @@ export function ChatPanel() {
             </svg>
           )}
         </button>
-        <input aria-label="질문" value={value} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => event.key === "Enter" && send()} placeholder="궁금한 성분이나 제품을 물어보세요" />
-        <button className="chat-send-button" onClick={send} disabled={pending || (!value.trim() && !attachedImage)}>{pending ? "전송 중" : "보내기"}</button>
+        <input
+          aria-label="질문"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="궁금한 성분이나 제품을 물어보세요"
+        />
+        {/* onClick={send}로 두면 MouseEvent가 preset 인자로 들어간다 — 반드시 감싼다 */}
+        <button className="chat-send-button" onClick={() => send()} disabled={pending || (!value.trim() && !attachedImage)}>{pending ? "전송 중" : "보내기"}</button>
       </div>
     </section>
   );
