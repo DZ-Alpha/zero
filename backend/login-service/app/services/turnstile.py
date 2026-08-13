@@ -14,7 +14,10 @@ async def verify_turnstile(token: str) -> bool:
     # instead of the usual 200 + {"success": false} — treat any failure to reach
     # a clean verdict as "not verified" rather than crashing the login request.
     try:
-        async with httpx.AsyncClient() as client:
+        # 명시적 타임아웃 — oauth/__init__.py의 OAUTH_HTTP_TIMEOUT과 같은 이유다
+        # (httpx 기본값 5초에 암묵적으로 기대고 있었음). 여긴 로그인 앞단이고
+        # 실패해도 아래에서 "미검증"으로 떨어지므로 read도 3초로 줄인다.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=3.0)) as client:
             response = await client.post(
                 VERIFY_URL,
                 data={"secret": settings.turnstile_secret_key, "response": token},

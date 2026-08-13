@@ -25,10 +25,17 @@ async def lifespan(app: FastAPI):
     # user_health_profiles/user_preferences는 이 서비스가 소유 — 나머지
     # (Product/Diet/Ingredients 소유 읽기전용 모델)는 OWNED_TABLES에서
     # 제외돼 있어 여기서 절대 건드리지 않는다.
-    await run_with_retry(
-        lambda conn: conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
-    )
-    logger.info("main-service started, owned tables ensured")
+    #
+    # DB_AUTO_MIGRATE=false면 DDL을 건너뛴다 — RDS 최소권한 app role에서는
+    # 여기서 InsufficientPrivilege가 나면서 기동 자체가 실패한다(계획서 A-01).
+    # 그 환경에서는 db/migrations/main-service.sql을 DBA가 먼저 적용한다.
+    if settings.db_auto_migrate:
+        await run_with_retry(
+            lambda conn: conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=OWNED_TABLES))
+        )
+        logger.info("main-service started, owned tables ensured")
+    else:
+        logger.info("main-service started, DB_AUTO_MIGRATE=false — startup DDL skipped")
     yield
 
 

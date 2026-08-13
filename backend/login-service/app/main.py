@@ -32,16 +32,24 @@ _USER_COLUMN_MIGRATIONS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await run_with_retry(lambda conn: conn.run_sync(Base.metadata.create_all))
-    # 컬럼 마이그레이션은 create_all과 별도 트랜잭션으로 분리 — 여기서 하나라도 실패해도
-    # 로그인 자체(가장 중요한 기능)는 계속 뜨게 한다. 2026-07-21 장애: 스키마 접두사
-    # 오류로 이 블록이 죽으면서 로그인 서비스 전체가 기동 불가 상태가 됐었다.
-    try:
-        async with engine.begin() as conn:
-            for statement in _USER_COLUMN_MIGRATIONS:
-                await conn.execute(text(statement))
-    except Exception:
-        logger.exception("user column migration failed — continuing startup without it")
+    # DB_AUTO_MIGRATE=false면 DDL을 통째로 건너뛴다 — RDS 최소권한 app role에서는
+    # create_all이 InsufficientPrivilege로 죽으면서 기동 자체가 실패한다(계획서
+    # A-01). 그 환경에서는 db/migrations/login-service.sql을 DBA가 먼저 적용한다.
+    # 아래 컬럼 마이그레이션과 달리 create_all은 예외를 삼키지 않으므로(테이블이
+    # 없는 채로 뜨면 첫 로그인부터 실패) 이 게이트가 유일한 안전장치다.
+    if settings.db_auto_migrate:
+        await run_with_retry(lambda conn: conn.run_sync(Base.metadata.create_all))
+        # 컬럼 마이그레이션은 create_all과 별도 트랜잭션으로 분리 — 여기서 하나라도 실패해도
+        # 로그인 자체(가장 중요한 기능)는 계속 뜨게 한다. 2026-07-21 장애: 스키마 접두사
+        # 오류로 이 블록이 죽으면서 로그인 서비스 전체가 기동 불가 상태가 됐었다.
+        try:
+            async with engine.begin() as conn:
+                for statement in _USER_COLUMN_MIGRATIONS:
+                    await conn.execute(text(statement))
+        except Exception:
+            logger.exception("user column migration failed — continuing startup without it")
+    else:
+        logger.info("DB_AUTO_MIGRATE=false — startup DDL skipped")
     yield
 
 

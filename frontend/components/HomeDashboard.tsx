@@ -283,6 +283,7 @@ export function HomeDashboard() {
     const rankRequest = withMockFallback(
       () => getRecipeSwapRanking(),
       { status: "PREPARING", listRecipes: [], listProducts: [] },
+      "getRecipeSwapRanking",
     );
     const recommendRequest = token
       ? withMockFallback(() => getUserRecommendations(token), {
@@ -290,7 +291,7 @@ export function HomeDashboard() {
           personalized: false,
           matchedPreferenceIds: [],
           reason: "NO_PREFERENCES" as const,
-        })
+        }, "getUserRecommendations")
       : withMockFallback(
           () => searchProducts({ sort: "rank", page: 1 }).then((result) => ({
             listProducts: result.items.slice(0, 10).map((item) => ({ id: item.id, name: item.name, brand: item.brand, image: item.image })),
@@ -299,6 +300,7 @@ export function HomeDashboard() {
             reason: "NO_PREFERENCES" as const,
           })),
           { listProducts: [], personalized: false, matchedPreferenceIds: [], reason: "NO_PREFERENCES" as const },
+          "searchProducts(rank)",
         );
 
     Promise.all([rankRequest, recommendRequest]).then(([rank, recommend]) => {
@@ -326,7 +328,7 @@ export function HomeDashboard() {
 
   useEffect(() => {
     let active = true;
-    withMockFallback(() => getHomeArticles(4), { articles: [] }).then(({ articles }) => {
+    withMockFallback(() => getHomeArticles(4), { articles: [] }, "getHomeArticles").then(({ articles }) => {
       if (!active) return;
       setReadingList(articles.length > 0 ? toReadingItems(articles) : fallbackReadingList);
     });
@@ -345,7 +347,15 @@ export function HomeDashboard() {
       return;
     }
     let active = true;
-    withMockFallback(() => getRoomsHome(token), emptyRoomsHome).then((response) => {
+    // 홈은 게이지(get_today_totals)와 이 rooms 집계를 같은 렌더에서 부른다 —
+    // 백엔드에서 가장 비싼 두 경로다(감사 A-3). 화면을 떠나면 요청을 끊어서
+    // 최소한 버려질 응답을 기다리느라 커넥션을 잡고 있지는 않게 한다.
+    const controller = new AbortController();
+    withMockFallback(
+      () => getRoomsHome(token, { signal: controller.signal }),
+      emptyRoomsHome,
+      "getRoomsHome(home)",
+    ).then((response) => {
       if (!active) return;
       setRoomsHome(response);
       if (response.incomingNudges.length > 0) {
@@ -359,6 +369,7 @@ export function HomeDashboard() {
     });
     return () => {
       active = false;
+      controller.abort();
     };
   }, [isMockSession, token]);
 
