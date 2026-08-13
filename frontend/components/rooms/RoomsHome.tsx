@@ -14,6 +14,10 @@ import { CreateRoomResponse, MAX_ROOM_COUNT, RoomsHomeResponse, TeamRankingItem 
 
 const emojiOptions = ["🌿", "🍚", "🥗", "🏃", "🌙"];
 
+// 이 화면이 모임 데이터를 기다려주는 시간. 공용 apiRequest 기본값(15초)보다
+// 짧게 잡는다 — 여기서는 늦게 오는 정답보다 빠른 빈 화면이 낫다.
+const ROOMS_HOME_TIMEOUT_MS = 4500;
+
 const MEAL_LABELS: Record<string, string> = { breakfast: "아침", lunch: "점심", dinner: "저녁", snack: "간식" };
 
 // 2026-07-31 요청 - 아직 랭킹에 들어갈 팀(멤버 3명 이상·개설 7일 이상·랭킹
@@ -69,10 +73,12 @@ export function RoomsHome() {
     }
     let active = true;
     setLoading(true);
-    const timeout = new Promise<never>((_, reject) => {
-      window.setTimeout(() => reject(new Error("ROOMS_MOCK_FALLBACK")), 4500);
-    });
-    Promise.race([getRoomsHome(token), timeout])
+    // 예전엔 Promise.race로 4.5초를 쟀는데, race는 프로미스만 버리고 요청은
+    // 계속 살려둔다 — 사용자가 새로고침할수록 이미 느린 서비스에 요청이 쌓였다
+    // (감사 A-4). 대기 시간 기준은 그대로 두고, 이제 실제로 요청을 끊는다.
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), ROOMS_HOME_TIMEOUT_MS);
+    getRoomsHome(token, { signal: controller.signal })
       .then((response) => {
         if (active) setHome(response);
       })
@@ -80,10 +86,13 @@ export function RoomsHome() {
         if (active) setToast("모임 정보를 불러오지 못했어요.");
       })
       .finally(() => {
+        window.clearTimeout(timer);
         if (active) setLoading(false);
       });
     return () => {
       active = false;
+      window.clearTimeout(timer);
+      controller.abort();   // 화면을 떠나면 요청도 같이 끊는다
     };
   }, [isMockSession, token]);
 

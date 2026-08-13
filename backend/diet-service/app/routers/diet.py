@@ -1,5 +1,6 @@
 import asyncio
 import calendar
+import hmac
 import json
 import logging
 import uuid
@@ -767,7 +768,14 @@ def _verify_internal_secret(x_internal_service_secret: str | None) -> None:
     # admin_signup_secret과 같은 이유로 빈 값이면 무조건 거부한다 — 값이
     # 비어있는데 헤더도 없는 요청을 통과시키면 "설정을 깜빡함"이 "누구나 통과"가
     # 되는 사고로 이어진다.
-    if not settings.internal_service_secret or x_internal_service_secret != settings.internal_service_secret:
+    #
+    # 비교는 hmac.compare_digest — `!=`는 첫 불일치 바이트에서 바로 빠져나와
+    # 비교 시간이 맞은 접두사 길이에 비례한다. 클러스터 내부 전용이고
+    # NetworkPolicy가 default-deny라 실위험은 낮지만, 시크릿 비교를 상수시간으로
+    # 두는 비용이 한 줄이라 맞춰둔다.
+    if not settings.internal_service_secret or not hmac.compare_digest(
+        x_internal_service_secret or "", settings.internal_service_secret
+    ):
         raise HTTPException(status_code=403, detail="internal service 인증에 실패했습니다.")
 
 

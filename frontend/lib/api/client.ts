@@ -77,16 +77,81 @@ function apiUrl(path: string) {
   return `${API_PREFIX}${normalized}`;
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(apiUrl(path), {
-    cache: "no-store",
-    ...init,
-    headers: {
-      Accept: "application/json",
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...init.headers,
+// 공용 fetch에 타임아웃이 없어서, 백엔드가 느려지면 요청이 무한정 매달려 있었다.
+// 화면 쪽 타임아웃(RoomsHome의 Promise.race 4.5초)은 프로미스만 버릴 뿐 요청은
+// 계속 살아 있어서, 사용자가 새로고침할수록 이미 포화된 서비스에 요청이 쌓였다
+// (2026-08-13 감사 A-4: "느리다"가 아니라 "느려지면 더 느려진다").
+//
+// 15초는 관측된 최악값(rooms 5.5초)의 약 3배다. 지금 성공하는 요청을 실패로
+// 바꾸지 않으면서 무한 대기만 끊는 게 목적이라 일부러 넉넉하게 잡았다.
+// LLM 호출처럼 더 오래 걸리는 게 정상인 경로는 timeoutMs로 개별 조정한다.
+export const DEFAULT_TIMEOUT_MS = 15_000;
+
+export class ApiTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super("요청이 응답하지 않아 취소했어요.");
+    this.name = "ApiTimeoutError";
+  }
+}
+
+export type ApiRequestInit = RequestInit & {
+  /** 0이면 타임아웃 없음(스트리밍 등). 기본 DEFAULT_TIMEOUT_MS. */
+  timeoutMs?: number;
+};
+
+// AbortSignal.any()는 지원 브라우저가 아직 좁아서(Safari 17.4+) 직접 합친다.
+// 호출부가 준 signal(언마운트 취소)과 타임아웃 중 먼저 오는 쪽이 요청을 끊는다.
+function linkAbort(external: AbortSignal | null | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const timer = timeoutMs > 0
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs)
+    : null;
+
+  const onExternalAbort = () => controller.abort();
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener("abort", onExternalAbort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    didTimeOut: () => timedOut,
+    release: () => {
+      if (timer !== null) clearTimeout(timer);
+      external?.removeEventListener("abort", onExternalAbort);
     },
-  });
+  };
+}
+
+export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, signal: callerSignal, ...rest } = init;
+  const abort = linkAbort(callerSignal, timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), {
+      cache: "no-store",
+      ...rest,
+      signal: abort.signal,
+      headers: {
+        Accept: "application/json",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+  } catch (error) {
+    // 타임아웃으로 우리가 끊은 것과 호출부가 언마운트로 끊은 것을 구분한다.
+    // 후자는 그대로 AbortError로 흘려보내야 호출부의 무시 로직이 동작한다.
+    if (abort.didTimeOut()) throw new ApiTimeoutError(timeoutMs);
+    throw error;
+  } finally {
+    abort.release();
+  }
 
   // response.ok일 때만 저장한다 — 백엔드가 토큰 디코드 성공 시 유저 존재 여부를
   // 확인하기 전에 X-Refreshed-Token부터 세팅해서, 탈퇴(404)/그 외 실패 응답에도
@@ -115,14 +180,21 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   return payload as T;
 }
 
-export async function withMockFallback<T>(request: () => Promise<T>, fallback: T): Promise<T> {
+// 실패를 조용히 삼키고 빈 값을 돌려주므로, 홈 화면은 백엔드가 느리거나 500이어도
+// 그냥 빈 섹션으로 보인다 — rooms 지연(감사 A-2)이 오래 안 드러난 직접적인 이유다.
+// 사용자에게 노출하는 동작은 그대로 두되(빈 섹션이 에러 토스트보다 낫다),
+// 삼킨 실패는 로그에 한 줄 남긴다. label은 어느 호출이 죽었는지 구분용.
+export async function withMockFallback<T>(request: () => Promise<T>, fallback: T, label?: string): Promise<T> {
   try {
     const value = await request();
     if (typeof value === "object" && value && "status" in value && (value as { status?: string }).status === "PREPARING") {
       return fallback;
     }
     return value;
-  } catch {
+  } catch (error) {
+    // 언마운트로 인한 취소는 실패가 아니다 — 로그를 더럽히지 않는다.
+    if (error instanceof DOMException && error.name === "AbortError") return fallback;
+    console.warn(`[api] ${label ?? "request"} failed, using fallback:`, error);
     return fallback;
   }
 }

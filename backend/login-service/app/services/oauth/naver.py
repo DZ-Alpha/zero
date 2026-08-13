@@ -3,6 +3,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.config import settings
+from app.services.oauth import OAUTH_HTTP_TIMEOUT
 from app.services.oauth.types import NormalizedProfile, OAuthExchangeError
 
 AUTHORIZE_URL = "https://nid.naver.com/oauth2.0/authorize"
@@ -28,7 +29,7 @@ async def exchange_code_for_token(code: str, state: str) -> str:
         "code": code,
         "state": state,
     }
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=OAUTH_HTTP_TIMEOUT) as client:
         response = await client.get(TOKEN_URL, params=params)
         response.raise_for_status()
         payload = response.json()
@@ -41,7 +42,7 @@ async def exchange_code_for_token(code: str, state: str) -> str:
 
 async def fetch_profile(access_token: str) -> NormalizedProfile:
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=OAUTH_HTTP_TIMEOUT) as client:
         response = await client.get(USERINFO_URL, headers=headers)
         response.raise_for_status()
         body = response.json()

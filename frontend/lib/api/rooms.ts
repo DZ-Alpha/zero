@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/api/client";
+import { apiRequest, type ApiRequestInit } from "@/lib/api/client";
 import type {
   CreateRoomInput,
   CreateRoomResponse,
@@ -28,8 +28,11 @@ function writeHeaders(token: string, idempotencyKey?: string): HeadersInit {
   };
 }
 
-export function getRoomsHome(token: string) {
+// init을 받는 이유: 이 엔드포인트가 가장 느려서(감사 A-2) 호출부가 자기
+// AbortSignal로 끊을 수 있어야 한다. 언마운트/화면 타임아웃 모두 여기로 들어온다.
+export function getRoomsHome(token: string, init: ApiRequestInit = {}) {
   return apiRequest<RoomsHomeResponse>("/rooms", {
+    ...init,
     headers: authHeaders(token),
   });
 }
