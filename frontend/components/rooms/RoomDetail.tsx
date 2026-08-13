@@ -729,9 +729,18 @@ export function RoomDetail({ roomId }: { roomId: string }) {
                             <div className={styles.setlogBubbles}>
                               {(mealComments ?? []).slice(-2).map((comment) => (
                                 <p key={comment.id}>
-                                  {comment.authorName} · {comment.message}
+                                  {/* 텍스트를 span으로 감싼다 — 예전엔 삭제 버튼이 본문 바로
+                                      뒤에 붙어서 "나도 한입만×"처럼 문장의 일부로 읽혔다. */}
+                                  <span>{comment.authorName} · {comment.message}</span>
                                   {comment.canDelete && (
-                                    <button type="button" onClick={() => deleteComment(meal.id, comment.id)} aria-label="댓글 삭제"> ×</button>
+                                    <button
+                                      type="button"
+                                      className={styles.commentDelete}
+                                      onClick={() => deleteComment(meal.id, comment.id)}
+                                      aria-label={`${comment.authorName}님의 댓글 삭제`}
+                                    >
+                                      ×
+                                    </button>
                                   )}
                                 </p>
                               ))}
