@@ -116,8 +116,8 @@ async def _consume_once(consumer: AIOKafkaConsumer) -> None:
         except Exception:
             # commit하지 않고 다음 메시지로 넘어간다 — 재기동하면 이
             # 오프셋부터 다시 전달된다 (at-least-once).
-            # apply_vision_result가 이미 종결 상태(COMPLETED/FAILED)는
-            # 재적용하지 않으므로 재전달은 안전하다.
+            # apply_vision_result가 종결 상태(COMPLETED/FAILED/
+            # AWAITING_CONFIRMATION)는 재적용하지 않으므로 재전달은 안전하다.
             logger.exception(
                 "vision consumer: failed to process message topic=%s offset=%s",
                 msg.topic, msg.offset,
