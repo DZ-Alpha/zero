@@ -172,19 +172,18 @@ export function RoomsHome() {
     }
   }
 
-  if (!authReady || (signedIn && token && loading)) {
-    return (
-      <main className={styles.page}>
-        <div className={styles.wrap}>
-          <section className={styles.authGate} aria-label="얌로그 확인 중">
-            <span aria-hidden="true" />
-          </section>
-        </div>
-      </main>
-    );
-  }
+  // 예전엔 여기서 페이지 전체를 빈 authGate로 갈아끼우고 응답을 기다렸다. 그래서
+  // HTML 도착 → JS 766KB 파싱 → 하이드레이션 → useAuthSession이 localStorage를
+  // 읽어 리렌더 → 그제서야 fetch 시작, 이 구간 내내 화면이 완전히 비어 있었다.
+  // fetch 자체는 110ms인데 그 앞의 수백 ms가 빈 화면이었다(2026-08-13 재측정 §4).
+  // 이제는 껍데기(히어로·섹션 제목)를 즉시 그리고 데이터 자리만 스켈레톤으로 둔다 —
+  // HomeDashboard가 쓰던 방식과 같다(거긴 authReady 체크가 useEffect 안에 있다).
+  const bootstrapping = !authReady || (signedIn && token && loading);
 
-  if (!signedIn) {
+  // 로그인 안내는 authReady가 된 뒤에만 띄운다. authReady 전에는 로그인 여부를
+  // 아직 모르므로, 비로그인 화면을 먼저 보여줬다가 로그인 화면으로 바꾸는
+  // 깜빡임이 생긴다.
+  if (authReady && !signedIn) {
     return (
       <main className={styles.page}>
         <div className={styles.wrap}>
@@ -211,22 +210,31 @@ export function RoomsHome() {
         <section className={styles.hero}>
           <div>
             <h1>오늘의 식탁을 <em>함께 이어가요.</em></h1>
-            <div className={styles.liveSignal} aria-label="얌로그 참여 현황">
-              <i aria-hidden="true" />
-              <strong>{myRooms.length} / {MAX_ROOM_COUNT}</strong>
-              <span>내 모임 · 전체 {(home?.activeTeamCount ?? 0).toLocaleString()}팀 기록 중</span>
-            </div>
+            {bootstrapping ? (
+              <div className={styles.liveSignal} aria-label="얌로그 참여 현황 불러오는 중">
+                <i aria-hidden="true" />
+                <span className={`${styles.skeleton} ${styles.skeletonLine}`} aria-hidden="true" />
+              </div>
+            ) : (
+              <div className={styles.liveSignal} aria-label="얌로그 참여 현황">
+                <i aria-hidden="true" />
+                <strong>{myRooms.length} / {MAX_ROOM_COUNT}</strong>
+                <span>내 모임 · 전체 {(home?.activeTeamCount ?? 0).toLocaleString()}팀 기록 중</span>
+              </div>
+            )}
           </div>
           <div className={styles.heroActions}>
             <button
               type="button"
               className={styles.primaryButton}
               onClick={() => roomLimitReached ? setToast("얌로그 모임은 3개까지 만들 수 있어요.") : openModal("create")}
-              disabled={roomLimitReached}
+              // 아직 세션·모임 수를 모르는 동안 눌리면 안 된다 — 방 3개 제한 판정이
+              // 데이터 도착 전이라 한도를 넘겨 만들려다 실패하는 흐름이 생긴다.
+              disabled={bootstrapping || roomLimitReached}
             >
               모임 만들기
             </button>
-            <button type="button" className={styles.secondaryButton} onClick={() => openModal("join")} disabled={roomLimitReached}>코드로 참여</button>
+            <button type="button" className={styles.secondaryButton} onClick={() => openModal("join")} disabled={bootstrapping || roomLimitReached}>코드로 참여</button>
           </div>
           <p className={styles.roomLimit}>모임은 최대 {MAX_ROOM_COUNT}개까지 함께할 수 있어요.</p>
         </section>
@@ -239,7 +247,20 @@ export function RoomsHome() {
             </div>
           </header>
 
-          {myRooms.length === 0 ? (
+          {bootstrapping ? (
+            // 아직 모르는 상태에서 "참여한 모임이 없어요"를 띄우면, 방이 있는
+            // 사용자에게 잠깐 거짓말을 하게 된다. 자리만 잡아둔다.
+            <div className={styles.roomGrid} aria-label="내 모임 불러오는 중">
+              {[0, 1].map((index) => (
+                <article className={`${styles.roomCard} ${styles.skeletonCard}`} key={index} aria-hidden="true">
+                  <span className={`${styles.skeleton} ${styles.skeletonChip}`} />
+                  <span className={`${styles.skeleton} ${styles.skeletonTitle}`} />
+                  <span className={`${styles.skeleton} ${styles.skeletonLine}`} />
+                  <span className={`${styles.skeleton} ${styles.skeletonBlock}`} />
+                </article>
+              ))}
+            </div>
+          ) : myRooms.length === 0 ? (
             <div className={styles.emptyRooms}>
               <span aria-hidden="true">🍽️</span>
               <div><strong>아직 참여한 모임이 없어요</strong><p>모임을 만들거나 받은 코드로 참여해보세요.</p></div>
@@ -302,7 +323,16 @@ export function RoomsHome() {
             </div>
           </header>
           <div className={styles.activityRibbon}>
-            {roomActivity.map((activity) => (
+            {bootstrapping && [0, 1, 2].map((index) => (
+              <span className={`${styles.activityItem} ${styles.skeletonCard}`} key={`skeleton-${index}`} aria-hidden="true">
+                <span className={`${styles.skeleton} ${styles.skeletonPhoto}`} />
+                <span className={styles.activityCopy}>
+                  <span className={`${styles.skeleton} ${styles.skeletonLine}`} />
+                  <span className={`${styles.skeleton} ${styles.skeletonTitle}`} />
+                </span>
+              </span>
+            ))}
+            {!bootstrapping && roomActivity.map((activity) => (
               <Link href={`/rooms/${activity.roomId}`} className={styles.activityItem} key={activity.id}>
                 <span className={styles.activityPhoto}><SafeImage src={activity.imageUrl} alt="" fallbackLabel={MEAL_LABELS[activity.mealType]} /></span>
                 <span className={styles.activityCopy}>
@@ -330,11 +360,20 @@ export function RoomsHome() {
               <p className={styles.eyebrow}>이번 주 기록</p>
               <h2 id="team-ranking-title">이번 주 팀 랭킹</h2>
             </div>
-            {isMockRanking ? <span className={styles.rankingPreviewBadge}>예시</span> : <p>평균 당류와 기록률만 공개돼요.</p>}
+            {/* 불러오는 중에는 "예시" 배지를 안 띄운다 — 실제 랭킹이 없어서가 아니라
+                아직 안 왔을 뿐인데, 예시 데이터가 먼저 보였다가 바뀌면 더 혼란스럽다. */}
+            {bootstrapping ? null : isMockRanking ? <span className={styles.rankingPreviewBadge}>예시</span> : <p>평균 당류와 기록률만 공개돼요.</p>}
           </header>
 
           <ol className={styles.rankList}>
-            {teamRanking.slice(0, showAllRanking ? teamRanking.length : 3).map((team, index) => (
+            {bootstrapping && [0, 1, 2].map((index) => (
+              <li className={`${styles.rankRow} ${styles.skeletonCard}`} key={`skeleton-${index}`} aria-hidden="true">
+                <span className={styles.rankNumber}>{String(index + 1).padStart(2, "0")}</span>
+                <span className={`${styles.skeleton} ${styles.skeletonTitle}`} />
+                <span className={`${styles.skeleton} ${styles.skeletonLine}`} />
+              </li>
+            ))}
+            {!bootstrapping && teamRanking.slice(0, showAllRanking ? teamRanking.length : 3).map((team, index) => (
               <li className={`${styles.rankRow} ${team.isMine ? styles.rankRowMine : ""}`} key={team.id}>
                 <span className={styles.rankNumber}>{String(index + 1).padStart(2, "0")}</span>
                 <span className={styles.teamEmoji} aria-hidden="true">{team.emoji}</span>
