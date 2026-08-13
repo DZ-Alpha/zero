@@ -4464,3 +4464,37 @@
   .roomHeader h1 { font-size:25px; }
   .roomHeaderMeta { font-size:10px; }
 }
+
+/* 스켈레톤 — 응답을 기다리는 동안 페이지 껍데기를 먼저 그리기 위한 자리표시자.
+   예전엔 authGate 하나로 페이지 전체를 덮고 기다려서, fetch가 시작되기도 전인
+   하이드레이션 구간까지 화면이 통째로 비어 있었다(2026-08-13 재측정 §4). */
+.skeleton {
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #eef1ec 25%, #f6f8f4 37%, #eef1ec 63%);
+  background-size: 400% 100%;
+  animation: skeletonSweep 1.4s ease-in-out infinite;
+}
+
+.skeletonLine { width: 60%; height: 11px; }
+.skeletonTitle { width: 80%; height: 15px; }
+.skeletonChip { width: 34px; height: 34px; border-radius: 50%; }
+.skeletonBlock { width: 100%; height: 56px; }
+.skeletonPhoto { width: 44px; height: 44px; border-radius: 10px; flex: none; }
+
+.skeletonCard {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  pointer-events: none;
+}
+
+@keyframes skeletonSweep {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+/* 접근성 - 모션 최소화 설정에서는 쓸어가는 애니메이션을 끄고 정적 회색만 남긴다. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: #eef1ec; }
+}
