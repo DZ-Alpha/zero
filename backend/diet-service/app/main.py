@@ -65,8 +65,14 @@ async def _migrate(conn) -> None:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    await run_with_retry(_migrate)
-    logger.info("diet-service started, owned tables ensured")
+    # DB_AUTO_MIGRATE=false면 DDL을 건너뛴다 — RDS 최소권한 app role에서는
+    # 여기서 InsufficientPrivilege가 나면서 기동 자체가 실패한다(계획서 A-01).
+    # 그 환경에서는 db/migrations/diet-service.sql을 DBA가 먼저 적용한다.
+    if settings.db_auto_migrate:
+        await run_with_retry(_migrate)
+        logger.info("diet-service started, owned tables ensured")
+    else:
+        logger.info("diet-service started, DB_AUTO_MIGRATE=false — startup DDL skipped")
     await start_consumer()
 
 

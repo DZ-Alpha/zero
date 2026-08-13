@@ -21,8 +21,8 @@ engine = create_async_engine(
     # TooManyConnectionsError가 난다(2026-07-31 실사용 중 재현). 서비스마다
     # 접속 상한을 보수적으로 고정하고, pool_recycle로 죽은 커넥션이 풀에
     # 남아있지 않게 한다.
-    pool_size=5,
-    max_overflow=3,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
     pool_timeout=10,
     pool_recycle=1800,
     pool_pre_ping=True,

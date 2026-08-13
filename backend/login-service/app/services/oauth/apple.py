@@ -6,6 +6,7 @@ import httpx
 import jwt as pyjwt
 
 from app.core.config import settings
+from app.services.oauth import OAUTH_HTTP_TIMEOUT
 from app.services.oauth.types import NormalizedProfile, OAuthExchangeError
 
 AUTHORIZE_URL = "https://appleid.apple.com/auth/authorize"
@@ -76,7 +77,7 @@ async def exchange_code_for_token(code: str, state: str) -> str:
         "grant_type": "authorization_code",
         "redirect_uri": settings.apple_redirect_uri,
     }
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=OAUTH_HTTP_TIMEOUT) as client:
         response = await client.post(TOKEN_URL, data=data)
         payload = response.json()
 

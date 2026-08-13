@@ -525,19 +525,35 @@ async def get_recipe_refs_bulk(db: AsyncSession, recipe_ids: list[int]) -> dict[
 # ── 홈 당/칼로리 게이지 (MN-0106~0108) ────────────────────────────────────────
 
 async def get_today_totals(db: AsyncSession, user_id: int) -> dict:
-    """오늘 날짜 칼로리/당 합계 — v_meal_totals 뷰 기반.
+    """오늘 날짜 칼로리/당 합계 — meal_items 직접 집계.
 
     "오늘"은 Asia/Seoul 기준이다 — 프론트가 날짜를 KST로 매기고(getTodayKey)
     그 날짜의 00:00Z로 eaten_at을 저장하기 때문에, UTC로 자르면 KST 자정~오전
     9시 사이에 "오늘" 기록이 어제로 밀려 홈 게이지에 안 잡히는 문제가 있었다.
+
+    v_meal_totals 뷰를 쓰지 않는다(2026-08-13 운영 EXPLAIN ANALYZE). 뷰 정의가
+    `GROUP BY ml.meal_log_id`라 바깥 WHERE ml.user_id가 뷰 안으로 내려가지
+    못하고, 2행을 얻으려고 meal_logs 19,867 × meal_items 19,497 전체를
+    집계한다(HashAggregate가 디스크로 넘침, 187.409ms). 커밋 f1bb885이 추가한
+    idx_meal_items_meal_log도 GROUP BY가 전 행을 요구해 플래너가 못 쓴다.
+    평탄화하면 같은 결과를 0.162ms에 낸다(1,150배).
+
+    뷰는 meal_log마다 numeric(12,2)로 캐스팅한 뒤 합산하고 여기서는 합산 후
+    반올림한다. meal_items.calories/sugars가 이미 numeric(10,2)라 2자리 값들의
+    SUM은 자리수가 늘지 않아 결과가 같지만(운영에서 1020.00 / 6.00 동일 확인),
+    뷰 정의가 바뀌면 어긋날 수 있다 — 뷰는 DB 팀 소유다.
+
+    main-service에도 같은 뷰를 같은 방식으로 읽는 곳이 있다
+    (main-service/app/services/gauge_store.py). 3레플리카라 호출량은 그쪽이 더
+    많을 수 있어 함께 평탄화했다 — 한쪽만 고치면 절반만 해결된다.
     """
     row = await db.execute(
         text("""
             SELECT
-                COALESCE(SUM(vt.total_calories), 0) AS calories,
-                COALESCE(SUM(vt.total_sugars), 0)   AS sugars
+                COALESCE(SUM(mi.calories), 0) AS calories,
+                COALESCE(SUM(mi.sugars), 0)   AS sugars
             FROM service.meal_logs ml
-            JOIN service.v_meal_totals vt ON vt.meal_log_id = ml.meal_log_id
+            LEFT JOIN service.meal_items mi ON mi.meal_log_id = ml.meal_log_id
             WHERE ml.user_id = :uid
               AND date_trunc('day', ml.eaten_at AT TIME ZONE 'Asia/Seoul') =
                   date_trunc('day', now() AT TIME ZONE 'Asia/Seoul')

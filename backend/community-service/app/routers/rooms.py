@@ -1,3 +1,4 @@
+import hmac
 import uuid
 from datetime import date as date_cls
 from typing import Annotated
@@ -646,7 +647,10 @@ async def post_report(
 def _verify_internal_secret(x_internal_service_secret: str | None) -> None:
     # diet-service의 _verify_internal_secret과 동일한 이유 - 빈 값이면 무조건
     # 거부한다(설정 누락이 "누구나 통과"로 이어지지 않게).
-    if not settings.internal_service_secret or x_internal_service_secret != settings.internal_service_secret:
+    # 비교가 hmac.compare_digest인 이유도 그쪽과 같다(타이밍 차이 제거).
+    if not settings.internal_service_secret or not hmac.compare_digest(
+        x_internal_service_secret or "", settings.internal_service_secret
+    ):
         raise HTTPException(status_code=403, detail="internal service 인증에 실패했습니다.")
 
 
