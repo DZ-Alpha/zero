@@ -5404,9 +5404,3 @@ body{overflow-x:hidden}
 .home-signal-recipe .home-signal-panel>header,
 .home-signal-recipe>header{border-bottom-color:rgba(120,92,36,.18)}
 .home-signal-recipe>header>span{border-color:#e3d3b4}
-
-/* 대안을 못 찾은 경우의 안내 - 카드를 지우면 "대안 없음"과 "연동 깨짐"이
-   구분되지 않는다(2026-08-12 장애 회고 §5-2). 톤은 낮추되 자리는 지킨다. */
-.vision-swap.is-empty{background:#f7f8f5;border-color:#e0e5dd}
-.vision-swap.is-empty>header{margin-bottom:0}
-.vision-swap.is-empty>header h3{font-size:15px;color:#4f584f}
