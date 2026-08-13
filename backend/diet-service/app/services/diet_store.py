@@ -160,6 +160,11 @@ async def complete_meal_log(db: AsyncSession, meal_log_id: uuid.UUID, items: lis
     return log
 
 
+# 결과가 이미 반영된 상태들. 재전달된 결과 이벤트는 여기서 no-op으로 끝난다.
+# PENDING만 비종결이며 정상 반영 경로를 탄다.
+_FINAL_ANALYSIS_STATUSES = ("COMPLETED", "FAILED", "AWAITING_CONFIRMATION")
+
+
 async def _replace_meal_items(db: AsyncSession, meal_log_id: uuid.UUID, items: list[MealItem]) -> None:
     for existing in await get_meal_items(db, meal_log_id):
         await db.delete(existing)
@@ -181,12 +186,17 @@ async def apply_vision_result(
     """Kafka consumer(diet.photo.completed/failed) 처리: confidence/provider
     기록 + 상태 전이 + outbox.
 
-    같은 causation_event_id로 재전달돼도(Kafka at-least-once) 안전하도록,
-    이미 종결 상태(COMPLETED/FAILED)인 meal_log는 그대로 반환하고 재적용하지
-    않는다 — vision_consumer.py는 이 반환값과 무관하게 매번 commit한다.
+    같은 causation_event_id로 재전달돼도(at-least-once) 안전하도록, 이미
+    종결 상태인 meal_log는 그대로 반환하고 재적용하지 않는다 —
+    vision_consumer.py는 이 반환값과 무관하게 매번 commit한다.
+
+    AWAITING_CONFIRMATION도 종결 상태다. 이름과 달리 "결과가 아직 없음"이
+    아니라 "결과는 이미 반영됐고 사용자 확정만 남음"을 뜻한다. 여기서 빠지면
+    재전달 때 _replace_meal_items가 돌아 사용자가 확인 중이던 항목이
+    사라진다(2026-08-13 실측 314건 = 요청 이벤트를 가진 647건의 48%).
     """
     log = await get_meal_log(db, meal_log_id)
-    if log.analysis_status in ("COMPLETED", "FAILED"):
+    if log.analysis_status in _FINAL_ANALYSIS_STATUSES:
         return log
 
     log.vision_confidence = confidence
