@@ -1954,6 +1954,45 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
   backdrop-filter: blur(8px);
+  /* 본문과 삭제 버튼을 나란히 두되 붙지 않게 한다 - 예전엔 버튼이 텍스트 바로
+     뒤에 와서 "나도 한입만x"처럼 문장의 일부로 읽혔다. */
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+/* 댓글 삭제 버튼.
+   .setlogBubbles에는 pointer-events:none이 걸려 있다 - 말풍선이 사진 위에
+   떠 있어서, 말풍선을 눌러도 뒤의 사진이 열려야 하기 때문이다. 그 상속 때문에
+   이 버튼도 클릭을 못 받고 있었다(2026-08-13 확인: 버튼 자리에서 hit test를
+   하면 배경 img가 잡혔고, 삭제가 실제로 동작하지 않았다). 여기서만 되살린다.
+   폭도 7px밖에 안 됐어서 눌릴 수 있는 크기로 키운다. */
+.setlogBubbles p .commentDelete {
+  pointer-events: auto;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: -1px -3px 0 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(38, 48, 40, .09);
+  color: #57655a;
+  font-size: 13px;
+  /* 본문이 700이라 같이 굵으면 글자로 읽힌다 - 버튼은 눌러서 지우는 것이지
+     읽는 대상이 아니므로 굵기를 낮춘다. */
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.setlogBubbles p .commentDelete:hover,
+.setlogBubbles p .commentDelete:focus-visible {
+  background: rgba(38, 48, 40, .18);
+  color: #1b2a1f;
 }
 
 .setlogReply {
