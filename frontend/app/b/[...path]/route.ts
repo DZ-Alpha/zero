@@ -24,6 +24,13 @@ const gatewayUrl = process.env.BACKEND_GATEWAY_URL?.trim().replace(/\/$/, "");
 // 직접 요청한다.
 const minioUrl = process.env.MINIO_URL?.trim().replace(/\/$/, "");
 
+// AWS(EKS) 전용 - 상품/레시피 이미지는 CloudFront(OAC)가 S3를 서명 대리한다.
+// 값이 있으면 /b/product-images/*, /b/recipe-images/* 를 302로 CDN에 넘긴다.
+// DB의 image_url(/b/product-images/{key})은 그대로 두고 경계에서만 변환하므로
+// 온프렘(MINIO_URL)과 AWS(IMAGE_CDN_URL) 어느 쪽에서도 같은 이미지가 동작한다.
+// diet-photos는 대상이 아니다 - v3 diet-service가 presigned 절대 URL을 반환한다.
+const imageCdnUrl = process.env.IMAGE_CDN_URL?.trim().replace(/\/$/, "");
+
 // SSE(/b/ai/chatbot/stream 등)는 LLM 응답이 오래 이어진다 — 기존 b-gateway의
 // proxy_read_timeout 120s와 맞춘다(Istio 전환 요청서 §5). 업로드는 10MB 사진이
 // 느린 회선에서 8초를 넘길 수 있어 별도로 늘린다. 나머지 일반 API는 8초 유지.
@@ -134,6 +141,11 @@ async function proxy(request: NextRequest, context: RouteContext) {
 
   if (isInternalOnly(path)) {
     return NextResponse.json({ detail: "Not Found" }, { status: 404 });
+  }
+
+  if (imageCdnUrl && (path[0] === "product-images" || path[0] === "recipe-images")) {
+    const encodedPath = path.map(encodeURIComponent).join("/");
+    return NextResponse.redirect(`${imageCdnUrl}/${encodedPath}`, 302);
   }
 
   const normalizedPath = normalizePath(path);
