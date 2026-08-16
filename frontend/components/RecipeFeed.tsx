@@ -26,6 +26,7 @@ export function RecipeFeed() {
     search: query.trim() || undefined,
     sort: sort === "당류 감소순" ? "sugarReduction" : undefined,
     eligible: personalOnly || undefined,
+    category: category !== "전체" ? category : undefined,
   });
   // 추천 띠("재료 비교가 끝난 메뉴")는 목록과 기준이 다르므로 따로 부른다. 목록에서
   // 앞 3건을 자르면 비교가 안 끝난 레시피가 추천으로 올라간다.
@@ -49,16 +50,14 @@ export function RecipeFeed() {
     };
   }, [authReady, signedIn, token]);
 
-  const availableCategories = new Set(recipes.map((recipe) => recipe.category));
-  const categories = ["전체", ...RECIPE_CATEGORIES.filter((item) => availableCategories.has(item))];
+  // 칩은 항상 전 카테고리를 보여준다. 예전처럼 받아온 recipes 에서 뽑으면, 카테고리를
+  // 서버로 거른 뒤에는 그 카테고리 하나만 남아 다른 칩으로 갈아탈 수 없다.
+  const categories = ["전체", ...RECIPE_CATEGORIES];
   const filtered = useMemo(() => {
     let list = recipes.filter((recipe) => {
-      const queryMatch = [recipe.title, recipe.category, recipe.author, ...recipe.keywords].some((value) => value.includes(query));
-      const categoryMatch = category === "전체" || recipe.category === category;
-      // personalOnly 는 이제 서버 쿼리의 eligible 로 처리한다. 예전에는 추천 3건의
-      // id 집합으로 클라이언트에서 걸렀는데, 그러면 3건이 현재 페이지에 없을 때
-      // 목록이 통째로 비었다.
-      return queryMatch && categoryMatch;
+      // 카테고리와 eligible 은 서버 쿼리로 넘어갔다. 여기서 또 거르면 안 된다 -
+      // 받아온 페이지 안에서만 거르던 게 무한 스크롤이 멈추던 원인이었다.
+      return [recipe.title, recipe.category, recipe.author, ...recipe.keywords].some((value) => value.includes(query));
     });
     if (sort === "인기순") list = [...list].sort((a, b) => b.savedDemo - a.savedDemo);
     // "빠른 조리순"은 조리 시간 숨김(RecipeCover.tsx 참고)과 함께 잠시 뺐다 —

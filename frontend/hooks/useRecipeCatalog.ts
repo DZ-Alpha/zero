@@ -83,7 +83,10 @@ function toRecipeData(item: RecipeListItem, detail: RecipeDetailResponse | null,
   };
 }
 
-export function useRecipeCatalog(fallback: RecipeData[], values: { search?: string; sort?: string; eligible?: boolean } = {}) {
+export function useRecipeCatalog(
+  fallback: RecipeData[],
+  values: { search?: string; sort?: string; eligible?: boolean; category?: string } = {},
+) {
   const fallbackRef = useRef(fallback);
   fallbackRef.current = fallback;
   const [items, setItems] = useState<RecipeData[]>([]);
@@ -106,7 +109,7 @@ export function useRecipeCatalog(fallback: RecipeData[], values: { search?: stri
       setHasMore(false);
       setLoading(false);
     }, 3500);
-    getRecipes(1, values.search, values.sort, values.eligible)
+    getRecipes(1, values.search, values.sort, values.eligible, values.category)
       .then(({ recipes, hasNext, total: nextTotal }) => {
         if (!active) return;
         window.clearTimeout(fallbackTimer);
@@ -134,13 +137,13 @@ export function useRecipeCatalog(fallback: RecipeData[], values: { search?: stri
       active = false;
       window.clearTimeout(fallbackTimer);
     };
-  }, [revision, values.search, values.sort, values.eligible]);
+  }, [revision, values.search, values.sort, values.eligible, values.category]);
 
   const loadMore = useCallback(() => {
     if (source !== "api" || loadingMore || !hasMore) return;
     setLoadingMore(true);
     const nextPage = page + 1;
-    getRecipes(nextPage, values.search, values.sort, values.eligible)
+    getRecipes(nextPage, values.search, values.sort, values.eligible, values.category)
       .then(({ recipes, hasNext, total: nextTotal }) => {
         setItems((current) => [...current, ...recipes.map((recipe) => toRecipeData(recipe, null, fallbackRef.current))]);
         setPage(nextPage);
@@ -149,7 +152,7 @@ export function useRecipeCatalog(fallback: RecipeData[], values: { search?: stri
       })
       .catch(() => setHasMore(false))
       .finally(() => setLoadingMore(false));
-  }, [source, loadingMore, hasMore, page, values.search, values.sort, values.eligible]);
+  }, [source, loadingMore, hasMore, page, values.search, values.sort, values.eligible, values.category]);
 
   return {
     recipes: items,

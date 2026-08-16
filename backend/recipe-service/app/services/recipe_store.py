@@ -13,11 +13,22 @@ class RecipeNotFoundError(Exception):
     pass
 
 
-def _apply_recipe_filters(stmt, source: str | None, search: str | None = None, eligible: bool = False):
+def _apply_recipe_filters(
+    stmt,
+    source: str | None,
+    search: str | None = None,
+    eligible: bool = False,
+    category: str | None = None,
+):
     if source:
         stmt = stmt.where(Recipe.source == source)
     if search and search.strip():
         stmt = stmt.where(Recipe.name.ilike(f"%{search.strip()}%"))
+    # 카테고리는 서버에서 걸러야 한다. 프론트가 받아온 페이지 안에서만 거르던 때는
+    # 1,709건 중 음료가 3.9%라 첫 20건에 0~1건뿐이었고, 다음 페이지를 부르는 조건도
+    # 안 맞아 "다음 레시피를 불러오고 있어요"에서 멈췄다(2026-08-16).
+    if category and category.strip():
+        stmt = stmt.where(Recipe.category == category.strip())
     if eligible:
         matched_product = (
             select(1)
@@ -69,6 +80,7 @@ async def list_recipes_with_total(
     page: int = 1,
     search: str | None = None,
     eligible: bool = False,
+    category: str | None = None,
 ) -> tuple[list[Recipe], int]:
     """Return one recipe page and total count with one database round trip.
 
@@ -79,6 +91,7 @@ async def list_recipes_with_total(
         source,
         search,
         eligible,
+        category,
     )
     # nulls_last 이유는 list_recipes 주석 참고.
     stmt = stmt.order_by(nulls_last(Recipe.sugar_reduction_pct.desc())) if sort == "sugarReduction" else stmt.order_by(Recipe.id.desc())
@@ -88,12 +101,18 @@ async def list_recipes_with_total(
     if rows:
         return [row[0] for row in rows], int(rows[0][1])
     if page > 1:
-        return [], await count_recipes(db, source=source, search=search, eligible=eligible)
+        return [], await count_recipes(db, source=source, search=search, eligible=eligible, category=category)
     return [], 0
 
 
-async def count_recipes(db: AsyncSession, source: str | None = None, search: str | None = None, eligible: bool = False) -> int:
-    stmt = _apply_recipe_filters(select(func.count()).select_from(Recipe), source, search, eligible)
+async def count_recipes(
+    db: AsyncSession,
+    source: str | None = None,
+    search: str | None = None,
+    eligible: bool = False,
+    category: str | None = None,
+) -> int:
+    stmt = _apply_recipe_filters(select(func.count()).select_from(Recipe), source, search, eligible, category)
     return (await db.execute(stmt)).scalar_one()
 
 

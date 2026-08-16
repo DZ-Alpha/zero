@@ -6,6 +6,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { RecipeCover } from "@/components/RecipeCover";
 import { SafeImage } from "@/components/SafeImage";
 import { portionPrefix, productBySlug, recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
+import { RECIPE_CATEGORIES } from "@/data/taxonomy";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { getRecipeDetail, getRecipeSubstitutes, getRelatedRecipes, RecipeDetailResponse, RecipeListItem, RecipeSubstituteResponse } from "@/lib/api/zerocheck";
@@ -100,6 +101,12 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
       ...fallbackDetail,
       title: live.name || fallbackDetail.title,
       author: live.source || fallbackDetail.author,
+      // DB category(2026-08-16 백필)를 여기서 안 받아서, 카탈로그에 없는 레시피는
+      // fallbackDetail 의 하드코딩 "한 끼" 가 그대로 보였다. 허용 목록에 없는 값
+      // (미판정 NULL 등)이면 폴백을 쓴다.
+      category: RECIPE_CATEGORIES.includes(live.category as RecipeData["category"])
+        ? live.category as RecipeData["category"]
+        : fallbackDetail.category,
       thumbnail: live.thumbnailUrl || fallbackDetail.thumbnail,
       videoId: live.videoId ?? fallbackDetail.videoId,
       publishedAt: live.publishedAt || fallbackDetail.publishedAt,
