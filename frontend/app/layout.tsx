@@ -1,14 +1,24 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
-import { Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
 
 // 2026-07-31 - SUIT 적용을 롤백하고 원래 globals.css가 이름만 지정해뒀던
 // 'IBM Plex Sans KR'/'Noto Sans KR'을 실제로 불러온다. CDN 직접 참조
 // (@font-face/@import) 대신 이전과 같은 이유로 next/font로 self-host한다 -
 // 외부 요청 없이 로드되고, 레이아웃 시프트 방지·font-display는 next/font가
-// 처리한다. Noto Sans KR은 next/font/google이 공식 지원해서 그쪽을 쓰고,
-// IBM Plex Sans KR은 Google Fonts에 없어 next/font/local로 받는다.
+// 처리한다.
+//
+// 2026-08-16 - Noto Sans KR 을 next/font/google 에서 next/font/local 로 옮긴다.
+// google 쪽은 빌드 타임에 fonts.gstatic.com 에서 폰트 파일을 받아오는데,
+// 구글이 같은 v39 안에서 파일 URL 을 갈아치우면(PbyC... -> Pbyk...) 캐시에
+// 남은 옛 URL 이 404 가 되어 빌드가 통째로 실패한다. 실제로 파이프라인 #17 이
+// 이 문제로 620개 에러를 내고 죽었다. 이미지 digest 는 고정해두고 정작 빌드
+// 입력은 외부 CDN 에 매여 있던 셈이라, 폰트를 저장소에 넣어 빌드를 닫는다.
+//
+// 라틴/한글을 별도 패밀리로 선언하고 globals.css 에서 라틴 -> 한글 순으로
+// 쌓는다. next/font/local 은 src 항목별 unicode-range 를 지원하지 않아서,
+// 한 패밀리에 두 파일을 넣으면 글리프 폴백이 동작하지 않기 때문이다.
+// 브라우저는 앞 패밀리에 없는 글자만 뒤 패밀리에서 찾는다.
 const ibmPlexSansKr = localFont({
   src: [
     { path: "./fonts/ibm-plex-sans-kr/IBMPlexSansKR-ExtraLight.woff", weight: "200", style: "normal" },
@@ -22,10 +32,27 @@ const ibmPlexSansKr = localFont({
   display: "swap",
 });
 
-const notoSansKr = Noto_Sans_KR({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "700", "900"],
+const notoSansKr = localFont({
+  src: [
+    { path: "./fonts/noto-sans-kr/latin-300.woff2", weight: "300", style: "normal" },
+    { path: "./fonts/noto-sans-kr/latin-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/noto-sans-kr/latin-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/noto-sans-kr/latin-700.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/noto-sans-kr/latin-900.woff2", weight: "900", style: "normal" },
+  ],
   variable: "--font-noto-sans-kr",
+  display: "swap",
+});
+
+const notoSansKrKo = localFont({
+  src: [
+    { path: "./fonts/noto-sans-kr/korean-300.woff2", weight: "300", style: "normal" },
+    { path: "./fonts/noto-sans-kr/korean-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/noto-sans-kr/korean-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/noto-sans-kr/korean-700.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/noto-sans-kr/korean-900.woff2", weight: "900", style: "normal" },
+  ],
+  variable: "--font-noto-sans-kr-ko",
   display: "swap",
 });
 
@@ -49,7 +76,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html
       lang="ko"
       data-scroll-behavior="smooth"
-      className={`${ibmPlexSansKr.variable} ${notoSansKr.variable}`}
+      className={`${ibmPlexSansKr.variable} ${notoSansKr.variable} ${notoSansKrKo.variable}`}
     >
       <body>{children}</body>
     </html>
