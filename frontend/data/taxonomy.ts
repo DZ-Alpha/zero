@@ -14,11 +14,15 @@ export const PRODUCT_CATEGORIES = [
 
 export type ProductCategory = typeof PRODUCT_CATEGORIES[number]["label"];
 
-// 2026-07-31 요청 - 카테고리가 너무 적어 대부분의 실제(비목업) 레시피가 "한 끼"
-// 하나로 몰렸다. service.recipes 테이블엔 category 컬럼이 없어(데이터팀 스키마
-// 추가 필요, useRecipeCatalog.ts 참고) 실서버 카테고리를 직접 못 받으니, 그때까지
-// 이름 기반 추정이 더 세분화되도록 국·찌개/샐러드를 추가해 분포를 넓힌다.
-export const RECIPE_CATEGORIES = ["한 끼", "국·찌개", "반찬", "샐러드", "간식", "면", "분식", "소스"] as const;
+// 2026-08-16 개편 - 이전 8개(한 끼/국·찌개/반찬/샐러드/간식/면/분식/소스)는 분류
+// 축이 3개 섞여 있어 배타적일 수 없었다: 한 끼=역할, 면·분식=형태, 반찬·소스=식탁에서의
+// 역할, 간식=먹는 때. `비빔국수`는 형태로는 면, 역할로는 한 끼라 어느 쪽도 틀리지 않아
+// 판정이 늘 흔들렸다. 축을 "끼니에서의 역할" 하나로 통일하고 4개로 줄였다.
+//
+// service.recipes.category 는 이제 채워져 있다(1,677건 백필, 2026-08-16). 미판정 32건은
+// 이름이 요리명이 아니라 제목 문장이라(예: "다이어트 한끼 배부름") NULL 로 남겼고,
+// 그 경우에만 useRecipeCatalog.ts 의 inferCategory() 폴백이 돈다.
+export const RECIPE_CATEGORIES = ["한 끼", "간식", "음료", "양념·소스"] as const;
 export type RecipeCategory = typeof RECIPE_CATEGORIES[number];
 
 export const HEALTH_LABELS = [

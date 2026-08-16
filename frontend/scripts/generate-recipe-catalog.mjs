@@ -51,12 +51,14 @@ function number(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// 카테고리 4개 체계(2026-08-16). data/taxonomy.ts 의 RECIPE_CATEGORIES 와 같아야 한다
+// - 여기가 어긋나면 재생성 때 옛 카테고리("면"/"분식"/"반찬")가 되살아나고,
+// useRecipeCatalog.ts 의 허용 목록에 걸려 전부 폴백 판정으로 떨어진다.
+// 순서: 안 먹는 것(양념) -> 마시는 것 -> 간식 -> 나머지는 한 끼.
 function categoryFor(name) {
-  if (/국수|파스타|우동|면|냉면/.test(name)) return "면";
-  if (/떡볶이|부꾸미|전|튀김/.test(name)) return "분식";
-  if (/잼|소스|드레싱|스프레드|청$|시럽/.test(name)) return "소스";
-  if (/케이크|빵|모찌|라떼|쿠키|디저트|아이스|주스|오트밀크/.test(name)) return "간식";
-  if (/김치|나물|무침|장아찌|볶음$|가니쉬|반찬/.test(name)) return "반찬";
+  if (/(?:잼|소스|드레싱|스프레드|청|시럽|고추장|쌈장|양념장|마요네즈|앙금|연유)$/.test(name)) return "양념·소스";
+  if (/라떼|주스|쥬스|스무디|셰이크|쉐이크|에이드|식혜|오트밀크|(?:커피|차)$/.test(name)) return "음료";
+  if (/케이크|케익|빵|모찌|쿠키|디저트|아이스|과자|도넛|머핀|타르트|초코|젤리|떡|스콘|그래놀라/.test(name)) return "간식";
   return "한 끼";
 }
 

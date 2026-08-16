@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { RecipeCover } from "@/components/RecipeCover";
 import { SafeImage } from "@/components/SafeImage";
-import { productBySlug, recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
+import { portionPrefix, productBySlug, recipeBySlug, recipes, type RecipeData } from "@/data/catalog";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { getRecipeDetail, getRecipeSubstitutes, getRelatedRecipes, RecipeDetailResponse, RecipeListItem, RecipeSubstituteResponse } from "@/lib/api/zerocheck";
@@ -37,7 +37,10 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
     title: "레시피를 불러오고 있어요",
     author: "저당 레시피",
     category: "한 끼",
-    servings: "분량 정보 준비 중",
+    servings: "전체 분량 기준",
+    // 여기는 카탈로그에 없는 레시피(= DB 수집분)만 오는 자리라 전체 분량 합계다.
+    // 카탈로그에 있으면 위 catalogDetail 쪽으로 빠지고 거기엔 기준이 이미 들어있다.
+    portionBasis: "total",
     time: "",
     difficulty: "차근차근",
     summary: "재료와 조리 순서를 확인하고 있어요.",
@@ -144,18 +147,25 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
   const substitutesLoaded = liveSubstitutes !== null;
   const similar = useMemo(() => {
     if (relatedLive.length > 0) {
-      return relatedLive.map((item) => ({
-        ...fallbackDetail,
-        slug: String(item.id),
-        databaseId: String(item.id),
-        title: item.name,
-        category: (item.category as RecipeData["category"]) || detail.category,
-        time: item.cookTimeMin != null ? `${item.cookTimeMin}분` : "",
-        thumbnail: item.thumbnailUrl ?? undefined,
-        estimatedSugar: item.sugar ?? 0,
-        estimatedCalories: item.calories ?? 0,
-        comparisonStatus: "completed" as const,
-      }));
+      return relatedLive.map((item) => {
+        // 연관 레시피도 API 유래라 목록 카드와 같은 규칙으로 각자 기준을 정한다 —
+        // fallbackDetail을 펼치는 김에 지금 보고 있는 레시피의 기준까지 물려받으면
+        // 1인분짜리 상세에서 전체 분량 레시피가 "총" 없이 나온다.
+        const matched = recipes.find((recipe) => recipe.databaseId === String(item.id));
+        return {
+          ...fallbackDetail,
+          slug: String(item.id),
+          databaseId: String(item.id),
+          title: item.name,
+          category: (item.category as RecipeData["category"]) || detail.category,
+          time: item.cookTimeMin != null ? `${item.cookTimeMin}분` : "",
+          thumbnail: item.thumbnailUrl ?? undefined,
+          estimatedSugar: item.sugar ?? 0,
+          estimatedCalories: item.calories ?? 0,
+          portionBasis: matched?.portionBasis ?? "total",
+          comparisonStatus: "completed" as const,
+        };
+      });
     }
     return recipes.filter((recipe) => recipe.slug !== detail.slug && recipe.category === detail.category).slice(0, 3);
   }, [detail.category, detail.slug, fallbackDetail, relatedLive]);
@@ -197,7 +207,8 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
           <p className="eyebrow">{[detail.category, detail.servings, detail.time, detail.difficulty].filter(Boolean).join(" · ")}</p>
           <h1>{detail.title}</h1>
           <p>{detail.summary}</p>
-          <div className="detail-metrics"><div><span>당류</span><strong>{detail.estimatedSugar}g</strong></div><div><span>열량</span><strong>{detail.estimatedCalories}kcal</strong></div></div>
+          {/* DB 수집 레시피는 전체 분량 합계라 "총"을 붙인다(data/catalog.ts portionBasis). */}
+          <div className="detail-metrics"><div><span>{portionPrefix(detail)}당류</span><strong>{detail.estimatedSugar}g</strong></div><div><span>{portionPrefix(detail)}열량</span><strong>{detail.estimatedCalories}kcal</strong></div></div>
           <FavoriteButton label={detail.title} id={recipeId} kind="recipe" checkInitial />
           {detail.sourceUrl && <a className="source-link" href={detail.sourceUrl} target="_blank" rel="noreferrer">원본 레시피 보기 ↗</a>}
         </div>
@@ -241,7 +252,7 @@ export function RecipeDetail({ slug = "perilla-low-sugar-jeyuk" }: { slug?: stri
 
       <section className="similar-section wrap">
         <header className="section-line-heading"><div><p className="eyebrow">비슷한 저당 레시피</p><h2>다음 메뉴도 이어서 살펴보세요</h2></div></header>
-        <div className="similar-grid">{similar.map((recipe) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><RecipeCover recipe={recipe} /><small>{recipe.category}</small><h3>{recipe.title}</h3><p>당류 {recipe.estimatedSugar}g · {recipe.estimatedCalories}kcal</p></Link>)}</div>
+        <div className="similar-grid">{similar.map((recipe) => <Link href={`/recipes/${recipe.databaseId ?? recipe.slug}`} key={recipe.databaseId ?? recipe.slug}><RecipeCover recipe={recipe} /><small>{recipe.category}</small><h3>{recipe.title}</h3><p>{portionPrefix(recipe)}당류 {recipe.estimatedSugar}g · {portionPrefix(recipe)}{recipe.estimatedCalories}kcal</p></Link>)}</div>
       </section>
     </main>
   );
