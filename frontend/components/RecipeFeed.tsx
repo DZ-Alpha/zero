@@ -118,7 +118,10 @@ export function RecipeFeed() {
             <label className="catalog-rail-check"><input type="checkbox" checked={personalOnly} onChange={(event) => setPersonalOnly(event.target.checked)} /><span>재료 비교가 끝난 메뉴만</span></label>
           </aside>
           <section className="catalog-list">
-          <header className="catalog-tools"><p>{loading ? "레시피를 불러오는 중" : source === "mock" ? "레시피 목록" : category !== "전체" || personalOnly ? "선택한 조건의 레시피" : <><b>{total.toLocaleString()}</b>개의 레시피</>}</p><div className="catalog-sort"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="레시피 정렬"><option>당류 감소순</option><option>인기순</option><option>당류 낮은순</option></select></div></header>
+          {/* 카테고리·eligible 이 서버 쿼리로 넘어가면서 total 이 곧 "그 조건의 건수"가
+              됐다. 그래서 "선택한 조건의 레시피" 라고 뭉개던 분기를 없애고 항상 건수를
+              보여준다 — 카테고리를 눌러도 몇 개인지 바로 보인다. */}
+          <header className="catalog-tools"><p>{loading ? "레시피를 불러오는 중" : source === "mock" ? "레시피 목록" : <><b>{total.toLocaleString()}</b>개의 레시피</>}</p><div className="catalog-sort"><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="레시피 정렬"><option>당류 감소순</option><option>인기순</option><option>당류 낮은순</option></select></div></header>
           {activeFilters.length > 0 && <div className="active-filter-summary" aria-label="적용된 필터"><span>적용한 조건</span>{activeFilters.map((item) => <b key={item}>{item}</b>)}<button type="button" onClick={resetFilters}>모두 지우기</button></div>}
           {source === "mock" && !loading && <div className="inline-service-notice" role="status"><div><b>레시피 목록을 잠시 불러오지 못했어요.</b><span>잠시 후 다시 시도해 주세요.</span></div><button type="button" onClick={retry}>다시 불러오기</button></div>}
           {loading && <div className="catalog-loading" aria-live="polite"><i /><i /><i /><span>레시피를 불러오고 있어요.</span></div>}
