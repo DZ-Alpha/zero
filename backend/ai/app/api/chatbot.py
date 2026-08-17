@@ -180,6 +180,7 @@ async def chatbot_stream(
 async def chatbot_history(
     response: Response,
     authorization: str | None = Header(None),
+    x_app_authorization: str | None = Header(None),
     usr: str | None = Query(default=None),
     session_id: str | None = Query(default=None),
     deps: Dependencies = Depends(get_dependencies),
@@ -188,10 +189,22 @@ async def chatbot_history(
     # 그대로 남는다. Authorization: Bearer 헤더를 우선 사용하고, usr 쿼리는 과거
     # 프론트 호출과의 호환을 위해서만 폴백으로 남긴다(다음 정리 대상).
     # 로그인이면 토큰으로 user_id, 아니면 session_id로 게스트 키.
+    #
+    # x-app-authorization은 서버리스(Lambda Function URL) 배포용 폴백이다. 그쪽은
+    # AuthType=AWS_IAM이라 프론트 프록시가 SigV4 서명을 붙이는데, 서명이
+    # Authorization 헤더 자리를 쓰기 때문에 원래 Bearer 토큰을 이 이름으로 옮겨
+    # 보낸다(frontend/app/b/[...path]/route.ts). EKS/온프렘 배포는 서명을 붙이지
+    # 않으므로 Authorization이 그대로 도착하고, 이 헤더는 아예 오지 않는다 —
+    # 즉 순서상 첫 분기에서 끝나서 기존 동작이 바뀌지 않는다.
+    #
+    # 이 자리를 usr 쿼리로 때우지 않은 이유는 위 QA 리포트와 같다. 커스텀 헤더는
+    # 액세스 로그에 기본으로 안 남지만 쿼리스트링은 항상 남는다.
     user_id = None
     token = None
     if authorization and authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
+    elif x_app_authorization and x_app_authorization.startswith("Bearer "):
+        token = x_app_authorization.removeprefix("Bearer ").strip()
     elif usr:
         token = usr
     if token:
