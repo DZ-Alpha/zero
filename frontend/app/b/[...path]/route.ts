@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { HttpRequest } from "@smithy/protocol-http";
+import { SignatureV4 } from "@smithy/signature-v4";
+import { Sha256 } from "@aws-crypto/sha256-js";
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
@@ -30,6 +34,100 @@ const minioUrl = process.env.MINIO_URL?.trim().replace(/\/$/, "");
 const DEFAULT_TIMEOUT_MS = 8_000;
 const SSE_TIMEOUT_MS = 130_000;
 const UPLOAD_TIMEOUT_MS = 60_000;
+
+// ai(챗봇)만 Lambda Function URL이고, 스트리밍 응답 때문에 AWS_IAM 인증이 필수다
+// (API Gateway는 SSE를 못 버틴다 - docs/01-code-blockers.md ⑧). Function URL은
+// SigV4로 서명된 요청만 받으므로, 브라우저 fetch가 못 하는 서명을 여기(서버쪽
+// Node 런타임)에서 대신 해준다. 크리덴셜은 fromNodeProviderChain이 알아서 찾는다
+// (~/.aws/credentials, 환경변수, SSO 등) - 여기 하드코딩하지 않는다.
+const LAMBDA_FUNCTION_URL_HOST_RE = /\.lambda-url\.([a-z0-9-]+)\.on\.aws$/;
+// 리전별로 따로 캐시한다. 서명자를 하나만 들고 있으면 첫 호출의 리전이 굳어버려서,
+// 다른 리전의 Function URL이 생기는 순간 잘못된 리전으로 서명해 403이 난다.
+const signers = new Map<string, SignatureV4>();
+
+function getSigner(region: string) {
+  let signer = signers.get(region);
+  if (!signer) {
+    signer = new SignatureV4({
+      service: "lambda",
+      region,
+      sha256: Sha256,
+      credentials: fromNodeProviderChain(),
+    });
+    signers.set(region, signer);
+  }
+  return signer;
+}
+
+async function signIfFunctionUrl(
+  upstream: URL,
+  method: string,
+  headers: Headers,
+  body: ArrayBuffer | undefined,
+  bodyIsStreamed: boolean,
+) {
+  const match = upstream.hostname.match(LAMBDA_FUNCTION_URL_HOST_RE);
+  if (!match) return;
+
+  // SigV4는 본문 해시까지 서명한다. 스트리밍 본문(업로드)은 여기서 해시를 낼 수
+  // 없어 "빈 본문"으로 서명되는데 실제로는 본문이 실려 나가므로 403
+  // SignatureDoesNotMatch가 된다. 지금은 /b/uploads가 diet(API Gateway)로 가서
+  // 이 경로에 닿지 않지만, Function URL 서비스가 업로드를 받게 되면 조용히
+  // 깨진다. 원인을 못 쫓는 403 대신 여기서 소리내어 멈춘다.
+  if (bodyIsStreamed) {
+    throw new Error(
+      `SigV4 서명 불가: ${upstream.hostname}는 Function URL인데 본문이 스트리밍이다. ` +
+        "본문을 버퍼링하도록 프록시를 고치거나 UNSIGNED-PAYLOAD를 검토해야 한다.",
+    );
+  }
+
+  // ai-service의 /chatbot, /chatbot/stream은 JWT를 body의 usr 필드로 받아서
+  // Authorization 헤더와 충돌하지 않는다. 다만 /chatbot/history는 레거시로
+  // Authorization: Bearer도 받으므로, SigV4가 그 자리를 써야 하는 이상 원래
+  // 값은 백엔드가 안 보는 이름으로 옮겨서 최소한 유실은 안 시킨다(완전한 해결은
+  // 아니다 - 그 엔드포인트는 usr 쿼리 파라미터 폴백으로만 로그인 상태 유지 가능,
+  // app/api/chatbot.py의 2026-08-02 QA 코멘트 참고).
+  const originalAuth = headers.get("authorization");
+  if (originalAuth) {
+    headers.set("x-app-authorization", originalAuth);
+    headers.delete("authorization");
+  }
+
+  const plainHeaders: Record<string, string> = { host: upstream.host };
+  headers.forEach((value, key) => {
+    plainHeaders[key] = value;
+  });
+
+  // 같은 키가 여러 번 오는 쿼리(?a=1&a=2)를 살려서 서명한다. 위쪽 buildUpstream이
+  // searchParams.append를 쓰기 때문에 URL에는 둘 다 남는데, Object.fromEntries는
+  // 마지막 값만 남겨 뭉갠다 — 서명 대상과 실제 전송이 달라져 SignatureDoesNotMatch가
+  // 난다. @smithy/signature-v4는 값으로 string[]을 받는다.
+  const query: Record<string, string | string[]> = {};
+  const seenKeys = new Set<string>();
+  upstream.searchParams.forEach((_value, key) => {
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    const values = upstream.searchParams.getAll(key);
+    query[key] = values.length > 1 ? values : values[0];
+  });
+
+  const signable = new HttpRequest({
+    method,
+    protocol: upstream.protocol,
+    hostname: upstream.hostname,
+    port: upstream.port ? Number(upstream.port) : undefined,
+    path: upstream.pathname,
+    query,
+    headers: plainHeaders,
+    body: body ? Buffer.from(body) : undefined,
+  });
+
+  const signed = await getSigner(match[1]).sign(signable);
+  Object.entries(signed.headers).forEach(([key, value]) => {
+    if (key.toLowerCase() === "host") return; // fetch가 URL 기준으로 다시 채운다
+    headers.set(key, value as string);
+  });
+}
 
 function normalizePath(parts: string[]) {
   if (parts[0] === "receipe") return ["recipes", ...parts.slice(1)];
@@ -167,6 +265,8 @@ async function proxy(request: NextRequest, context: RouteContext) {
   ["host", "connection", "content-length", "accept-encoding"].forEach((key) => headers.delete(key));
 
   const timeoutMs = isSse ? SSE_TIMEOUT_MS : isUpload ? UPLOAD_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+
+  await signIfFunctionUrl(upstream, request.method, headers, bodyBuffer, hasBody && isUpload);
 
   try {
     const response = await fetch(upstream, {
