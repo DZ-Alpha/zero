@@ -32,7 +32,12 @@ class BedrockClient(LLMClient):
         self._client = client or boto3.client("bedrock-runtime", region_name=settings.bedrock_region)
 
     async def complete(self, system: str, messages: list[dict]) -> str:
-        resp = self._client.converse(
+        # boto3는 동기 SDK다 - ai-service는 uvicorn 단일 워커라 await 없이 그냥
+        # 부르면 Bedrock 응답이 올 때까지 파드의 이벤트 루프 전체가 멈춘다
+        # (챗봇 호출 중 /health가 0.03초 → 1.80초로 악화된 실측 원인).
+        # 아래 complete_stream과 같은 방식으로 to_thread에 위임한다.
+        resp = await asyncio.to_thread(
+            self._client.converse,
             modelId=self._model_id,
             system=[{"text": system}],
             messages=_to_converse(messages),

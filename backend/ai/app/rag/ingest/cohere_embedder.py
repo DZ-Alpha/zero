@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import boto3
@@ -35,4 +36,10 @@ class CohereEmbedder(EmbeddingClient):
 
     async def embed(self, text: str) -> list[float]:
         # 검색 경로 — 단건, search_query.
-        return self.embed_batch([text], input_type="search_query")[0]
+        # embed_batch 안의 invoke_model은 boto3(동기)라, ai-service(uvicorn 단일
+        # 워커)에서 await 없이 부르면 임베딩 왕복 동안 이벤트 루프 전체가 멈춘다
+        # (2026-07-31 diet/product에서 고친 것과 같은 사고). to_thread로 위임한다.
+        # embed_batch 자체는 동기로 둔다 - 적재 스크립트(load_rag_docs.py)가
+        # 동기 컨텍스트에서 그대로 부른다.
+        vectors = await asyncio.to_thread(self.embed_batch, [text], input_type="search_query")
+        return vectors[0]

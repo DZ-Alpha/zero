@@ -72,10 +72,13 @@ async def get_recipe_list(
     sort: str | None = Query(None, description="정렬: sugarReduction(저당 비율순) | 기본(최신 적재순)"),
     search: str | None = Query(None, min_length=1, max_length=80, description="레시피명 검색"),
     eligible: bool = Query(False, description="영양 비교와 대체 상품 연결이 완료된 레시피만"),
+    category: str | None = Query(None, max_length=20, description="카테고리 필터: 한 끼 | 간식 | 음료 | 양념·소스"),
     page: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, object]:
-    recipes, total = await list_recipes_with_total(db, source=source, sort=sort, page=page, search=search, eligible=eligible)
+    recipes, total = await list_recipes_with_total(
+        db, source=source, sort=sort, page=page, search=search, eligible=eligible, category=category
+    )
     response.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return {
         "recipes": [_list_item(recipe) for recipe in recipes],

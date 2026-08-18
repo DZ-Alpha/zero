@@ -403,14 +403,16 @@ export function replaceUserPreferences(token: string, payload: {
   });
 }
 
-export function getRecipes(page = 1, search?: string, sort?: string, eligible = false) {
+export function getRecipes(page = 1, search?: string, sort?: string, eligible = false, category?: string) {
   // 백엔드가 페이지네이션을 도입한 뒤에도(page/pageSize/total/hasNext) 이 함수는
   // page 파라미터 없이 항상 1페이지(20건)만 불러왔다 - 전체 1700여 건 중 20건만
   // 보이고 나머지는 화면에 절대 안 나오던 원인 (무한스크롤은 이미 받아온 20건
   // 안에서만 더 보여주는 클라이언트 로직이라, 서버에 다음 페이지를 요청하지
   // 않았다). useRecipeCatalog가 hasNext를 보고 다음 page를 이 함수로 다시 부른다.
   return apiRequest<{ recipes: RecipeListItem[]; page: number; pageSize: number; total: number; hasNext: boolean }>(
-    query("/recipes", { page, search: search?.trim() || undefined, sort, eligible }),
+    // category 도 서버로 보낸다 - 받아온 페이지 안에서만 거르면 희소한 카테고리
+    // (음료 3.9%)는 첫 페이지에 거의 없어 목록이 빈 채로 멈춘다.
+    query("/recipes", { page, search: search?.trim() || undefined, sort, eligible, category }),
     { cache: "default" },
   );
 }

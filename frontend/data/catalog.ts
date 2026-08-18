@@ -31,7 +31,32 @@ export type RecipeData = {
   // 유튜브 수집 레시피만 값이 있고 만개의레시피는 없음 — 상세 페이지 썸네일의
   // 인라인 재생 버튼 노출 여부를 이 값으로 판단한다.
   videoId?: string | null;
+  // 영양수치(estimatedSugar/estimatedCalories)가 무엇을 1단위로 보는지.
+  //   "serving" — 1인분 기준. 이 파일의 데모 레시피가 여기 해당한다.
+  //   "total"   — 레시피 전체 분량 합계. DB 수집 레시피가 여기 해당한다.
+  // DB(service.recipes)에는 인분 정보가 없어 total_kcal 이 전체 분량 합계다.
+  // 그래서 "바삭한 저당 그래놀라 1,716kcal" 같은 값이 한 끼로 오해된다(2026-08-16).
+  // 인분 추출은 원본 영상에 정보가 없어 2% 미만만 가능해 포기했고, 대신 어느
+  // 기준인지를 화면에 밝히기로 했다. 값이 없으면 "serving" 으로 본다.
+  portionBasis?: "total" | "serving";
 };
+
+/** 카드·목록처럼 자리가 좁은 곳에 붙이는 접두. 전체 분량 기준일 때만 "총 ". */
+export function portionPrefix(recipe: Pick<RecipeData, "portionBasis">): string {
+  return recipe.portionBasis === "total" ? "총 " : "";
+}
+
+// servings 문자열에서 기준을 읽는다. "servings 값이 있으면 1인분 기준"으로 갈랐더니
+// generated 카탈로그 38건이 전부 "등록 재료 전체"(= 전체 분량)라 정확히 반대로
+// 판정됐다. 숫자+인분 표기일 때만 1인분 기준으로 본다 — 손으로 쓴 데모 레시피의
+// "1인분"·"6인분 이상"은 걸리고, "등록 재료 전체"·"전체 분량 기준"은 안 걸린다.
+export function portionBasisFromServings(servings?: string | null): "total" | "serving" {
+  return /\d+\s*인분/.test(servings ?? "") ? "serving" : "total";
+}
+
+function withPortionBasis(recipe: RecipeData): RecipeData {
+  return recipe.portionBasis ? recipe : { ...recipe, portionBasis: portionBasisFromServings(recipe.servings) };
+}
 
 const fallbackRecipes: RecipeData[] = [
   {
@@ -89,7 +114,7 @@ const fallbackRecipes: RecipeData[] = [
     slug: "low-sugar-red-bean-paste",
     title: "저당 팥앙금",
     author: "만개의레시피 사용자 레시피",
-    category: "소스",
+    category: "양념·소스",
     servings: "6인분 이상",
     time: "90분",
     difficulty: "초급",
@@ -115,7 +140,7 @@ const fallbackRecipes: RecipeData[] = [
     slug: "beef-gochujang-sobokko",
     title: "저당 소고기 볶음고추장",
     author: "만개의레시피 사용자 레시피",
-    category: "소스",
+    category: "양념·소스",
     servings: "6인분 이상",
     time: "20분",
     difficulty: "초급",
@@ -167,7 +192,7 @@ const fallbackRecipes: RecipeData[] = [
     slug: "low-sugar-plum-jam",
     title: "설탕을 줄인 자두잼",
     author: "만개의레시피 사용자 레시피",
-    category: "소스",
+    category: "양념·소스",
     servings: "6인분 이상",
     time: "120분",
     difficulty: "초급",
@@ -193,7 +218,7 @@ const fallbackRecipes: RecipeData[] = [
     slug: "perilla-pesto-oatmeal-pasta",
     title: "깻잎페스토 오트밀 파스타",
     author: "만개의레시피 사용자 레시피",
-    category: "면",
+    category: "한 끼",
     servings: "1인분",
     time: "20분",
     difficulty: "초급",
@@ -219,7 +244,7 @@ const fallbackRecipes: RecipeData[] = [
     slug: "low-sodium-tomato-kimchi",
     title: "저염 저당 토마토 김치",
     author: "만개의레시피 사용자 레시피",
-    category: "반찬",
+    category: "한 끼",
     servings: "4인분",
     time: "30분",
     difficulty: "초급",
@@ -271,7 +296,7 @@ const fallbackRecipes: RecipeData[] = [
     slug: "konjac-tteokbokki-recipe",
     title: "곤약 떡볶이",
     author: "만개의레시피 사용자 레시피",
-    category: "분식",
+    category: "한 끼",
     servings: "5인분",
     time: "10분",
     difficulty: "누구나",
@@ -295,11 +320,14 @@ const fallbackRecipes: RecipeData[] = [
   },
 ];
 
-export const recipes: RecipeData[] = generatedRecipeDatabase.length > 0
+// generated JSON은 스크립트가 다시 만들어 덮어쓰므로 portionBasis를 그 파일에
+// 넣어둘 수 없다. 읽는 시점에 servings로 채운다 — recipeBySlug도 이 배열에서
+// 파생되므로 카탈로그를 거치는 화면은 모두 여기서 기준이 정해진다.
+export const recipes: RecipeData[] = (generatedRecipeDatabase.length > 0
   ? process.env.NEXT_PUBLIC_MOCK_MODE === "1"
     ? [fallbackRecipes[0], ...(generatedRecipeDatabase as RecipeData[])]
     : generatedRecipeDatabase as RecipeData[]
-  : fallbackRecipes;
+  : fallbackRecipes).map(withPortionBasis);
 
 export type ProductData = {
   backendId?: string;

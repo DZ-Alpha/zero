@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RecipeData } from "@/data/catalog";
+import { RECIPE_CATEGORIES } from "@/data/taxonomy";
 import { getRecipes, type RecipeDetailResponse, type RecipeListItem } from "@/lib/api/zerocheck";
 
 function normalizeSteps(value: unknown) {
@@ -19,24 +20,22 @@ function normalizeSteps(value: unknown) {
   });
 }
 
-// service.recipes 테이블에 category 컬럼이 없어(데이터팀 스키마 추가 필요) 이름
-// 키워드로 추정한다 - 카테고리가 너무 적어 대부분이 "한 끼"로 몰린다는 리포트
-// (2026-07-31)에 맞춰 패턴을 세분화했다. 판정 순서가 중요 - 더 구체적인
-// 카테고리를 먼저 검사해 애매한 단어(예: "볶음")가 "한 끼" 뒤로 밀리지 않게 한다.
+// service.recipes.category 는 2026-08-16 백필로 채워졌다(1,677건). 그래서 이 함수는
+// 이제 폴백이다 - 미판정으로 NULL 인 32건과 목업 모드에서만 돈다.
+//
+// 판정 순서가 중요하다. "그 자체로 먹지 않는 것"과 "마시는 것"을 먼저 걸러야
+// `저당고추장`이 한 끼로, `바나나우유라떼`가 간식으로 새지 않는다.
+// 반대로 `굴소스 제육볶음`처럼 요리가 주인 이름은 소스로 가면 안 되므로,
+// 양념류는 이름 끝에 올 때만 인정한다(자세한 기준은 docs 의 카테고리 정의 참고).
 function inferCategory(name: string): RecipeData["category"] {
-  if (/소스|고추장|드레싱|잼|양념장|다시다|육수|시럽/.test(name)) return "소스";
-  if (/면|국수|파스타|우동|라면|냉면|스파게티/.test(name)) return "면";
-  if (/떡볶이|김밥|순대|튀김|호떡|핫도그|어묵/.test(name)) return "분식";
-  if (/케이크|쿠키|아이스|디저트|간식|빵|머핀|타르트|마카롱|파이|초코|젤리/.test(name)) return "간식";
-  if (/국|찌개|탕|전골|스프|수프|육개장|미역국/.test(name)) return "국·찌개";
-  if (/샐러드|브런치|포케|리소토/.test(name)) return "샐러드";
-  if (/무침|볶음|조림|나물|장아찌|김치|반찬/.test(name)) return "반찬";
+  if (/(?:소스|고추장|쌈장|드레싱|잼|양념장|시럽|마요네즈|앙금|연유|청)$/.test(name)) return "양념·소스";
+  if (/라떼|스무디|셰이크|쉐이크|에이드|레모네이드|주스|쥬스|식혜|스무디|(?:커피|차)$/.test(name)) return "음료";
+  if (/케이크|케익|쿠키|과자|도넛|빵|머핀|타르트|마카롱|초코|초콜릿|젤리|찰떡|떡|스콘|아이스|디저트|간식|그래놀라/.test(name)) return "간식";
   return "한 끼";
 }
 
 function recipeCategory(value: string | null | undefined, name: string): RecipeData["category"] {
-  const allowed: RecipeData["category"][] = ["소스", "면", "분식", "간식", "국·찌개", "샐러드", "반찬", "한 끼"];
-  return allowed.includes(value as RecipeData["category"])
+  return RECIPE_CATEGORIES.includes(value as RecipeData["category"])
     ? value as RecipeData["category"]
     : inferCategory(name);
 }
@@ -55,7 +54,14 @@ function toRecipeData(item: RecipeListItem, detail: RecipeDetailResponse | null,
     title: detail?.name || item.name || matched?.title || "레시피 이름 준비 중",
     author: detail?.source || matched?.author || "저당 레시피",
     category: item.category ? recipeCategory(item.category, item.name) : matched?.category ?? inferCategory(item.name),
-    servings: matched?.servings ?? "분량 정보 준비 중",
+    // DB 수집 레시피는 인분 정보가 없다(service.recipes 에 컬럼 자체가 없고,
+    // 원본 영상에도 2% 미만만 적혀 있다). "준비 중"은 곧 채워질 것처럼 읽히는데
+    // 실제로는 채울 수 없는 값이라, 수치가 무엇을 뜻하는지를 밝히는 쪽으로 바꿨다.
+    servings: matched?.servings ?? "전체 분량 기준",
+    // 카탈로그 매칭이 있으면 거기서 이미 정해진 기준을 그대로 쓰고(catalog.ts의
+    // withPortionBasis), 매칭이 없으면 total_kcal 그대로라 전체 분량 합계다.
+    // 화면 접두("총 ")가 이 값으로 갈린다.
+    portionBasis: matched?.portionBasis ?? "total",
     time: item.cookTimeMin != null ? `${item.cookTimeMin}분` : matched?.time === "조리 시간 준비 중" ? "" : matched?.time ?? "",
     difficulty: matched?.difficulty ?? "차근차근",
     summary: matched?.summary ?? "재료와 조리 순서를 확인하고 식단에 가볍게 더해보세요.",
@@ -77,7 +83,10 @@ function toRecipeData(item: RecipeListItem, detail: RecipeDetailResponse | null,
   };
 }
 
-export function useRecipeCatalog(fallback: RecipeData[], values: { search?: string; sort?: string; eligible?: boolean } = {}) {
+export function useRecipeCatalog(
+  fallback: RecipeData[],
+  values: { search?: string; sort?: string; eligible?: boolean; category?: string } = {},
+) {
   const fallbackRef = useRef(fallback);
   fallbackRef.current = fallback;
   const [items, setItems] = useState<RecipeData[]>([]);
@@ -100,7 +109,7 @@ export function useRecipeCatalog(fallback: RecipeData[], values: { search?: stri
       setHasMore(false);
       setLoading(false);
     }, 3500);
-    getRecipes(1, values.search, values.sort, values.eligible)
+    getRecipes(1, values.search, values.sort, values.eligible, values.category)
       .then(({ recipes, hasNext, total: nextTotal }) => {
         if (!active) return;
         window.clearTimeout(fallbackTimer);
@@ -128,13 +137,13 @@ export function useRecipeCatalog(fallback: RecipeData[], values: { search?: stri
       active = false;
       window.clearTimeout(fallbackTimer);
     };
-  }, [revision, values.search, values.sort, values.eligible]);
+  }, [revision, values.search, values.sort, values.eligible, values.category]);
 
   const loadMore = useCallback(() => {
     if (source !== "api" || loadingMore || !hasMore) return;
     setLoadingMore(true);
     const nextPage = page + 1;
-    getRecipes(nextPage, values.search, values.sort, values.eligible)
+    getRecipes(nextPage, values.search, values.sort, values.eligible, values.category)
       .then(({ recipes, hasNext, total: nextTotal }) => {
         setItems((current) => [...current, ...recipes.map((recipe) => toRecipeData(recipe, null, fallbackRef.current))]);
         setPage(nextPage);
@@ -143,7 +152,7 @@ export function useRecipeCatalog(fallback: RecipeData[], values: { search?: stri
       })
       .catch(() => setHasMore(false))
       .finally(() => setLoadingMore(false));
-  }, [source, loadingMore, hasMore, page, values.search, values.sort, values.eligible]);
+  }, [source, loadingMore, hasMore, page, values.search, values.sort, values.eligible, values.category]);
 
   return {
     recipes: items,

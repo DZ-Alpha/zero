@@ -23,9 +23,9 @@ html{scroll-behavior:smooth;overflow-anchor:none}
    'IBM Plex Sans KR'/'Noto Sans KR'을 layout.tsx의 next/font로 실제 로드해서
    CSS 변수로 받는다 - 원래 있던 두 폰트 순서(본문은 IBM Plex 우선, 제목/버튼은
    Noto 우선)는 그대로 유지. */
-body{margin:0;background:#fff;color:var(--ink);font-family:var(--font-ibm-plex-sans-kr),var(--font-noto-sans-kr),sans-serif;font-size:15px;line-height:1.6;letter-spacing:-.012em;word-break:keep-all;-webkit-font-smoothing:antialiased}
+body{margin:0;background:#fff;color:var(--ink);font-family:var(--font-ibm-plex-sans-kr),var(--font-noto-sans-kr),var(--font-noto-sans-kr-ko),sans-serif;font-size:15px;line-height:1.6;letter-spacing:-.012em;word-break:keep-all;-webkit-font-smoothing:antialiased}
 h1,h2,h3,p{overflow-wrap:break-word;hyphens:none}
-h1,h2,h3,.brand,.top-tabs,button{font-family:var(--font-noto-sans-kr),var(--font-ibm-plex-sans-kr),sans-serif}
+h1,h2,h3,.brand,.top-tabs,button{font-family:var(--font-noto-sans-kr),var(--font-noto-sans-kr-ko),var(--font-ibm-plex-sans-kr),sans-serif}
 a{color:inherit;text-decoration:none}
 button,input,select{font:inherit}
 button{cursor:pointer;color:inherit}

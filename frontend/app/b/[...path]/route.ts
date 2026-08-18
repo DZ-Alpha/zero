@@ -24,10 +24,25 @@ const gatewayUrl = process.env.BACKEND_GATEWAY_URL?.trim().replace(/\/$/, "");
 // 직접 요청한다.
 const minioUrl = process.env.MINIO_URL?.trim().replace(/\/$/, "");
 
+// AWS(EKS) 전용 - 상품/레시피 이미지는 CloudFront(OAC)가 S3를 서명 대리한다.
+// 값이 있으면 /b/product-images/*, /b/recipe-images/* 를 302로 CDN에 넘긴다.
+// DB의 image_url(/b/product-images/{key})은 그대로 두고 경계에서만 변환하므로
+// 온프렘(MINIO_URL)과 AWS(IMAGE_CDN_URL) 어느 쪽에서도 같은 이미지가 동작한다.
+// diet-photos는 대상이 아니다 - v3 diet-service가 presigned 절대 URL을 반환한다.
+const imageCdnUrl = process.env.IMAGE_CDN_URL?.trim().replace(/\/$/, "");
+
 // SSE(/b/ai/chatbot/stream 등)는 LLM 응답이 오래 이어진다 — 기존 b-gateway의
 // proxy_read_timeout 120s와 맞춘다(Istio 전환 요청서 §5). 업로드는 10MB 사진이
-// 느린 회선에서 8초를 넘길 수 있어 별도로 늘린다. 나머지 일반 API는 8초 유지.
-const DEFAULT_TIMEOUT_MS = 8_000;
+// 느린 회선에서 기본 타임아웃을 넘길 수 있어 별도로 늘린다.
+//
+// 일반 API 12초 — 백엔드 커넥션 풀 대기(pool_timeout=10s,
+// backend/*/app/core/database.py)보다 반드시 길어야 한다. 예전 8초는 풀 대기가
+// 끝나기도 전에 프록시가 먼저 끊는 값이라, 부하가 몰리면 사용자는 502(FALLBACK)를
+// 받는데 백엔드는 커넥션을 잡은 뒤 이미 끊긴 요청의 쿼리를 끝까지 돌려 부하만
+// 키웠다(끊어봐야 줄어드는 게 없는 최악의 조합). 포기 순서를 "백엔드가 먼저
+// 포기 → 프록시가 그 응답을 그대로 전달"로 정렬한다. pool_timeout을 올리면
+// 이 값도 같이 올려야 한다.
+const DEFAULT_TIMEOUT_MS = 12_000;
 const SSE_TIMEOUT_MS = 130_000;
 const UPLOAD_TIMEOUT_MS = 60_000;
 
@@ -134,6 +149,36 @@ async function proxy(request: NextRequest, context: RouteContext) {
 
   if (isInternalOnly(path)) {
     return NextResponse.json({ detail: "Not Found" }, { status: 404 });
+  }
+
+  // 302 자체에 캐시를 붙인다 — 안 붙이면 브라우저가 이미지 한 장 볼 때마다
+  // "어디로 가야 하냐"를 다시 물어보러 클러스터까지 왕복한다. 목적지 이미지는
+  // CloudFront가 캐시해도 이 리다이렉트는 매번 오리진을 때린다(2026-08 cloudflared
+  // 터널 실측: 전체 30,058건 중 12,031건, 40%가 이 302 한 줄이었다).
+  //
+  // 캐시 기간은 키가 내용에 대해 불변인지에 따라 갈린다:
+  //   product-images/{uuid}.{ext} — 이미지가 바뀌면 새 uuid로 새 객체가 생기고
+  //     DB의 image_url도 같이 바뀐다(image_storage.py). 진짜 불변이라 immutable.
+  //   recipe-images/{recipe_id}.jpg — 같은 키에 덮어쓴다(recipe-processor/s3_store.py).
+  //     immutable을 붙이면 재크롤로 썸네일을 교체해도 브라우저가 하루 동안 옛 사진을
+  //     들고 있다. 그래서 1시간만 신선하다고 보고, 그 뒤에는 stale-while-revalidate로
+  //     헌 이미지를 즉시 보여주면서 뒤에서 갱신한다 — 302 왕복은 여전히 사라지고
+  //     교체 반영은 한 시간 안에 끝난다.
+  //
+  // NextResponse.redirect()는 헤더를 얹을 자리가 없어 응답을 직접 만든다.
+  if (imageCdnUrl && (path[0] === "product-images" || path[0] === "recipe-images")) {
+    const encodedPath = path.map(encodeURIComponent).join("/");
+    const cacheControl =
+      path[0] === "product-images"
+        ? "public, max-age=86400, immutable"
+        : "public, max-age=3600, stale-while-revalidate=86400";
+    return new NextResponse(null, {
+      status: 302,
+      headers: {
+        location: `${imageCdnUrl}/${encodedPath}`,
+        "cache-control": cacheControl,
+      },
+    });
   }
 
   const normalizedPath = normalizePath(path);

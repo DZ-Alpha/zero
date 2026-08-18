@@ -206,7 +206,9 @@ export function RecordMealModal({
   });
 
   const recipeLibrary = useMemo<FoodItem[]>(() => recipeCatalog.recipes
-    .filter((recipe) => recipe.category !== "소스")
+    // 카테고리 개편(2026-08-16)으로 "소스" -> "양념·소스". 문자열이 안 바뀌었으면
+    // 이 필터가 조용히 무력화돼 고추장·드레싱이 식사 기록 목록에 섞여 들어온다.
+    .filter((recipe) => recipe.category !== "양념·소스")
     .map((recipe) => {
       const id = recipe.databaseId ?? recipe.slug;
       return {
