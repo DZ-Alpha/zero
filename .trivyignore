@@ -29,3 +29,17 @@ CVE-2026-9538
 # Storable/perl을 런타임에 호출하지 않아 공격면 아님 - 위 perl-base 리스크수용과
 # 동일 근거. trixie가 5.40.1-8 받으면 제거.
 CVE-2026-57433
+
+# 2026-08-18: 백엔드 파이프라인 #165가 ai/recipe-service 둘 다 이 CVE로 막혔다.
+# CVE-2026-14456 = OpenSSL QUIC **서버** 구현에서 처리 중 메모리가 무한히 늘어나는
+# DoS. Trivy 판정은 HIGH, Debian trixie libssl3t64/openssl/openssl-provider-legacy
+# 3.5.6-1~deb13u2 이고 상태가 fix_deferred = **Fixed Version 자체가 없다**(데비안이
+# 아직 패치하지 않기로 한 것). apt upgrade 로도, 베이스 이미지를 다시 받아도 사라지지
+# 않는다.
+#
+# 우리 백엔드는 uvicorn(HTTP/1.1 + WebSocket)으로 서비스하고 QUIC/HTTP3 서버를
+# 열지 않는다. 취약한 코드경로에 도달할 입구가 없어 공격면이 아니다 - 위 perl-base와
+# 같은 근거의 리스크 수용이다.
+#
+# trixie 가 수정 버전을 받으면 이 줄을 지우고 재스캔할 것.
+CVE-2026-14456
