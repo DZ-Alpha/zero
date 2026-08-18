@@ -12,11 +12,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <ScrollToTop />
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <header className="site-header">
-        <Link href="/" className="brand" aria-label="당당 홈">
+        {/* 온프렘(k8s.zerodang.org) 전용 표기. AWS(zerodang.org)는 "당당"이며,
+            그쪽 저장소(dang-aws-service)에서 코드를 가져올 때 이 줄이 되돌아오기
+            쉬우니 동기화 후 확인할 것. 두 사이트를 눈으로 구분하기 위한 것이다. */}
+        <Link href="/" className="brand" aria-label="K8s당당 홈">
           <span className="brand-mark">
             <img src="/icon.svg" alt="" width={32} height={32} />
           </span>
-          <span className="brand-copy"><b>당당</b></span>
+          <span className="brand-copy"><b>K8s당당</b></span>
         </Link>
         <SiteNav />
         <HeaderAuth />
