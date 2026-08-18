@@ -63,7 +63,21 @@ pipeline {
                                 def files = rawFiles.findAll { !isDoc(it) }
                                 def skipped = rawFiles.findAll { isDoc(it) }
                                 if (skipped) { echo "문서·비코드 변경 무시: ${skipped.join(', ')}" }
-                                changed = all.findAll { svc -> files.any { it.startsWith("backend/${svc}/") } }
+                                // Trivy 게이트의 입력이 바뀌면 서비스 소스가 그대로여도 판정이
+                                // 달라진다 - 무시 목록에서 CVE를 빼면 통과하던 이미지가 막히고,
+                                // 넣으면 막히던 게 풀린다. 그러니 전 서비스를 다시 스캔해야 한다.
+                                //
+                                // 2026-08-18 실제 사고: 파이프라인 #165가 CVE-2026-14456(openssl,
+                                // fix_deferred)으로 ai/recipe-service 둘 다 막혀 UNSTABLE로 끝났다.
+                                // .trivyignore에 그 CVE를 등록했는데 이 파일이 backend/ 아래가 아니라
+                                // 변경감지에 안 걸려 #166이 NOT_BUILT - 게이트만 고치고 재스캔은
+                                // 영영 안 도는 구멍이었다. 그 사이 프론트만 새 코드로 나가 있었다.
+                                if (files.any { it == '.trivyignore' }) {
+                                    echo ".trivyignore 변경 - Trivy 판정 기준이 바뀌었으므로 전체 재스캔"
+                                    changed = all
+                                } else {
+                                    changed = all.findAll { svc -> files.any { it.startsWith("backend/${svc}/") } }
+                                }
                             }
                         }
                     }
